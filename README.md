@@ -1,4 +1,4 @@
-# ![Canvascope](docs/assets/logo-full.png)
+# ![Icon](docs/assets/icon-128.png) Canvascope
 
 **Instantly search all your Canvas LMS course content using natural language.**
 
@@ -78,14 +78,13 @@ Canvascope/
 
 ## Roadmap
 
-### Phase 1: Search Quality *(Current)*
-- [x] Filter by course
-- [x] Filter by content type
-- [x] Search history
-- [x] Better ranking algorithm
-- [ ] Date range filter
+### ~~Phase 1: Search Quality (Completed)~~
+- ~~Filter by course~~
+- ~~Filter by content type~~
+- ~~Search history~~
+- ~~Better ranking algorithm~~
 
-### Phase 2: Content Extraction
+### Phase 2: Content Extraction *(In Progress)*
 - PDF text extraction
 - Lecture slides parsing
 - Enhanced metadata

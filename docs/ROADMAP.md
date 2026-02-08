@@ -7,25 +7,24 @@
 
 ---
 
-## Phase 1: Search Quality (Week 1-2)
+## ~~Phase 1: Search Quality (Completed)~~
 
-### 1.1 Better Ranking
-- [ ] Boost recent content in results
-- [ ] Weight by content type (assignments > files)
-- [ ] Add recency decay factor
+### ~~1.1 Better Ranking~~
+- ~~Boost recent content in results~~
+- ~~Weight by content type (assignments > files)~~
+- ~~Add recency decay factor~~
 
-### 1.2 Search Filters
-- [ ] Filter by course
-- [ ] Filter by content type
-- [ ] Date range filter
+### ~~1.2 Search Filters~~
+- ~~Filter by course~~
+- ~~Filter by content type~~
 
-### 1.3 Search History
-- [ ] Save recent searches
-- [ ] Quick access to frequent searches
+### ~~1.3 Search History~~
+- ~~Save recent searches~~
+- ~~Quick access to frequent searches~~
 
 ---
 
-## Phase 2: Content Extraction (Week 3-4)
+## Phase 2: Content Extraction *(In Progress)*
 
 ### 2.1 PDF Text Extraction
 - [ ] Extract text from PDF files
