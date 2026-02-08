@@ -1,4 +1,4 @@
-# Canvas Search - Privacy Policy
+# Canvascope - Privacy Policy
 
 **Last Updated**: February 2026
 
@@ -6,7 +6,7 @@
 
 ## Summary
 
-Canvas Search is a privacy-first Chrome extension. Here's what you need to know:
+Canvascope is a privacy-first Chrome extension. Here's what you need to know:
 
 ✅ **All data stays on your computer**
 ✅ **No data is sent to any server**
@@ -81,7 +81,7 @@ We do NOT:
 
 ## Third-Party Services
 
-Canvas Search uses **zero** third-party services.
+Canvascope uses **zero** third-party services.
 
 | Service | Used? | Notes |
 |---------|-------|-------|
@@ -141,6 +141,6 @@ For privacy-related questions or concerns, you can:
 
 ## Consent
 
-By using Canvas Search, you agree to this privacy policy.
+By using Canvascope, you agree to this privacy policy.
 
 **Remember**: You can uninstall the extension and delete all data at any time.

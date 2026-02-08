@@ -1,4 +1,4 @@
-# Canvas Search - Improvement Roadmap
+# Canvascope - Improvement Roadmap
 
 ## Current State
 - Local fuzzy search with Fuse.js

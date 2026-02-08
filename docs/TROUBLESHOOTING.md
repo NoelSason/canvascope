@@ -1,4 +1,4 @@
-# Canvas Search - Troubleshooting Guide
+# Canvascope - Troubleshooting Guide
 
 Common issues and how to fix them.
 
@@ -21,7 +21,7 @@ Common issues and how to fix them.
 
 **Solutions**:
 1. Go to `chrome://extensions`
-2. Make sure Canvas Search is enabled (toggle is blue)
+2. Make sure Canvascope is enabled (toggle is blue)
 3. If there are errors, click "Errors" to see details
 4. Try clicking the refresh icon (↻) on the extension card
 
@@ -169,7 +169,7 @@ Also update the `matches` in `content_scripts`:
 ### Step 4: Reload extension
 
 1. Go to `chrome://extensions`
-2. Click the refresh icon on Canvas Search
+2. Click the refresh icon on Canvascope
 
 ### Step 5: Update content.js (optional)
 
@@ -245,19 +245,19 @@ For advanced troubleshooting:
 
 ### Enable console logging
 
-All modules log to console with prefix `[Canvas Search]`.
+All modules log to console with prefix `[Canvascope]`.
 
 **To view logs**:
 1. Popup: Right-click icon → Inspect popup → Console
 2. Content script: Open Canvas page → F12 → Console
-3. Background: Go to `chrome://extensions` → Canvas Search → "service worker" link
+3. Background: Go to `chrome://extensions` → Canvascope → "service worker" link
 
 ### Common log patterns
 
 ```
-[Canvas Search] Popup initialized          // Popup loaded OK
-[Canvas Search Content] Content script loaded  // Content script OK
-[Canvas Search] Service worker started     // Background OK
+[Canvascope] Popup initialized          // Popup loaded OK
+[Canvascope Content] Content script loaded  // Content script OK
+[Canvascope] Service worker started     // Background OK
 ```
 
 ---

@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <defs>
+    <style>
+      .cls-1 { fill: none; stroke: #D32F2F; stroke-width: 10px; stroke-linecap: round; stroke-linejoin: round; }
+    </style>
+  </defs>
+  <!-- Main Book Outline (Larger) -->
+  <path class="cls-1" d="M20 16h76v96H20z" />
+  <!-- Bottom Line -->
+  <path class="cls-1" d="M20 88h76" />
+  <!-- Magnifying Glass (Centred slightly higher) -->
+  <circle class="cls-1" cx="60" cy="52" r="22" />
+  <line class="cls-1" x1="76" y1="68" x2="104" y2="96" />
+</svg>

@@ -1,12 +1,12 @@
-# Canvas Search - Security Documentation
+# Canvascope - Security Documentation
 
-This document explains the security measures implemented in Canvas Search and provides a checklist for auditing the extension.
+This document explains the security measures implemented in Canvascope and provides a checklist for auditing the extension.
 
 ---
 
 ## Security Principles
 
-Canvas Search follows these core security principles:
+Canvascope follows these core security principles:
 
 1. **Privacy by Default** - All data stays on your computer
 2. **Least Privilege** - Only requests minimal permissions

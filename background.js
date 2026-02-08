@@ -1,6 +1,6 @@
 /**
  * ============================================
- * Canvas Search - Background Service Worker (background.js)
+ * Canvascope - Background Service Worker (background.js)
  * ============================================
  * 
  * PURPOSE:
@@ -36,7 +36,7 @@ let lastScanTime = 0;
 // Load custom domains on startup
 chrome.storage.local.get(['customDomains']).then(data => {
     customDomains = data.customDomains || [];
-    console.log('[Canvas Search] Loaded custom domains:', customDomains);
+    console.log('[Canvascope] Loaded custom domains:', customDomains);
 });
 
 // ============================================
@@ -44,7 +44,7 @@ chrome.storage.local.get(['customDomains']).then(data => {
 // ============================================
 
 chrome.runtime.onInstalled.addListener((details) => {
-    console.log('[Canvas Search] Extension event:', details.reason);
+    console.log('[Canvascope] Extension event:', details.reason);
 
     if (details.reason === 'install') {
         chrome.storage.local.set({
@@ -71,7 +71,7 @@ chrome.runtime.onInstalled.addListener((details) => {
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     if (changeInfo.status === 'complete' && tab.url) {
         if (isCanvasDomain(tab.url)) {
-            console.log('[Canvas Search] Canvas tab detected, checking if scan needed...');
+            console.log('[Canvascope] Canvas tab detected, checking if scan needed...');
             triggerBackgroundScan(tab.url);
         }
     }
@@ -97,7 +97,7 @@ chrome.tabs.onActivated.addListener(async (activeInfo) => {
 
 chrome.alarms.onAlarm.addListener((alarm) => {
     if (alarm.name === 'periodicScan') {
-        console.log('[Canvas Search] Periodic scan triggered');
+        console.log('[Canvascope] Periodic scan triggered');
         triggerBackgroundScan();
     }
 });
@@ -112,7 +112,7 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 async function triggerBackgroundScan(tabUrl = null) {
     // Don't start if already scanning
     if (isScanning) {
-        console.log('[Canvas Search] Scan already in progress, skipping');
+        console.log('[Canvascope] Scan already in progress, skipping');
         return;
     }
 
@@ -122,7 +122,7 @@ async function triggerBackgroundScan(tabUrl = null) {
     const timeSinceLastScan = Date.now() - storedLastScan;
 
     if (timeSinceLastScan < MIN_SCAN_INTERVAL) {
-        console.log(`[Canvas Search] Recently scanned (${Math.round(timeSinceLastScan / 1000)}s ago), skipping`);
+        console.log(`[Canvascope] Recently scanned (${Math.round(timeSinceLastScan / 1000)}s ago), skipping`);
         return;
     }
 
@@ -149,7 +149,7 @@ async function triggerBackgroundScan(tabUrl = null) {
  * Perform the background scan
  */
 async function performBackgroundScan(baseUrl) {
-    console.log('[Canvas Search] Starting background scan...');
+    console.log('[Canvascope] Starting background scan...');
     isScanning = true;
 
     // Notify popup that scan is starting
@@ -160,12 +160,12 @@ async function performBackgroundScan(baseUrl) {
         const courses = await fetchCourseList(baseUrl);
 
         if (courses.length === 0) {
-            console.log('[Canvas Search] No courses found, user may not be logged in');
+            console.log('[Canvascope] No courses found, user may not be logged in');
             isScanning = false;
             return;
         }
 
-        console.log(`[Canvas Search] Found ${courses.length} courses`);
+        console.log(`[Canvascope] Found ${courses.length} courses`);
         broadcastMessage({
             type: 'scanProgress',
             progress: 10,
@@ -181,7 +181,7 @@ async function performBackgroundScan(baseUrl) {
                 const courseContent = await fetchCourseContent(baseUrl, course);
                 allContent.push(...courseContent);
             } catch (e) {
-                console.warn(`[Canvas Search] Error scanning ${course.name}:`, e.message);
+                console.warn(`[Canvascope] Error scanning ${course.name}:`, e.message);
             }
 
             // Update progress
@@ -213,7 +213,7 @@ async function performBackgroundScan(baseUrl) {
             }
         });
 
-        console.log(`[Canvas Search] Scan complete! Total: ${mergedContent.length}, New: ${newItems.length}`);
+        console.log(`[Canvascope] Scan complete! Total: ${mergedContent.length}, New: ${newItems.length}`);
 
         broadcastMessage({
             type: 'scanComplete',
@@ -222,7 +222,7 @@ async function performBackgroundScan(baseUrl) {
         });
 
     } catch (error) {
-        console.error('[Canvas Search] Background scan error:', error);
+        console.error('[Canvascope] Background scan error:', error);
         broadcastMessage({ type: 'scanError', error: error.message });
     } finally {
         isScanning = false;
@@ -255,7 +255,7 @@ async function fetchCourseList(baseUrl) {
             }
         }
     } catch (e) {
-        console.warn('[Canvas Search] Could not fetch courses:', e.message);
+        console.warn('[Canvascope] Could not fetch courses:', e.message);
     }
 
     return courses;
@@ -480,7 +480,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         if (!customDomains.includes(domain)) {
             customDomains.push(domain);
             chrome.storage.local.set({ customDomains }).then(() => {
-                console.log('[Canvas Search] Added custom domain:', domain);
+                console.log('[Canvascope] Added custom domain:', domain);
                 sendResponse({ success: true });
             });
         } else {
@@ -515,7 +515,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 // STARTUP
 // ============================================
 
-console.log('[Canvas Search] Background service worker started');
+console.log('[Canvascope] Background service worker started');
 
 // Check if we should scan on startup
 chrome.tabs.query({}).then(tabs => {

@@ -1,4 +1,4 @@
-# Canvas Search - Installation Guide
+# Canvascope - Installation Guide
 
 ## Prerequisites
 
@@ -11,9 +11,9 @@
 
 ### Step 1: Download the Extension
 
-Make sure you have the `Canvas Search` folder with all these files:
+Make sure you have the `Canvascope` folder with all these files:
 ```
-Canvas Search/
+Canvascope/
 ├── manifest.json
 ├── popup.html
 ├── popup.js
@@ -49,18 +49,18 @@ Canvas Search/
 ### Step 4: Load the Extension
 
 1. Click the **"Load unpacked"** button (appears after enabling Developer mode)
-2. Navigate to your `Canvas Search` folder
+2. Navigate to your `Canvascope` folder
 3. Select the folder and click **"Select"** or **"Open"**
 
 ### Step 5: Verify Installation
 
 You should see:
-- ✅ "Canvas Search" appears in your extensions list
+- ✅ "Canvascope" appears in your extensions list
 - ✅ No error messages (red text)
 - ✅ The extension icon appears in your Chrome toolbar
 
 > 💡 **Can't see the icon?**
-> Click the puzzle piece icon (🧩) in the toolbar, then pin Canvas Search!
+> Click the puzzle piece icon (🧩) in the toolbar, then pin Canvascope!
 
 ---
 
@@ -77,7 +77,7 @@ Click on any course to view its content.
 
 ### 3. Click the Extension Icon
 
-Click the Canvas Search icon in your toolbar.
+Click the Canvascope icon in your toolbar.
 
 ### 4. Scan Your Content
 
@@ -93,10 +93,10 @@ Type anything in the search box to find your content.
 
 When you get a new version:
 
-1. Delete the old `Canvas Search` folder
+1. Delete the old `Canvascope` folder
 2. Extract the new version
 3. Go to `chrome://extensions`
-4. Click the **refresh icon** (↻) on the Canvas Search card
+4. Click the **refresh icon** (↻) on the Canvascope card
 5. Or remove and re-add the extension
 
 ---
@@ -125,16 +125,16 @@ When you get a new version:
 
 ## Uninstalling
 
-To completely remove Canvas Search:
+To completely remove Canvascope:
 
 ### Option 1: From Chrome
 1. Go to `chrome://extensions`
-2. Find "Canvas Search"
+2. Find "Canvascope"
 3. Click **"Remove"**
 4. Confirm the removal
 
 ### Option 2: Clear Data First (Recommended)
-1. Click the Canvas Search icon
+1. Click the Canvascope icon
 2. Click **"Clear All Data"**
 3. Then remove from `chrome://extensions`
 

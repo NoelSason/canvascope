@@ -4,7 +4,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Canvas Search</title>
+  <title>Canvascope</title>
   <link rel="stylesheet" href="styles.css">
 </head>
 
@@ -13,11 +13,16 @@
     <!-- Header Section -->
     <header class="header">
       <h1 class="title">
-        <svg class="title-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
-          <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
+        <svg class="title-icon" viewBox="0 0 128 128" fill="none">
+          <path d="M20 16h76v96H20z" stroke="#D32F2F" stroke-width="10" stroke-linecap="round" stroke-linejoin="round">
+          </path>
+          <path d="M20 88h76" stroke="#D32F2F" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"></path>
+          <circle cx="60" cy="52" r="22" stroke="#D32F2F" stroke-width="10" stroke-linecap="round"
+            stroke-linejoin="round"></circle>
+          <line x1="76" y1="68" x2="104" y2="96" stroke="#D32F2F" stroke-width="10" stroke-linecap="round"
+            stroke-linejoin="round"></line>
         </svg>
-        Canvas Search
+        Canvascope
       </h1>
       <p class="subtitle" id="status-text">Search your course content</p>
     </header>
@@ -35,17 +40,33 @@
 
       <!-- Filter Bar -->
       <div class="filter-bar" id="filter-bar">
-        <select id="filter-course" class="filter-select">
-          <option value="">All Courses</option>
-        </select>
-        <select id="filter-type" class="filter-select">
-          <option value="">All Types</option>
-          <option value="assignment">Assignments</option>
-          <option value="quiz">Quizzes</option>
-          <option value="discussion">Discussions</option>
-          <option value="page">Pages</option>
-          <option value="file">Files</option>
-        </select>
+        <!-- Custom Course Dropdown -->
+        <div class="custom-select-wrapper" id="course-select-wrapper">
+          <div class="custom-select-trigger" id="course-trigger">
+            <span id="course-text">All Courses</span>
+            <div class="arrow"></div>
+          </div>
+          <div class="custom-options" id="course-options">
+            <div class="custom-option selected" data-value="">All Courses</div>
+            <!-- Populated via JS -->
+          </div>
+        </div>
+
+        <!-- Custom Type Dropdown -->
+        <div class="custom-select-wrapper" id="type-select-wrapper">
+          <div class="custom-select-trigger" id="type-trigger">
+            <span id="type-text">All Types</span>
+            <div class="arrow"></div>
+          </div>
+          <div class="custom-options" id="type-options">
+            <div class="custom-option selected" data-value="">All Types</div>
+            <div class="custom-option" data-value="assignment">Assignments</div>
+            <div class="custom-option" data-value="quiz">Quizzes</div>
+            <div class="custom-option" data-value="discussion">Discussions</div>
+            <div class="custom-option" data-value="page">Pages</div>
+            <div class="custom-option" data-value="file">Files</div>
+          </div>
+        </div>
       </div>
     </div>
 

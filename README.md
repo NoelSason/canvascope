@@ -1,4 +1,4 @@
-# Canvas Search
+# ![Canvascope](docs/assets/logo-full.png)
 
 **Instantly search all your Canvas LMS course content using natural language.**
 
@@ -10,7 +10,7 @@ A privacy-first Chrome extension that indexes your Canvas courses and lets you f
 
 ---
 
-## ✨ Features
+## Features
 
 ### Core Functionality
 - **Instant Search** — Fuzzy search powered by Fuse.js finds content even with typos
@@ -25,38 +25,37 @@ A privacy-first Chrome extension that indexes your Canvas courses and lets you f
 - **Secure** — Only runs on verified Canvas domains
 
 ### User Experience
-- **Modern UI** — Clean, responsive interface with liquid glass aesthetic
-- **Dark Mode Ready** — Follows system preference
+- **Modern UI** — Clean, responsive interface with red/black aesthetic
 - **Keyboard Friendly** — Navigate results with arrow keys
 - **Fast** — Sub-50ms search latency
 
 ---
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Installation
 
 1. Download or clone this repository
 2. Open Chrome and navigate to `chrome://extensions`
 3. Enable **Developer mode** (toggle in top-right)
-4. Click **Load unpacked** and select the `Canvas Search` folder
+4. Click **Load unpacked** and select the extension folder
 5. Pin the extension for easy access
 
 ### First Use
 
 1. Navigate to your Canvas LMS (e.g., `yourschool.instructure.com`)
-2. Click the Canvas Search icon in your toolbar
+2. Click the Canvascope icon in your toolbar
 3. Click **Refresh Now** to index your courses
 4. Start searching!
 
-> 📖 For detailed instructions, see [docs/INSTALL.md](docs/INSTALL.md)
+> For detailed instructions, see [docs/INSTALL.md](docs/INSTALL.md)
 
 ---
 
-## 📁 Project Structure
+## Project Structure
 
 ```
-Canvas Search/
+Canvascope/
 ├── manifest.json       # Extension configuration
 ├── popup.html          # Search interface
 ├── popup.js            # UI logic and search handling
@@ -72,86 +71,40 @@ Canvas Search/
 └── docs/
     ├── INSTALL.md      # Installation guide
     ├── ROADMAP.md      # Development roadmap
-    ├── PRIVACY.md      # Privacy policy
-    ├── SECURITY.md     # Security documentation
-    └── TROUBLESHOOTING.md
+    └── PRIVACY.md      # Privacy policy
 ```
 
 ---
 
-## 🗺️ Roadmap
+## Roadmap
 
 ### Phase 1: Search Quality *(Current)*
+- [x] Filter by course
+- [x] Filter by content type
+- [x] Search history
+- [x] Better ranking algorithm
+- [ ] Date range filter
 
-| Feature | Status |
-|---------|--------|
-| Filter by course | ✅ Done |
-| Filter by content type | ✅ Done |
-| Search history | ✅ Done |
-| Boost recent content | 🔄 In Progress |
-| Date range filter | ⏳ Planned |
+### Phase 2: Content Extraction
+- PDF text extraction
+- Lecture slides parsing
+- Enhanced metadata
 
----
-
-### Phase 2: Content Extraction *(Coming Soon)*
-
-**PDF Text Extraction**
-- Extract searchable text from PDF files
-- Index PDF content for full-text search
-- Show specific PDF page numbers in results
-
-**Lecture Content**
-- Parse lecture slides (PPTX format)
-- Extract video transcripts when available
-- Index module descriptions and summaries
-
-**Enhanced Metadata**
-- Display due dates for assignments
-- Show file sizes in results
-- Track last modified dates
+### Phase 3: AI Enhancement
+- Semantic search
+- Smart suggestions
 
 ---
 
-### Phase 3: AI Enhancement *(Future)*
-
-**Semantic Search**
-- Embed content using local AI models
-- Vector similarity search for conceptual matching
-- "Find similar content" feature
-
-**Smart Suggestions**
-- Auto-complete search queries
-- "You might be looking for..." recommendations
-- Related content suggestions based on context
-
----
-
-## 📊 Performance Targets
-
-| Metric | Target |
-|--------|--------|
-| Search latency | < 50ms |
-| Full sync time | < 30s |
-| First-page accuracy | > 80% |
-
----
-
-## 🔒 Privacy & Security
-
-Canvas Search is designed with privacy as a core principle:
+## Privacy & Security
 
 - **Local Storage Only** — All indexed content is stored in Chrome's local storage
 - **No External Requests** — The extension never sends data to external servers
 - **Domain Verification** — Only operates on legitimate Canvas domains
-- **Minimal Permissions** — Only requests necessary Chrome permissions
-
-> 📖 Read our full [Privacy Policy](docs/PRIVACY.md) and [Security Documentation](docs/SECURITY.md)
 
 ---
 
-## 🐛 Troubleshooting
-
-Common issues and solutions:
+## Troubleshooting
 
 | Issue | Solution |
 |-------|----------|
@@ -159,44 +112,11 @@ Common issues and solutions:
 | No results showing | Click "Refresh Now" to re-sync |
 | Sync errors | Check your Canvas login status |
 
-> 📖 See [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) for more help
-
 ---
 
-## 🛠️ Development
-
-### Prerequisites
-- Google Chrome 88+
-- Basic knowledge of Chrome extensions
-
-### Local Development
-1. Make changes to the source files
-2. Go to `chrome://extensions`
-3. Click the refresh icon on Canvas Search
-4. Test your changes
-
-### Testing Checklist
-- [ ] Search returns relevant results
-- [ ] Filters work correctly
-- [ ] Auto-sync triggers on Canvas pages
-- [ ] No console errors
-
----
-
-## 📝 License
+## License
 
 MIT License — feel free to use, modify, and distribute.
-
----
-
-## 🤝 Contributing
-
-Contributions are welcome! Please:
-
-1. Check existing issues before creating new ones
-2. Follow the existing code style
-3. Test your changes thoroughly
-4. Submit a pull request with a clear description
 
 ---
 

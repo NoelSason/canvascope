@@ -1,6 +1,6 @@
 /**
  * ============================================
- * Canvas Search - Popup Script (popup.js)
+ * Canvascope - Popup Script (popup.js)
  * ============================================
  * 
  * PURPOSE:
@@ -76,7 +76,7 @@ let state = {
 // ============================================
 
 document.addEventListener('DOMContentLoaded', async () => {
-  console.log('[Canvas Search] Popup opened');
+  console.log('[Canvascope] Popup opened');
   initializeElements();
   setupEventListeners();
   await loadContent();
@@ -100,20 +100,30 @@ function initializeElements() {
   elements.refreshBtn = document.getElementById('refresh-btn');
   elements.clearDataBtn = document.getElementById('clear-data-btn');
   elements.statusText = document.getElementById('status-text');
-  elements.statsText = document.getElementById('stats-text');
   elements.statsBtn = document.getElementById('stats-btn');
-  elements.statsHint = document.getElementById('stats-hint');
-  elements.syncStatus = document.getElementById('sync-status');
-  elements.syncIcon = document.getElementById('sync-icon');
-  elements.syncText = document.getElementById('sync-text');
+
+  // Browsing Modal Elements
   elements.browseModal = document.getElementById('browse-modal');
   elements.closeBrowse = document.getElementById('close-browse');
   elements.browseTabs = document.getElementById('browse-tabs');
   elements.browseContent = document.getElementById('browse-content');
 
-  // Filter elements
-  elements.filterCourse = document.getElementById('filter-course');
-  elements.filterType = document.getElementById('filter-type');
+  // Sync Status Elements
+  elements.syncStatus = document.getElementById('sync-status');
+  elements.syncIcon = document.getElementById('sync-icon');
+  elements.syncText = document.getElementById('sync-text');
+
+  // Custom Dropdown Elements
+  elements.courseWrapper = document.getElementById('course-select-wrapper');
+  elements.courseTrigger = document.getElementById('course-trigger');
+  elements.courseOptions = document.getElementById('course-options');
+  elements.courseText = document.getElementById('course-text');
+
+  elements.typeWrapper = document.getElementById('type-select-wrapper');
+  elements.typeTrigger = document.getElementById('type-trigger');
+  elements.typeOptions = document.getElementById('type-options');
+  elements.typeText = document.getElementById('type-text');
+
   elements.searchHistory = document.getElementById('search-history');
 }
 
@@ -121,20 +131,184 @@ function setupEventListeners() {
   elements.searchInput.addEventListener('input', handleSearchInput);
   elements.searchInput.addEventListener('focus', showSearchHistory);
   elements.searchInput.addEventListener('blur', () => {
-    setTimeout(hideSearchHistory, 150);
+    // Delay hiding to allow clicking on history items
+    setTimeout(() => {
+      // Don't hide if we clicked a history item (handled by click event)
+    }, 200);
   });
+
+  // Close search history when clicking outside
+  document.addEventListener('click', (e) => {
+    if (!elements.searchHistory.contains(e.target) && e.target !== elements.searchInput) {
+      hideSearchHistory();
+    }
+
+    // Close custom dropdowns when clicking outside
+    if (!elements.courseWrapper.contains(e.target)) {
+      elements.courseWrapper.classList.remove('open');
+    }
+    if (!elements.typeWrapper.contains(e.target)) {
+      elements.typeWrapper.classList.remove('open');
+    }
+  });
+
   elements.clearSearchBtn.addEventListener('click', clearSearch);
   elements.refreshBtn.addEventListener('click', handleRefresh);
-  elements.clearDataBtn.addEventListener('click', handleClearData);
-  elements.statsBtn.addEventListener('click', openBrowseModal);
-  elements.closeBrowse.addEventListener('click', closeBrowseModal);
+  if (elements.clearDataBtn) elements.clearDataBtn.addEventListener('click', handleClearData);
+  if (elements.statsBtn) elements.statsBtn.addEventListener('click', openBrowseModal);
+  if (elements.closeBrowse) elements.closeBrowse.addEventListener('click', closeBrowseModal);
 
-  // Filter event listeners
-  elements.filterCourse.addEventListener('change', handleFilterChange);
-  elements.filterType.addEventListener('change', handleFilterChange);
+  // Custom Dropdown Listeners
+  setupCustomDropdown(elements.courseWrapper, elements.courseTrigger, elements.courseOptions, 'course');
+  setupCustomDropdown(elements.typeWrapper, elements.typeTrigger, elements.typeOptions, 'type');
 
   // Listen for background updates
   chrome.runtime.onMessage.addListener(handleBackgroundMessage);
+}
+
+/**
+ * Setup custom dropdown behavior
+ */
+function setupCustomDropdown(wrapper, trigger, optionsContainer, filterType) {
+  // Make trigger focusable
+  trigger.setAttribute('tabindex', '0');
+
+  // Toggle dropdown
+  trigger.addEventListener('click', () => {
+    const wasOpen = wrapper.classList.contains('open');
+
+    // Close other dropdowns
+    document.querySelectorAll('.custom-select-wrapper').forEach(el => {
+      if (el !== wrapper) el.classList.remove('open');
+    });
+
+    if (!wasOpen) {
+      wrapper.classList.add('open');
+      // Scroll to selected option
+      const selected = optionsContainer.querySelector('.selected');
+      if (selected) {
+        selected.scrollIntoView({ block: 'nearest' });
+      }
+    } else {
+      wrapper.classList.remove('open');
+    }
+  });
+
+  // Handle option selection
+  optionsContainer.addEventListener('click', (e) => {
+    const option = e.target.closest('.custom-option');
+    if (!option) return;
+    selectOption(option, wrapper, optionsContainer, filterType);
+  });
+
+  // Keyboard Navigation
+  let searchString = '';
+  let searchTimeout = null;
+
+  trigger.addEventListener('keydown', (e) => {
+    // Navigate with arrows
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      // If closed, open it
+      if (!wrapper.classList.contains('open')) {
+        wrapper.classList.add('open');
+      }
+
+      const options = Array.from(optionsContainer.querySelectorAll('.custom-option'));
+      const currentIndex = options.findIndex(opt => opt.classList.contains('selected'));
+      let nextIndex = 0;
+
+      if (currentIndex !== -1) {
+        if (e.key === 'ArrowDown') nextIndex = Math.min(currentIndex + 1, options.length - 1);
+        else nextIndex = Math.max(currentIndex - 1, 0);
+      }
+
+      const nextOption = options[nextIndex];
+      if (nextOption) {
+        // Just highlight/scroll to it, don't select yet until Enter? 
+        // Or select immediately like native select? Native select updates immediately.
+        selectOption(nextOption, wrapper, optionsContainer, filterType, false); // false = don't close
+        nextOption.scrollIntoView({ block: 'nearest' });
+      }
+      return;
+    }
+
+    // Select with Enter
+    if (e.key === 'Enter') {
+      if (wrapper.classList.contains('open')) {
+        e.preventDefault();
+        wrapper.classList.remove('open');
+      } else {
+        wrapper.classList.add('open');
+      }
+      return;
+    }
+
+    // Close with Escape
+    if (e.key === 'Escape') {
+      wrapper.classList.remove('open');
+      trigger.focus();
+      return;
+    }
+
+    // Type to search
+    // Allow alphanumerics, spaces, dashes, periods
+    if (e.key.length === 1 && e.key.match(/^[a-z0-9\s.-]$/i)) {
+      clearTimeout(searchTimeout);
+      searchString += e.key.toLowerCase();
+
+      const options = Array.from(optionsContainer.querySelectorAll('.custom-option'));
+      const match = options.find(opt => opt.textContent.toLowerCase().startsWith(searchString));
+
+      if (match) {
+        if (!wrapper.classList.contains('open')) {
+          wrapper.classList.add('open');
+        }
+        selectOption(match, wrapper, optionsContainer, filterType, false);
+        match.scrollIntoView({ block: 'nearest' });
+      }
+
+      searchTimeout = setTimeout(() => {
+        searchString = '';
+      }, 3000); // Reset search after 3 seconds for slower typists
+    }
+
+    // Handle Backspace
+    if (e.key === 'Backspace') {
+      clearTimeout(searchTimeout);
+      searchString = searchString.slice(0, -1);
+      searchTimeout = setTimeout(() => {
+        searchString = '';
+      }, 3000);
+    }
+  });
+}
+
+function selectOption(option, wrapper, optionsContainer, filterType, close = true) {
+  // Remove selected class from siblings
+  optionsContainer.querySelectorAll('.custom-option').forEach(el => {
+    el.classList.remove('selected');
+  });
+
+  // Select this option
+  option.classList.add('selected');
+
+  // Update text and value
+  const value = option.dataset.value;
+  const text = option.textContent;
+
+  wrapper.querySelector('span').textContent = text;
+
+  if (close) {
+    wrapper.classList.remove('open');
+  }
+
+  // Update state and trigger filter
+  // Only trigger update if value changed
+  if (state.filters[filterType] !== value) {
+    state.filters[filterType] = value;
+    handleFilterChange();
+  }
 }
 
 // ============================================
@@ -149,7 +323,7 @@ async function getBackgroundStatus() {
       updateSyncStatus(response);
     }
   } catch (e) {
-    console.log('[Canvas Search] Could not get background status');
+    console.log('[Canvascope] Could not get background status');
   }
 }
 
@@ -174,7 +348,7 @@ async function checkCurrentTab() {
       url.pathname.includes('/quizzes')) {
       // Likely Canvas, add domain
       await chrome.runtime.sendMessage({ action: 'addDomain', domain: hostname });
-      console.log('[Canvas Search] Auto-detected Canvas domain from URL:', hostname);
+      console.log('[Canvascope] Auto-detected Canvas domain from URL:', hostname);
     }
   } catch (e) {
     // Silently ignore - this is expected when not on a Canvas page
@@ -182,7 +356,7 @@ async function checkCurrentTab() {
 }
 
 function handleBackgroundMessage(message) {
-  console.log('[Canvas Search] Background message:', message.type);
+  console.log('[Canvascope] Background message:', message.type);
 
   switch (message.type) {
     case 'scanStarted':
@@ -280,38 +454,89 @@ function initializeFuse() {
 
 function applyFilters() {
   state.filteredContent = state.indexedContent.filter(item => {
-    if (state.filters.course && item.courseName !== state.filters.course) return false;
-    if (state.filters.type && item.type !== state.filters.type) return false;
+    // Course filter - use includes for partial matching
+    if (state.filters.course) {
+      const itemCourse = (item.courseName || '').toLowerCase();
+      const filterCourse = state.filters.course.toLowerCase();
+      // Allow exact match or partial match
+      if (itemCourse !== filterCourse && !itemCourse.includes(filterCourse)) {
+        return false;
+      }
+    }
+    // Type filter - exact match
+    if (state.filters.type && item.type !== state.filters.type) {
+      return false;
+    }
     return true;
   });
+  console.log(`[Canvascope] Filtered: ${state.filteredContent.length} of ${state.indexedContent.length} items`);
 }
 
 function handleFilterChange() {
-  state.filters.course = elements.filterCourse.value;
-  state.filters.type = elements.filterType.value;
+  // State is already updated by the click handler in setupCustomDropdown
   initializeFuse();
 
   // Re-run search if there's a query
   const query = elements.searchInput.value.trim();
   if (query.length > 0) {
     performSearch(query);
+  } else {
+    updateUI(); // Show all filtered results if no query
   }
 }
 
 function populateCourseFilter() {
-  // Get unique courses
-  const courses = [...new Set(state.indexedContent.map(item => item.courseName).filter(Boolean))];
-  courses.sort();
-  state.courses = courses;
+  const courses = new Set();
 
-  // Clear and repopulate
-  elements.filterCourse.innerHTML = '<option value="">All Courses</option>';
-  courses.forEach(course => {
-    const option = document.createElement('option');
-    option.value = course;
-    option.textContent = course.length > 30 ? course.substring(0, 30) + '...' : course;
-    elements.filterCourse.appendChild(option);
+  // Extract unique courses
+  state.indexedContent.forEach(item => {
+    if (item.courseName) {
+      courses.add(item.courseName.trim());
+    }
   });
+
+  // Clear existing options (except "All Courses")
+  // Note: first child is "All Courses"
+  const allCoursesOption = elements.courseOptions.firstElementChild;
+  elements.courseOptions.innerHTML = '';
+  if (allCoursesOption) {
+    elements.courseOptions.appendChild(allCoursesOption);
+  } else {
+    // Recreate if missing
+    const opt = document.createElement('div');
+    opt.className = 'custom-option selected';
+    opt.dataset.value = '';
+    opt.textContent = 'All Courses';
+    elements.courseOptions.appendChild(opt);
+  }
+
+  // Add course options
+  Array.from(courses).sort().forEach(course => {
+    // Skip invalid course names
+    if (course === 'Dashboard' || course.startsWith('Announcements - ') || course.includes(' - ')) return;
+
+    const option = document.createElement('div');
+    option.className = 'custom-option';
+    if (course === state.filters.course) {
+      option.classList.add('selected');
+    }
+    option.dataset.value = course;
+    option.textContent = course;
+    elements.courseOptions.appendChild(option);
+  });
+
+  // Update trigger text if valid
+  if (state.filters.course) {
+    const selectedOption = Array.from(elements.courseOptions.children).find(opt => opt.dataset.value === state.filters.course);
+    if (selectedOption) {
+      elements.courseText.textContent = selectedOption.textContent;
+    } else {
+      // Reset if course not found
+      state.filters.course = '';
+      elements.courseText.textContent = 'All Courses';
+      handleFilterChange();
+    }
+  }
 }
 
 function handleSearchInput(event) {
@@ -415,7 +640,7 @@ async function saveSearchToHistory(query) {
   try {
     await chrome.storage.local.set({ searchHistory: state.searchHistory });
   } catch (e) {
-    console.log('[Canvas Search] Could not save search history');
+    console.log('[Canvascope] Could not save search history');
   }
 }
 
@@ -559,12 +784,62 @@ function clearResultsContainer() {
 async function loadContent() {
   try {
     const result = await chrome.storage.local.get(['indexedContent']);
-    state.indexedContent = result.indexedContent || [];
-    console.log(`[Canvas Search] Loaded ${state.indexedContent.length} items`);
+    let content = result.indexedContent || [];
+
+    // Deduplicate by normalizing URLs (strip module_item_id)
+    content = deduplicateContent(content);
+
+    state.indexedContent = content;
+    console.log(`[Canvascope] Loaded ${state.indexedContent.length} items (after dedup)`);
   } catch (error) {
-    console.error('[Canvas Search] Error loading content:', error);
+    console.error('[Canvascope] Error loading content:', error);
     state.indexedContent = [];
   }
+}
+
+/**
+ * Remove duplicate entries with same base URL
+ * URLs like /assignments/123?module_item_id=456 should match /assignments/123
+ */
+function deduplicateContent(content) {
+  const seen = new Map();
+
+  for (const item of content) {
+    // Create a strict key based on Title + Course + Type
+    // This merges "PLWS 10" from "Chem 3A" regardless of the URL
+    // We include type to avoid merging a file named "Syllabus" with a page named "Syllabus"
+    const key = `${item.title.trim()}|${item.courseName.trim()}|${item.type}`;
+
+    if (!seen.has(key)) {
+      seen.set(key, item);
+    } else {
+      // If we already have this item, check if the new one has a "better" URL
+      const existing = seen.get(key);
+
+      // Prefer canonical URLs (e.g. /assignments/123) over module item URLs (/courses/123/modules/items/456)
+      const isCanonical = (url) => {
+        return url.includes('/assignments/') ||
+          url.includes('/quizzes/') ||
+          url.includes('/files/') ||
+          url.includes('/discussion_topics/');
+      };
+
+      const existingIsCanonical = isCanonical(existing.url);
+      const newIsCanonical = isCanonical(item.url);
+
+      if (newIsCanonical && !existingIsCanonical) {
+        // Replace with new item if it has a better URL
+        seen.set(key, item);
+      } else if (newIsCanonical === existingIsCanonical) {
+        // If both are same "quality", prefer the shorter URL
+        if (item.url.length < existing.url.length) {
+          seen.set(key, item);
+        }
+      }
+    }
+  }
+
+  return Array.from(seen.values());
 }
 
 async function handleRefresh() {
@@ -602,7 +877,7 @@ async function handleClearData() {
     clearSearch();
     showSyncedStatus('Data cleared');
   } catch (error) {
-    console.error('[Canvas Search] Error clearing data:', error);
+    console.error('[Canvascope] Error clearing data:', error);
   }
 }
 

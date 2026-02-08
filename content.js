@@ -1,6 +1,6 @@
 /**
  * ============================================
- * Canvas Search - Content Script (content.js)
+ * Canvascope - Content Script (content.js)
  * ============================================
  * 
  * PURPOSE:
@@ -141,7 +141,7 @@ function isCanvasDomain() {
  * The popup can't directly access page content, so it sends us messages.
  */
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    console.log('[Canvas Search Content] Received message:', message.action);
+    console.log('[Canvascope Content] Received message:', message.action);
 
     // Special case: Check if this is Canvas (can work without domain verification)
     if (message.action === 'checkIfCanvas') {
@@ -221,7 +221,7 @@ function detectCanvasPage() {
  * 4. Send results back to popup
  */
 async function handleStartScan() {
-    console.log('[Canvas Search Content] Starting scan...');
+    console.log('[Canvascope Content] Starting scan...');
 
     try {
         // Report starting
@@ -229,7 +229,7 @@ async function handleStartScan() {
 
         // Get course context
         const courseContext = getCourseContext();
-        console.log('[Canvas Search Content] Course context:', courseContext);
+        console.log('[Canvascope Content] Course context:', courseContext);
 
         sendProgress(10, 'Finding content...');
 
@@ -249,10 +249,10 @@ async function handleStartScan() {
             content: uniqueContent
         });
 
-        console.log(`[Canvas Search Content] Scan complete. Found ${uniqueContent.length} items.`);
+        console.log(`[Canvascope Content] Scan complete. Found ${uniqueContent.length} items.`);
 
     } catch (error) {
-        console.error('[Canvas Search Content] Scan error:', error);
+        console.error('[Canvascope Content] Scan error:', error);
 
         chrome.runtime.sendMessage({
             type: 'scanError',
@@ -323,7 +323,7 @@ function scanPageContent(courseContext) {
         // Scan dashboard for course cards
         const dashboardContent = scanDashboard();
         content.push(...dashboardContent);
-        console.log(`[Canvas Search Content] Dashboard scan found ${dashboardContent.length} items`);
+        console.log(`[Canvascope Content] Dashboard scan found ${dashboardContent.length} items`);
     }
 
     // Scan modules (main source of content on course pages)
@@ -358,7 +358,7 @@ function scanModules(courseContext) {
     const content = [];
     const modules = document.querySelectorAll(CANVAS_SELECTORS.modules);
 
-    console.log(`[Canvas Search Content] Found ${modules.length} modules`);
+    console.log(`[Canvascope Content] Found ${modules.length} modules`);
 
     modules.forEach((module, moduleIndex) => {
         // Get module name
@@ -550,7 +550,7 @@ function scanDashboard() {
     // Dashboard course cards (new Canvas UI)
     const courseCards = document.querySelectorAll('.ic-DashboardCard, [class*="DashboardCard"]');
 
-    console.log(`[Canvas Search Content] Found ${courseCards.length} dashboard cards`);
+    console.log(`[Canvascope Content] Found ${courseCards.length} dashboard cards`);
 
     courseCards.forEach(card => {
         // Get course link
@@ -667,13 +667,27 @@ function scanGenericLinks(courseContext) {
             else if (url.includes('/announcements/')) type = 'announcement';
             else if (url.includes('/grades')) type = 'grades';
 
+            // IMPORTANT: Check if this link belongs to the current course context
+            const linkCourseId = extractCourseId(link.href);
+            let itemCourseName = courseContext.title || '';
+            let itemModuleName = courseContext.title || 'Canvas';
+
+            // If the link is for a different course (e.g. from "To Do" sidebar),
+            // don't attribute it to the current course name unless IDs match
+            if (courseContext.id && linkCourseId && courseContext.id !== linkCourseId) {
+                // It's from another course. We don't know the name easily.
+                // Leave it empty so it doesn't get incorrectly filtered.
+                itemCourseName = '';
+                itemModuleName = 'Other Course';
+            }
+
             content.push({
                 title: title.trim(),
                 url: link.href,
                 type: type,
-                moduleName: courseContext.title || 'Canvas',
-                courseName: courseContext.title || '',
-                courseId: courseContext.id || extractCourseId(link.href),
+                moduleName: itemModuleName,
+                courseName: itemCourseName,
+                courseId: linkCourseId || courseContext.id,
                 scannedAt: new Date().toISOString()
             });
         }
@@ -783,7 +797,7 @@ function sendProgress(percent, status) {
  * so developers can verify it's running correctly.
  */
 if (isCanvasDomain()) {
-    console.log('[Canvas Search Content] Content script loaded on Canvas page');
+    console.log('[Canvascope Content] Content script loaded on Canvas page');
 } else {
-    console.log('[Canvas Search Content] Not a Canvas page, staying dormant');
+    console.log('[Canvascope Content] Not a Canvas page, staying dormant');
 }
