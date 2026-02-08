@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Canvas Search</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+
+<body>
+  <div class="container">
+    <!-- Header Section -->
+    <header class="header">
+      <h1 class="title">
+        <svg class="title-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
+          <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
+        </svg>
+        Canvas Search
+      </h1>
+      <p class="subtitle" id="status-text">Search your course content</p>
+    </header>
+
+    <!-- Search Section -->
+    <div class="search-section">
+      <div class="search-wrapper">
+        <input type="text" id="search-input" class="search-input" placeholder="e.g., 'lecture 7' or 'midterm'"
+          autocomplete="off" spellcheck="false">
+        <button id="clear-search" class="clear-btn" title="Clear search" aria-label="Clear search">×</button>
+      </div>
+
+      <!-- Search History Dropdown -->
+      <div id="search-history" class="search-history hidden"></div>
+
+      <!-- Filter Bar -->
+      <div class="filter-bar" id="filter-bar">
+        <select id="filter-course" class="filter-select">
+          <option value="">All Courses</option>
+        </select>
+        <select id="filter-type" class="filter-select">
+          <option value="">All Types</option>
+          <option value="assignment">Assignments</option>
+          <option value="quiz">Quizzes</option>
+          <option value="discussion">Discussions</option>
+          <option value="page">Pages</option>
+          <option value="file">Files</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- Results Section -->
+    <div id="results-container" class="results-container">
+      <div class="empty-state" id="empty-state">
+        <div class="empty-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="11" cy="11" r="8"></circle>
+            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+          </svg>
+        </div>
+        <p class="empty-text">Type to search your Canvas content</p>
+      </div>
+    </div>
+
+    <!-- Sync Status Section -->
+    <div id="sync-status" class="sync-status synced">
+      <span id="sync-icon" class="sync-icon">✓</span>
+      <span id="sync-text" class="sync-text">Synced</span>
+    </div>
+
+    <!-- Stats Section -->
+    <div class="stats-section">
+      <button id="stats-btn" class="stats-btn">
+        <span id="stats-text" class="stats-text">Loading...</span>
+        <span class="stats-hint" id="stats-hint"></span>
+      </button>
+    </div>
+
+    <!-- Footer Actions -->
+    <div class="footer-actions">
+      <button id="refresh-btn" class="action-btn secondary-btn">
+        <svg class="btn-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          stroke-width="2">
+          <polyline points="23 4 23 10 17 10"></polyline>
+          <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+        </svg>
+        <span class="btn-text">Refresh Now</span>
+      </button>
+      <button id="clear-data-btn" class="action-btn danger-btn">
+        <svg class="btn-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          stroke-width="2">
+          <polyline points="3 6 5 6 21 6"></polyline>
+          <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+        </svg>
+        <span class="btn-text">Clear</span>
+      </button>
+    </div>
+
+    <!-- Browse Modal -->
+    <div id="browse-modal" class="browse-modal hidden">
+      <div class="browse-header">
+        <h2 class="browse-title">All Indexed Content</h2>
+        <button id="close-browse" class="close-btn" aria-label="Close">×</button>
+      </div>
+      <div class="browse-tabs" id="browse-tabs"></div>
+      <div class="browse-content" id="browse-content"></div>
+    </div>
+  </div>
+
+  <script src="lib/fuse.min.js"></script>
+  <script src="popup.js"></script>
+</body>
+
+</html>
