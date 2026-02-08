@@ -139,6 +139,17 @@ function setupEventListeners() {
     }, 200);
   });
 
+  // Press Enter to open first result
+  elements.searchInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const firstResult = elements.resultsContainer.querySelector('.result-item');
+      if (firstResult) {
+        firstResult.click();
+      }
+    }
+  });
+
   // Close search history when clicking outside
   document.addEventListener('click', (e) => {
     if (!elements.searchHistory.contains(e.target) && e.target !== elements.searchInput) {
@@ -732,7 +743,8 @@ function displayResults(results) {
 
 function openResult(item) {
   if (item.url && isValidCanvasUrl(item.url)) {
-    chrome.tabs.create({ url: item.url });
+    chrome.tabs.update({ url: item.url });
+    window.close(); // Close popup after navigation
   }
 }
 
