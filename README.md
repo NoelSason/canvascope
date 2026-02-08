@@ -1,4 +1,4 @@
-# ![Icon](docs/assets/icon-128.png) Canvascope
+# <img src="docs/assets/icon-128.png" height="40" valign="bottom"> Canvascope
 
 **Instantly search all your Canvas LMS course content using natural language.**
 

@@ -100,6 +100,8 @@ function initializeElements() {
   elements.refreshBtn = document.getElementById('refresh-btn');
   elements.clearDataBtn = document.getElementById('clear-data-btn');
   elements.statusText = document.getElementById('status-text');
+  elements.statsText = document.getElementById('stats-text');
+  elements.statsHint = document.getElementById('stats-hint');
   elements.statsBtn = document.getElementById('stats-btn');
 
   // Browsing Modal Elements
