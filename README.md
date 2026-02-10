@@ -11,7 +11,7 @@ A privacy-first Chrome extension that indexes your Canvas courses and lets you f
 > [!IMPORTANT]
 > **Beta Version 1.0.1 is now available!**
 > 
-> We are currently onboarding beta testers. If you're testing this version, please use the form below to report bugs and feedback:
+> We are currently onboarding beta testers. To get started and help us improve Canvascope, please fill out the onboarding form below:
 > 
 > 👉 **[Beta Tester Onboarding Form](https://forms.gle/f1f1JEmobmM1bapT6)**
 
