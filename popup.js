@@ -90,7 +90,31 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Check if current tab is Canvas and auto-detect domain
   checkCurrentTab();
+
+  // Check if running in overlay mode
+  checkOverlayMode();
 });
+
+function checkOverlayMode() {
+  // Check if running in iframe
+  if (window.self !== window.top) {
+    document.body.classList.add('in-overlay');
+
+    // Listen for messages from parent
+    window.addEventListener('message', (event) => {
+      if (event.data && event.data.type === 'FOCUS_INPUT') {
+        setTimeout(() => elements.searchInput.focus(), 50);
+      }
+    });
+
+    // Handle Escape key to close overlay
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        window.parent.postMessage({ type: 'CLOSE_OVERLAY' }, '*');
+      }
+    });
+  }
+}
 
 function initializeElements() {
   elements.searchInput = document.getElementById('search-input');
@@ -352,7 +376,10 @@ async function checkCurrentTab() {
     const hostname = url.hostname.toLowerCase();
 
     // Skip if already a known domain pattern
-    if (hostname.endsWith('.instructure.com')) return;
+    if (hostname.endsWith('.instructure.com') ||
+      hostname === 'bcourses.berkeley.edu' ||
+      hostname === 'bruinlearn.ucla.edu' ||
+      hostname === 'canvas.ucsd.edu') return;
 
     // Try to detect Canvas from URL patterns (content script may not be loaded)
     if (url.pathname.includes('/courses/') ||
@@ -744,7 +771,13 @@ function displayResults(results) {
 function openResult(item) {
   if (item.url && isValidCanvasUrl(item.url)) {
     chrome.tabs.update({ url: item.url });
-    window.close(); // Close popup after navigation
+
+    // If in overlay mode, tell parent to close
+    if (window.self !== window.top) {
+      window.parent.postMessage({ type: 'CLOSE_OVERLAY' }, '*');
+    } else {
+      window.close(); // Close popup after navigation
+    }
   }
 }
 
@@ -754,7 +787,9 @@ function isValidCanvasUrl(url) {
     if (parsed.protocol !== 'https:') return false;
     const hostname = parsed.hostname.toLowerCase();
     return hostname.endsWith('.instructure.com') ||
-      hostname === 'bcourses.berkeley.edu';
+      hostname === 'bcourses.berkeley.edu' ||
+      hostname === 'bruinlearn.ucla.edu' ||
+      hostname === 'canvas.ucsd.edu';
   } catch {
     return false;
   }

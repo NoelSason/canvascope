@@ -872,3 +872,22 @@ body::after {
 .result-item {
   animation: fadeIn 0.15s ease;
 }
+
+/* ============================================
+   OVERLAY MODE
+   ============================================ */
+body.in-overlay {
+  width: 100%;
+  height: 100%;
+  border-radius: 0;
+  /* Let iframe handle radius */
+  box-shadow: none !important;
+  /* Let iframe handle shadow */
+  background: var(--bg-gradient);
+}
+
+body.in-overlay .container {
+  min-height: auto;
+  height: 100%;
+  padding: 20px;
+}

@@ -119,8 +119,10 @@ function isCanvasDomain() {
         return true;
     }
 
-    // UC Berkeley Canvas
-    if (hostname === 'bcourses.berkeley.edu') {
+    // UC Berkeley, UCLA, UCSD
+    if (hostname === 'bcourses.berkeley.edu' ||
+        hostname === 'bruinlearn.ucla.edu' ||
+        hostname === 'canvas.ucsd.edu') {
         return true;
     }
 
@@ -728,7 +730,9 @@ function isCanvasUrl(url) {
         const parsed = new URL(url);
         const hostname = parsed.hostname.toLowerCase();
         return hostname.endsWith('.instructure.com') ||
-            hostname === 'bcourses.berkeley.edu';
+            hostname === 'bcourses.berkeley.edu' ||
+            hostname === 'bruinlearn.ucla.edu' ||
+            hostname === 'canvas.ucsd.edu';
     } catch {
         return false;
     }
@@ -801,3 +805,140 @@ if (isCanvasDomain()) {
 } else {
     console.log('[Canvascope Content] Not a Canvas page, staying dormant');
 }
+
+// ============================================
+// SEARCH OVERLAY (Cmd+K)
+// ============================================
+
+let overlayContainer = null;
+let overlayIframe = null;
+let overlayVisible = false;
+
+/**
+ * Create and inject the search overlay
+ */
+function createOverlay() {
+    if (overlayContainer) return;
+
+    // Create container
+    overlayContainer = document.createElement('div');
+    overlayContainer.id = 'canvascope-overlay-container';
+    overlayContainer.style.cssText = `
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100vw;
+        height: 100vh;
+        z-index: 2147483647; /* Max z-index */
+        display: none;
+        align-items: center;
+        justify-content: center;
+        background: rgba(0, 0, 0, 0.4);
+        backdrop-filter: blur(3px);
+    `;
+
+    // Create iframe
+    overlayIframe = document.createElement('iframe');
+    overlayIframe.src = chrome.runtime.getURL('popup.html?mode=overlay');
+    overlayIframe.allow = "clipboard-write"; // Allow copying
+    overlayIframe.style.cssText = `
+        width: 420px;
+        height: 550px;
+        border: none;
+        border-radius: 16px;
+        box-shadow: 0 20px 60px rgba(0,0,0,0.4);
+        background: transparent;
+        transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.2s ease;
+        transform: scale(0.95);
+        opacity: 0;
+    `;
+
+    // Close on click outside
+    overlayContainer.addEventListener('click', (e) => {
+        if (e.target === overlayContainer) {
+            hideOverlay();
+        }
+    });
+
+    overlayContainer.appendChild(overlayIframe);
+    document.body.appendChild(overlayContainer);
+}
+
+/**
+ * Toggle overlay visibility
+ */
+function toggleOverlay() {
+    if (!overlayContainer) createOverlay();
+
+    if (overlayVisible) {
+        hideOverlay();
+    } else {
+        showOverlay();
+    }
+}
+
+function showOverlay() {
+    if (!overlayContainer) createOverlay();
+
+    overlayVisible = true;
+    overlayContainer.style.display = 'flex';
+    document.body.style.overflow = 'hidden'; // Prevent background scrolling
+
+    // Focus iframe
+    requestAnimationFrame(() => {
+        overlayIframe.style.transform = 'scale(1)';
+        overlayIframe.style.opacity = '1';
+        overlayIframe.focus();
+        // Send message to popup to focus input
+        overlayIframe.contentWindow.postMessage({ type: 'FOCUS_INPUT' }, '*');
+    });
+}
+
+function hideOverlay() {
+    if (!overlayContainer) return;
+
+    overlayVisible = false;
+    overlayIframe.style.transform = 'scale(0.95)';
+    overlayIframe.style.opacity = '0';
+    document.body.style.overflow = '';
+
+    setTimeout(() => {
+        overlayContainer.style.display = 'none';
+        // Reset iframe src to reset state? No, keep it for speed.
+    }, 200);
+}
+
+// Listen for Command+K (Mac) or Ctrl+K (Windows)
+document.addEventListener('keydown', (e) => {
+    // Check for Cmd+K (Mac) or Ctrl+K (Windows/Linux)
+    if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault();
+        e.stopPropagation();
+
+        // Ensure we are on a valid page (double check)
+        if (isCanvasDomain() || detectCanvasPage()) {
+            toggleOverlay();
+        }
+    }
+
+    // Close on Escape if overlay is open
+    if (e.key === 'Escape' && overlayVisible) {
+        e.preventDefault();
+        e.stopPropagation();
+        hideOverlay();
+    }
+});
+
+// Listen for messages from the iframe/popup
+window.addEventListener('message', (event) => {
+    if (event.data && event.data.type === 'CLOSE_OVERLAY') {
+        hideOverlay();
+    }
+});
+
+// Also listen to runtime messages just in case
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (message.action === 'closeOverlay') {
+        hideOverlay();
+    }
+});

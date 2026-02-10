@@ -25,13 +25,17 @@
   ],
   "host_permissions": [
     "*://*.instructure.com/*",
-    "*://bcourses.berkeley.edu/*"
+    "*://bcourses.berkeley.edu/*",
+    "*://bruinlearn.ucla.edu/*",
+    "*://canvas.ucsd.edu/*"
   ],
   "content_scripts": [
     {
       "matches": [
         "*://*.instructure.com/*",
-        "*://bcourses.berkeley.edu/*"
+        "*://bcourses.berkeley.edu/*",
+        "*://bruinlearn.ucla.edu/*",
+        "*://canvas.ucsd.edu/*"
       ],
       "js": [
         "content.js"
@@ -45,5 +49,18 @@
   },
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'none'; base-uri 'none';"
-  }
+  },
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "popup.html",
+        "popup.js",
+        "styles.css",
+        "icons/*"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
+    }
+  ]
 }

@@ -127,7 +127,7 @@ async function triggerBackgroundScan(tabUrl = null) {
     }
 
     // Determine base URL
-    let baseUrl = 'https://bcourses.berkeley.edu';
+    let baseUrl = 'https://bcourses.berkeley.edu'; // Default fallback
     if (tabUrl) {
         try {
             const parsed = new URL(tabUrl);
@@ -423,6 +423,14 @@ function isCanvasDomain(url) {
         if (CANVAS_DOMAINS.some(domain => hostname.endsWith(domain))) {
             return true;
         }
+
+        // Check specific school domains
+        if (hostname === 'bcourses.berkeley.edu' ||
+            hostname === 'bruinlearn.ucla.edu' ||
+            hostname === 'canvas.ucsd.edu') {
+            return true;
+        }
+
         // Check custom domains
         if (customDomains.includes(hostname)) {
             return true;
