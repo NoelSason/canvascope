@@ -4,9 +4,16 @@
 
 A privacy-first Chrome extension that indexes your Canvas courses and lets you find assignments, files, lectures, and more—all in under 50ms.
 
-![Version](https://img.shields.io/badge/version-1.0.0-blue)
+![Version](https://img.shields.io/badge/version-1.0.1%20Beta-orange)
 ![Chrome](https://img.shields.io/badge/Chrome-88%2B-green)
 ![License](https://img.shields.io/badge/license-MIT-purple)
+
+> [!IMPORTANT]
+> **Beta Version 1.0.1 is now available!**
+> 
+> We are currently onboarding beta testers. If you're testing this version, please use the form below to report bugs and feedback:
+> 
+> 👉 **[Beta Tester Onboarding Form](https://forms.gle/f1f1JEmobmM1bapT6)**
 
 ---
 

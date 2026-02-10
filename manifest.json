@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
-  "name": "Canvascope",
-  "version": "1.0.0",
+  "name": "[BETA] Canvascope",
+  "version": "1.0.1",
   "description": "Instantly search all your Canvas course content using natural language. Privacy-first, all data stays local.",
   "icons": {
     "16": "icons/icon16.png",
@@ -15,7 +15,7 @@
       "16": "icons/icon16.png",
       "32": "icons/icon32.png"
     },
-    "default_title": "Canvascope"
+    "default_title": "[BETA] Canvascope"
   },
   "permissions": [
     "storage",
