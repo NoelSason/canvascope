@@ -427,7 +427,8 @@ function isCanvasDomain(url) {
         // Check specific school domains
         if (hostname === 'bcourses.berkeley.edu' ||
             hostname === 'bruinlearn.ucla.edu' ||
-            hostname === 'canvas.ucsd.edu') {
+            hostname === 'canvas.ucsd.edu' ||
+            hostname === 'canvas.asu.edu') {
             return true;
         }
 

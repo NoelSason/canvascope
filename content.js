@@ -122,7 +122,8 @@ function isCanvasDomain() {
     // UC Berkeley, UCLA, UCSD
     if (hostname === 'bcourses.berkeley.edu' ||
         hostname === 'bruinlearn.ucla.edu' ||
-        hostname === 'canvas.ucsd.edu') {
+        hostname === 'canvas.ucsd.edu' ||
+        hostname === 'canvas.asu.edu') {
         return true;
     }
 
@@ -732,7 +733,8 @@ function isCanvasUrl(url) {
         return hostname.endsWith('.instructure.com') ||
             hostname === 'bcourses.berkeley.edu' ||
             hostname === 'bruinlearn.ucla.edu' ||
-            hostname === 'canvas.ucsd.edu';
+            hostname === 'canvas.ucsd.edu' ||
+            hostname === 'canvas.asu.edu';
     } catch {
         return false;
     }

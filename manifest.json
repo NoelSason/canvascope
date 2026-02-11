@@ -27,7 +27,8 @@
     "*://*.instructure.com/*",
     "*://bcourses.berkeley.edu/*",
     "*://bruinlearn.ucla.edu/*",
-    "*://canvas.ucsd.edu/*"
+    "*://canvas.ucsd.edu/*",
+    "*://canvas.asu.edu/*"
   ],
   "content_scripts": [
     {
@@ -35,7 +36,8 @@
         "*://*.instructure.com/*",
         "*://bcourses.berkeley.edu/*",
         "*://bruinlearn.ucla.edu/*",
-        "*://canvas.ucsd.edu/*"
+        "*://canvas.ucsd.edu/*",
+        "*://canvas.asu.edu/*"
       ],
       "js": [
         "content.js"
