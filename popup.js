@@ -57,6 +57,8 @@ const elements = {};
 // STATE
 // ============================================
 
+const MAX_RECENTS = 5;
+
 let state = {
   fuse: null,
   indexedContent: [],
@@ -68,7 +70,12 @@ let state = {
     type: ''
   },
   searchHistory: [],
-  courses: []
+  courses: [],
+  isOverlayMode: false,
+  overlayHighlightIndex: 0,
+  lastSearchTimeMs: 0,
+  lastResultCount: 0,
+  recentlyOpened: []
 };
 
 // ============================================
@@ -81,6 +88,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupEventListeners();
   await loadContent();
   await loadSearchHistory();
+  await loadRecentlyOpened();
   initializeFuse();
   updateUI();
   elements.searchInput.focus();
@@ -96,9 +104,36 @@ document.addEventListener('DOMContentLoaded', async () => {
 });
 
 function checkOverlayMode() {
-  // Check if running in iframe
+  // Check if running in iframe (overlay mode via Cmd+K)
   if (window.self !== window.top) {
+    state.isOverlayMode = true;
     document.body.classList.add('in-overlay');
+
+    // Inject ⌘ icon before the search input
+    const cmdIcon = document.createElement('span');
+    cmdIcon.className = 'overlay-cmd-icon';
+    cmdIcon.textContent = '⌘';
+    const searchWrapper = elements.searchInput.parentElement;
+    searchWrapper.insertBefore(cmdIcon, elements.searchInput);
+
+    // Inject ⌘K shortcut badge after the search input
+    const badge = document.createElement('span');
+    badge.className = 'overlay-shortcut-badge';
+    badge.textContent = '⌘K';
+    searchWrapper.appendChild(badge);
+
+    // Create overlay footer
+    const footer = document.createElement('div');
+    footer.className = 'overlay-footer';
+    footer.innerHTML = `
+      <span class="overlay-footer-left" id="overlay-result-count"></span>
+      <span class="overlay-footer-right"><kbd>↵</kbd> to open</span>
+    `;
+    document.querySelector('.container').appendChild(footer);
+    elements.overlayResultCount = document.getElementById('overlay-result-count');
+
+    // Show recently opened items in the empty state
+    showOverlayRecents();
 
     // Listen for messages from parent
     window.addEventListener('message', (event) => {
@@ -163,14 +198,42 @@ function setupEventListeners() {
     }, 200);
   });
 
-  // Press Enter to open first result
+  // Keyboard navigation for search results
   elements.searchInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') {
       e.preventDefault();
-      const firstResult = elements.resultsContainer.querySelector('.result-item');
-      if (firstResult) {
-        firstResult.click();
+      if (state.isOverlayMode) {
+        // Open the currently highlighted result
+        const items = elements.resultsContainer.querySelectorAll('.result-item');
+        if (items.length > 0 && items[state.overlayHighlightIndex]) {
+          items[state.overlayHighlightIndex].click();
+        }
+      } else {
+        const firstResult = elements.resultsContainer.querySelector('.result-item');
+        if (firstResult) {
+          firstResult.click();
+        }
       }
+    }
+
+    // Arrow key navigation (overlay mode)
+    if (state.isOverlayMode && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+      e.preventDefault();
+      const items = elements.resultsContainer.querySelectorAll('.result-item');
+      if (items.length === 0) return;
+
+      // Remove current highlight
+      items[state.overlayHighlightIndex]?.classList.remove('overlay-highlighted');
+
+      if (e.key === 'ArrowDown') {
+        state.overlayHighlightIndex = Math.min(state.overlayHighlightIndex + 1, items.length - 1);
+      } else {
+        state.overlayHighlightIndex = Math.max(state.overlayHighlightIndex - 1, 0);
+      }
+
+      // Apply new highlight and scroll into view
+      items[state.overlayHighlightIndex]?.classList.add('overlay-highlighted');
+      items[state.overlayHighlightIndex]?.scrollIntoView({ block: 'nearest' });
     }
   });
 
@@ -590,6 +653,7 @@ function handleSearchInput(event) {
 
   if (query.length === 0) {
     showEmptyState();
+    if (state.isOverlayMode) showOverlayRecents();
     return;
   }
 
@@ -601,13 +665,17 @@ function handleSearchInput(event) {
 function performSearch(query) {
   if (!state.fuse) {
     showNoResults('No content indexed yet. Browse Canvas to sync!');
+    updateOverlayFooter(0, 0);
     return;
   }
 
+  const searchStart = performance.now();
   let results = state.fuse.search(query, { limit: MAX_RESULTS * 2 });
+  const searchTimeMs = Math.round(performance.now() - searchStart);
 
   if (results.length === 0) {
     showNoResults(`No results for "${query}"`);
+    updateOverlayFooter(0, searchTimeMs);
     return;
   }
 
@@ -615,7 +683,11 @@ function performSearch(query) {
   results = rankResults(results);
   results = results.slice(0, MAX_RESULTS);
 
+  state.lastSearchTimeMs = searchTimeMs;
+  state.lastResultCount = results.length;
+
   displayResults(results);
+  updateOverlayFooter(results.length, searchTimeMs);
 
   // Save to history
   saveSearchToHistory(query);
@@ -728,6 +800,13 @@ function displayResults(results) {
   clearResultsContainer();
   elements.emptyState.classList.add('hidden');
 
+  // Hide recents section when showing search results
+  const recents = document.getElementById('overlay-recents');
+  if (recents) recents.remove();
+
+  // Reset highlight index
+  state.overlayHighlightIndex = 0;
+
   results.forEach((result, index) => {
     const item = result.item;
 
@@ -736,28 +815,59 @@ function displayResults(results) {
     resultElement.setAttribute('tabindex', '0');
     resultElement.setAttribute('role', 'button');
 
-    const titleElement = document.createElement('div');
-    titleElement.className = 'result-title';
-    titleElement.textContent = item.title || 'Untitled';
-
-    const metaElement = document.createElement('div');
-    metaElement.className = 'result-meta';
-
-    const typeElement = document.createElement('span');
-    typeElement.className = 'result-type';
-    typeElement.textContent = item.type || 'link';
-
-    const courseElement = document.createElement('span');
-    courseElement.className = 'result-module';
-    courseElement.textContent = item.courseName || '';
-
-    metaElement.appendChild(typeElement);
-    if (item.courseName) {
-      metaElement.appendChild(courseElement);
+    // Auto-highlight first result in overlay mode
+    if (state.isOverlayMode && index === 0) {
+      resultElement.classList.add('overlay-highlighted');
     }
 
-    resultElement.appendChild(titleElement);
-    resultElement.appendChild(metaElement);
+    // In overlay mode: title + course on left, type badge on right
+    if (state.isOverlayMode) {
+      const textCol = document.createElement('div');
+      textCol.className = 'overlay-result-text';
+
+      const titleElement = document.createElement('div');
+      titleElement.className = 'result-title';
+      titleElement.textContent = item.title || 'Untitled';
+      textCol.appendChild(titleElement);
+
+      if (item.courseName) {
+        const courseEl = document.createElement('div');
+        courseEl.className = 'overlay-result-course';
+        courseEl.textContent = item.courseName;
+        textCol.appendChild(courseEl);
+      }
+
+      resultElement.appendChild(textCol);
+
+      const typeBadge = document.createElement('span');
+      typeBadge.className = `overlay-type-badge type-${(item.type || 'link').toLowerCase()}`;
+      typeBadge.textContent = formatOverlayType(item.type || 'link');
+      resultElement.appendChild(typeBadge);
+    } else {
+      // Normal popup mode — title then meta row
+      const titleElement = document.createElement('div');
+      titleElement.className = 'result-title';
+      titleElement.textContent = item.title || 'Untitled';
+      resultElement.appendChild(titleElement);
+
+      const metaElement = document.createElement('div');
+      metaElement.className = 'result-meta';
+
+      const typeElement = document.createElement('span');
+      typeElement.className = 'result-type';
+      typeElement.textContent = item.type || 'link';
+
+      const courseElement = document.createElement('span');
+      courseElement.className = 'result-module';
+      courseElement.textContent = item.courseName || '';
+
+      metaElement.appendChild(typeElement);
+      if (item.courseName) {
+        metaElement.appendChild(courseElement);
+      }
+
+      resultElement.appendChild(metaElement);
+    }
 
     resultElement.addEventListener('click', () => openResult(item));
     resultElement.addEventListener('keydown', (e) => {
@@ -768,8 +878,46 @@ function displayResults(results) {
   });
 }
 
+/**
+ * Format type name for overlay badge display
+ */
+function formatOverlayType(type) {
+  const names = {
+    'assignment': 'ASSIGNMENT',
+    'quiz': 'QUIZ',
+    'discussion': 'DISCUSSION',
+    'page': 'PAGE',
+    'file': 'FILE',
+    'pdf': 'FILE',
+    'slides': 'FILE',
+    'document': 'FILE',
+    'video': 'VIDEO',
+    'course': 'COURSE',
+    'navigation': 'NAV',
+    'link': 'LINK',
+    'external': 'LINK',
+    'externalurl': 'LINK'
+  };
+  return names[type] || type.toUpperCase();
+}
+
+/**
+ * Update overlay footer with result count and timing
+ */
+function updateOverlayFooter(count, timeMs) {
+  if (!state.isOverlayMode || !elements.overlayResultCount) return;
+  if (count === 0) {
+    elements.overlayResultCount.textContent = '';
+  } else {
+    elements.overlayResultCount.textContent = `${count} result${count !== 1 ? 's' : ''} in ${timeMs}ms`;
+  }
+}
+
 function openResult(item) {
   if (item.url && isValidCanvasUrl(item.url)) {
+    // Save to recently opened
+    saveToRecents(item);
+
     chrome.tabs.update({ url: item.url });
 
     // If in overlay mode, tell parent to close
@@ -779,6 +927,101 @@ function openResult(item) {
       window.close(); // Close popup after navigation
     }
   }
+}
+
+// ============================================
+// RECENTLY OPENED
+// ============================================
+
+async function loadRecentlyOpened() {
+  try {
+    const result = await chrome.storage.local.get(['recentlyOpened']);
+    state.recentlyOpened = result.recentlyOpened || [];
+  } catch (e) {
+    state.recentlyOpened = [];
+  }
+}
+
+async function saveToRecents(item) {
+  // Remove if already exists (by URL)
+  state.recentlyOpened = state.recentlyOpened.filter(r => r.url !== item.url);
+
+  // Add to front
+  state.recentlyOpened.unshift({
+    title: item.title,
+    url: item.url,
+    type: item.type,
+    courseName: item.courseName,
+    openedAt: Date.now()
+  });
+
+  // Cap at MAX_RECENTS
+  state.recentlyOpened = state.recentlyOpened.slice(0, MAX_RECENTS);
+
+  try {
+    await chrome.storage.local.set({ recentlyOpened: state.recentlyOpened });
+  } catch (e) {
+    console.log('[Canvascope] Could not save recents');
+  }
+}
+
+/**
+ * Show recently opened items in the overlay empty state
+ */
+function showOverlayRecents() {
+  if (!state.isOverlayMode || state.recentlyOpened.length === 0) return;
+
+  // Remove existing recents section if any
+  const existing = document.getElementById('overlay-recents');
+  if (existing) existing.remove();
+
+  const recentsSection = document.createElement('div');
+  recentsSection.id = 'overlay-recents';
+  recentsSection.className = 'overlay-recents';
+
+  const header = document.createElement('div');
+  header.className = 'overlay-recents-header';
+  header.textContent = 'Recently Opened';
+  recentsSection.appendChild(header);
+
+  state.recentlyOpened.forEach((item, index) => {
+    const el = document.createElement('div');
+    el.className = 'result-item overlay-recent-item';
+    el.setAttribute('tabindex', '0');
+    el.setAttribute('role', 'button');
+
+    const textCol = document.createElement('div');
+    textCol.className = 'overlay-result-text';
+
+    const title = document.createElement('div');
+    title.className = 'result-title';
+    title.textContent = item.title || 'Untitled';
+    textCol.appendChild(title);
+
+    if (item.courseName) {
+      const course = document.createElement('div');
+      course.className = 'overlay-result-course';
+      course.textContent = item.courseName;
+      textCol.appendChild(course);
+    }
+
+    el.appendChild(textCol);
+
+    const typeBadge = document.createElement('span');
+    typeBadge.className = `overlay-type-badge type-${(item.type || 'link').toLowerCase()}`;
+    typeBadge.textContent = formatOverlayType(item.type || 'link');
+    el.appendChild(typeBadge);
+
+    el.addEventListener('click', () => openResult(item));
+    el.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') openResult(item);
+    });
+
+    recentsSection.appendChild(el);
+  });
+
+  // Insert after results container (which shows empty state)
+  elements.resultsContainer.after(recentsSection);
 }
 
 function isValidCanvasUrl(url) {
@@ -805,6 +1048,7 @@ function clearSearch() {
 function showEmptyState() {
   clearResultsContainer();
   elements.emptyState.classList.remove('hidden');
+  updateOverlayFooter(0, 0);
 }
 
 function showNoResults(message) {
