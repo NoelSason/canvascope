@@ -9,7 +9,7 @@ A privacy-first Chrome extension that indexes your Canvas courses and lets you f
 ![License](https://img.shields.io/badge/license-MIT-purple)
 
 > [!IMPORTANT]
-> **Beta Version 1.0.1 is now available!**
+> **Beta Version 0.1.0 is now available!**
 > 
 > We are currently onboarding beta testers. To get started and help us improve Canvascope, please fill out the onboarding form below:
 > 
