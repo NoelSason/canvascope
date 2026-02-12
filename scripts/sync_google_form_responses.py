@@ -39,7 +39,19 @@ def main():
     headers = values[0]
     rows = values[1:]
 
-    df = pd.DataFrame(rows, columns=headers)
+    # Normalize rows to match header length
+    normalized_rows = []
+
+    for row in rows:
+        if len(row) < len(headers):
+            row = row + [""] * (len(headers) - len(row))
+        elif len(row) > len(headers):
+            row = row[:len(headers)]
+
+        normalized_rows.append(row)
+
+    df = pd.DataFrame(normalized_rows, columns=headers)
+
 
     # Optional: remove columns
     exclude = os.getenv("GOOGLE_EXCLUDE_COLUMNS")
