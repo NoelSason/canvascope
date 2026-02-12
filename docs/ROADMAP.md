@@ -24,7 +24,7 @@
 
 ---
 
-## Phase 2: Content Extraction *(In Progress)*
+## Phase 2: Content Extraction *(In Progress - Started Feb 11)*
 
 ### 2.1 PDF Text Extraction
 - [ ] Extract text from PDF files

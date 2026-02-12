@@ -21,14 +21,16 @@
     "storage",
     "activeTab",
     "tabs",
-    "alarms"
+    "alarms",
+    "scripting"
   ],
   "host_permissions": [
     "*://*.instructure.com/*",
     "*://bcourses.berkeley.edu/*",
     "*://bruinlearn.ucla.edu/*",
     "*://canvas.ucsd.edu/*",
-    "*://canvas.asu.edu/*"
+    "*://canvas.asu.edu/*",
+    "*://canvas.mit.edu/*"
   ],
   "content_scripts": [
     {
@@ -37,7 +39,8 @@
         "*://bcourses.berkeley.edu/*",
         "*://bruinlearn.ucla.edu/*",
         "*://canvas.ucsd.edu/*",
-        "*://canvas.asu.edu/*"
+        "*://canvas.asu.edu/*",
+        "*://canvas.mit.edu/*"
       ],
       "js": [
         "content.js"

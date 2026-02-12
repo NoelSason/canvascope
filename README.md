@@ -120,6 +120,15 @@ Canvascope/
 
 ---
 
+## Bug Report Sync
+
+Google Form bug submissions can be synced into this repository automatically.
+
+- Setup guide: [docs/BUG_FORM_SYNC_SETUP.md](docs/BUG_FORM_SYNC_SETUP.md)
+- Synced output: [docs/bug-reports/google-form-responses.json](docs/bug-reports/google-form-responses.json)
+
+---
+
 ## License
 
 MIT License — feel free to use, modify, and distribute.

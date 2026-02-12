@@ -123,7 +123,8 @@ function isCanvasDomain() {
     if (hostname === 'bcourses.berkeley.edu' ||
         hostname === 'bruinlearn.ucla.edu' ||
         hostname === 'canvas.ucsd.edu' ||
-        hostname === 'canvas.asu.edu') {
+        hostname === 'canvas.asu.edu' ||
+        hostname === 'canvas.mit.edu') {
         return true;
     }
 
@@ -734,7 +735,8 @@ function isCanvasUrl(url) {
             hostname === 'bcourses.berkeley.edu' ||
             hostname === 'bruinlearn.ucla.edu' ||
             hostname === 'canvas.ucsd.edu' ||
-            hostname === 'canvas.asu.edu';
+            hostname === 'canvas.asu.edu' ||
+            hostname === 'canvas.mit.edu';
     } catch {
         return false;
     }
@@ -909,6 +911,26 @@ function hideOverlay() {
         // Reset iframe src to reset state? No, keep it for speed.
     }, 200);
 }
+
+// ============================================
+// LTI / EXTERNAL TOOL SCANNING (e.g. Media Gallery)
+// ============================================
+
+function checkForLtiPage() {
+    // Check if we are on an external tool page
+    // URL pattern: /courses/:id/external_tools/:id
+    if (window.location.pathname.includes('/external_tools/')) {
+        console.log('[Canvascope Content] LTI Tool page detected, requesting frame scan...');
+
+        // Wait a bit for iframes to load
+        setTimeout(() => {
+            chrome.runtime.sendMessage({ action: 'scanFrames' });
+        }, 2000); // 2 second delay to allow iframe to load
+    }
+}
+
+// Run LTI check on load
+checkForLtiPage();
 
 // Listen for Command+K (Mac) or Ctrl+K (Windows)
 document.addEventListener('keydown', (e) => {

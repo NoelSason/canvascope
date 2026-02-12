@@ -409,6 +409,44 @@ async function fetchCourseContent(baseUrl, course) {
         }
     } catch (e) { }
 
+    // Fetch media objects (new in Phase 2)
+    try {
+        // We only fetch titles to be lightweight
+        const response = await fetch(
+            `${baseUrl}/api/v1/courses/${course.id}/media_objects?per_page=100&sort=title&exclude[]=sources&exclude[]=tracks`,
+            { credentials: 'include' }
+        );
+        if (response.ok) {
+            const items = await response.json();
+            for (const item of items) {
+                // Determine the best title
+                const title = item.user_entered_title || item.title || 'Untitled Video';
+
+                // Skip if title looks like a filename ID (common in automated uploads)
+                if (title.match(/^[a-z0-9-]{30,}/)) continue;
+
+                // Construct a viewable URL
+                // Note: The API gives us the media object itself, but linking to it directly often requires
+                // going through a specific course context. We'll link to the media object's embedded view
+                // or fall back to the course media gallery if possible. 
+                // For now, let's try constructing a direct media link which Canvas usually redirects correctly.
+                const mediaUrl = `${baseUrl}/courses/${course.id}/media_download?entryId=${item.media_id}&redirect=1`;
+
+                content.push({
+                    title: title,
+                    url: mediaUrl, // This triggers a download/view of the media file
+                    type: 'video',
+                    moduleName: 'Media Gallery',
+                    courseName: course.name,
+                    courseId: course.id,
+                    scannedAt: new Date().toISOString()
+                });
+            }
+        }
+    } catch (e) {
+        console.warn(`[Canvascope] Error fetching media for course ${course.id}:`, e);
+    }
+
     return content;
 }
 
@@ -428,7 +466,8 @@ function isCanvasDomain(url) {
         if (hostname === 'bcourses.berkeley.edu' ||
             hostname === 'bruinlearn.ucla.edu' ||
             hostname === 'canvas.ucsd.edu' ||
-            hostname === 'canvas.asu.edu') {
+            hostname === 'canvas.asu.edu' ||
+            hostname === 'canvas.mit.edu') {
             return true;
         }
 
@@ -518,7 +557,132 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         }
         return true;
     }
+
+    if (message.action === 'scanFrames') {
+        // Received request to scan all frames in the current tab (for LTI tools like Kaltura)
+        const tabId = sender.tab.id;
+        if (!tabId) return true;
+
+        console.log('[Canvascope] Scanning frames for tab', tabId);
+
+        chrome.scripting.executeScript({
+            target: { tabId: tabId, allFrames: true },
+            func: scanFrameForVideos
+        }).then(results => {
+            // Process results from all frames
+            const foundVideos = [];
+            for (const result of results) {
+                if (result.result && Array.isArray(result.result) && result.result.length > 0) {
+                    foundVideos.push(...result.result);
+                }
+            }
+
+            if (foundVideos.length > 0) {
+                console.log('[Canvascope] Found videos in frames:', foundVideos.length);
+                // Save these videos to storage
+                saveScrapedVideos(foundVideos);
+                sendResponse({ success: true, count: foundVideos.length });
+            } else {
+                sendResponse({ success: true, count: 0 });
+            }
+        }).catch(err => {
+            console.error('[Canvascope] Frame scan error:', err);
+            sendResponse({ error: err.message });
+        });
+
+        return true;
+    }
 });
+
+/**
+ * Function injected into frames to find videos
+ * NOTE: This runs in the context of the page/iframe!
+ */
+function scanFrameForVideos() {
+    const videos = [];
+    try {
+        // 1. Kaltura Media Gallery Selectors
+        // Look for titles in prominent text elements
+        const kalturaItems = document.querySelectorAll('.photo-group, .entry-title, .cb-entry-title, li.media-item');
+
+        kalturaItems.forEach(item => {
+            const titleEl = item.querySelector('.name, h3, h2, .title, a[title]');
+            const linkEl = item.querySelector('a');
+
+            if (titleEl && linkEl) {
+                let title = (titleEl.textContent || titleEl.getAttribute('title') || '').trim();
+                if (title && title.length > 3) {
+                    videos.push({
+                        title: title,
+                        url: linkEl.href || window.location.href, // If link is JS, use page URL (users can find it there)
+                        type: 'video'
+                    });
+                }
+            }
+        });
+
+        // 2. Generic "Video" finding in iframes
+        // Sometimes titles are in alt text of thumbnails
+        if (videos.length === 0) {
+            const potentialVideos = document.querySelectorAll('a[href*="video"], a[class*="video"]');
+            potentialVideos.forEach(link => {
+                const title = link.textContent.trim() || link.getAttribute('title');
+                if (title && title.length > 3) {
+                    videos.push({
+                        title: title,
+                        url: link.href,
+                        type: 'video'
+                    });
+                }
+            });
+        }
+
+    } catch (e) {
+        // Ignore errors in restricted frames
+    }
+    return videos;
+}
+
+async function saveScrapedVideos(videos) {
+    if (videos.length === 0) return;
+
+    const data = await chrome.storage.local.get(['indexedContent']);
+    let content = data.indexedContent || [];
+    const seen = new Set(content.map(c => c.url + c.title));
+
+    let addedCount = 0;
+    for (const v of videos) {
+        // Generate a pseudo-url if needed since LTI links are often javascript:void(0)
+        let finalUrl = v.url;
+        if (!finalUrl || finalUrl.startsWith('javascript') || finalUrl === 'about:blank') {
+            // Can't do much without a real URL, but maybe we can link to the current page + hash?
+            // For now, assume if we scraped it, the user is On the page, so using that page's URL is better than nothing?
+            // Actually, we don't have the top frame URL easily here unless we pass it.
+            continue;
+        }
+
+        const key = finalUrl + v.title;
+        if (!seen.has(key)) {
+            content.push({
+                title: v.title,
+                url: finalUrl,
+                type: 'video',
+                moduleName: 'Media Gallery', // Inferred
+                courseName: 'Current Course', // We might update this later or infer from context
+                scannedAt: new Date().toISOString()
+            });
+            seen.add(key);
+            addedCount++;
+        }
+    }
+
+    if (addedCount > 0) {
+        await chrome.storage.local.set({ indexedContent: content });
+        // Notify popup
+        chrome.runtime.sendMessage({ type: 'scanComplete', newItems: addedCount });
+    }
+}
+
 
 // ============================================
 // STARTUP

@@ -443,7 +443,8 @@ async function checkCurrentTab() {
       hostname === 'bcourses.berkeley.edu' ||
       hostname === 'bruinlearn.ucla.edu' ||
       hostname === 'canvas.ucsd.edu' ||
-      hostname === 'canvas.asu.edu') return;
+      hostname === 'canvas.asu.edu' ||
+      hostname === 'canvas.mit.edu') return;
 
     // Try to detect Canvas from URL patterns (content script may not be loaded)
     if (url.pathname.includes('/courses/') ||
@@ -1034,7 +1035,8 @@ function isValidCanvasUrl(url) {
       hostname === 'bcourses.berkeley.edu' ||
       hostname === 'bruinlearn.ucla.edu' ||
       hostname === 'canvas.ucsd.edu' ||
-      hostname === 'canvas.asu.edu';
+      hostname === 'canvas.asu.edu' ||
+      hostname === 'canvas.mit.edu';
   } catch {
     return false;
   }
