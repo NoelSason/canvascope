@@ -1,0 +1,46 @@
+name: Sync Google Form Bug Reports
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install google-api-python-client google-auth pandas
+
+      - name: Run sync script
+        env:
+          GOOGLE_SERVICE_ACCOUNT_KEY: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_KEY }}
+          GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
+          GOOGLE_SHEET_RANGE: ${{ secrets.GOOGLE_SHEET_RANGE }}
+          GOOGLE_EXCLUDE_COLUMNS: ${{ secrets.GOOGLE_EXCLUDE_COLUMNS }}
+          GOOGLE_MAX_ROWS: ${{ secrets.GOOGLE_MAX_ROWS }}
+        run: |
+          python scripts/sync_google_form_responses.py
+
+      - name: Commit changes
+        run: |
+          git config --global user.name "github-actions"
+          git config --global user.email "actions@github.com"
+
+          if git status --porcelain | grep .; then
+            git add docs/bug-reports/google-form-responses.json
+            git commit -m "Sync Google Form responses"
+            git push
+          else
+            echo "No changes"
+          fi
