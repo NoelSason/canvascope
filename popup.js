@@ -149,6 +149,51 @@ function buildSearchFields(item) {
   };
 }
 
+/**
+ * Detect if query starts with a course name, enabling course-scoped search.
+ * E.g., "chem 3b plws 10" → { coursePrefix: "chem 3b", remainingQuery: "plws 10" }
+ */
+function detectCourseScope(query) {
+  const normQuery = normalizeText(query);
+  if (!normQuery || normQuery.length < 3) return null;
+
+  // Build course candidates: full name + short form (without semester)
+  const candidates = [];
+  const seen = new Set();
+
+  for (const item of state.indexedContent) {
+    if (!item.courseName) continue;
+    const original = item.courseName.trim();
+    const full = normalizeText(original);
+
+    // Short form: strip parenthetical suffix like "(Fall 2025)"
+    const short = normalizeText(original.replace(/\s*\(.*\)\s*$/, ''));
+
+    if (short && short.length >= 3 && !seen.has(short)) {
+      seen.add(short);
+      candidates.push({ norm: short, original });
+    }
+    if (full && !seen.has(full)) {
+      seen.add(full);
+      candidates.push({ norm: full, original });
+    }
+  }
+
+  // Sort longest first for greedy matching
+  candidates.sort((a, b) => b.norm.length - a.norm.length);
+
+  for (const { norm, original } of candidates) {
+    if (normQuery.startsWith(norm + ' ') && normQuery.length > norm.length + 1) {
+      const remaining = normQuery.slice(norm.length + 1).trim();
+      if (remaining.length >= 1) {
+        return { coursePrefix: norm, courseName: original, remainingQuery: remaining };
+      }
+    }
+  }
+
+  return null;
+}
+
 // ============================================
 // DOM ELEMENTS
 // ============================================
@@ -783,16 +828,27 @@ function performSearch(query) {
     return;
   }
 
-  // Normalize query for improved matching
-  const normalizedQuery = expandAbbreviations(query);
+  // Detect course-scoped search (e.g., "chem 3b plws 10" → search "plws 10" in Chem 3B)
+  const courseScope = detectCourseScope(query);
+
+  let effectiveQuery, normalizedQuery;
+  if (courseScope) {
+    effectiveQuery = courseScope.remainingQuery;
+    normalizedQuery = expandAbbreviations(courseScope.remainingQuery);
+    console.log(`[Canvascope] Course-scoped search: "${courseScope.coursePrefix}" → "${effectiveQuery}"`);
+  } else {
+    effectiveQuery = query;
+    normalizedQuery = expandAbbreviations(query);
+  }
+
   const searchStart = performance.now();
 
   // Pass A: strict search with normalized query
-  let results = state.fuse.search(normalizedQuery, { limit: MAX_RESULTS * 2 });
+  let results = state.fuse.search(normalizedQuery, { limit: MAX_RESULTS * 3 });
 
-  // Also search with original query and merge unique results
-  if (normalizedQuery !== normalizeText(query)) {
-    const origResults = state.fuse.search(query, { limit: MAX_RESULTS * 2 });
+  // Also search with effective query and merge unique results
+  if (normalizedQuery !== normalizeText(effectiveQuery)) {
+    const origResults = state.fuse.search(effectiveQuery, { limit: MAX_RESULTS * 3 });
     const seenUrls = new Set(results.map(r => r.item.url));
     for (const r of origResults) {
       if (!seenUrls.has(r.item.url)) {
@@ -804,9 +860,22 @@ function performSearch(query) {
 
   // Pass B: relaxed fallback if strict yielded nothing
   if (results.length === 0 && state.fuseRelaxed) {
-    results = state.fuseRelaxed.search(normalizedQuery, { limit: MAX_RESULTS * 2 });
+    results = state.fuseRelaxed.search(normalizedQuery, { limit: MAX_RESULTS * 3 });
     if (results.length === 0) {
-      results = state.fuseRelaxed.search(query, { limit: MAX_RESULTS * 2 });
+      results = state.fuseRelaxed.search(effectiveQuery, { limit: MAX_RESULTS * 3 });
+    }
+  }
+
+  // If course-scoped, filter results to the matching course
+  if (courseScope && results.length > 0) {
+    const prefix = courseScope.coursePrefix;
+    const scopedResults = results.filter(r => {
+      const itemCourse = normalizeText(r.item.courseName || '');
+      return itemCourse.includes(prefix);
+    });
+    // Use scoped results if any match; otherwise fall back to unscoped
+    if (scopedResults.length > 0) {
+      results = scopedResults;
     }
   }
 
