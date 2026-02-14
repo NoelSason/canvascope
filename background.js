@@ -196,12 +196,19 @@ async function performBackgroundScan(baseUrl) {
             await sleep(50);
         }
 
-        // Merge with existing content
+        // Deduplicate scanned content before merging
+        // Same item can appear from multiple API endpoints (e.g. /assignments and /modules/items)
+        const dedupedContent = deduplicateContent(allContent);
+
+        // Merge with existing content (deduplicated)
         const existingData = await chrome.storage.local.get(['indexedContent']);
         const existingContent = existingData.indexedContent || [];
-        const existingUrls = new Set(existingContent.map(item => item.url));
+        const existingKeys = new Set(existingContent.map(item => `${(item.title || '').trim()}|${(item.courseName || '').trim()}|${item.type}`));
 
-        const newItems = allContent.filter(item => !existingUrls.has(item.url));
+        const newItems = dedupedContent.filter(item => {
+            const key = `${(item.title || '').trim()}|${(item.courseName || '').trim()}|${item.type}`;
+            return !existingKeys.has(key);
+        });
         const mergedContent = [...existingContent, ...newItems];
 
         // Save to storage
@@ -479,6 +486,44 @@ function isCanvasDomain(url) {
     } catch {
         return false;
     }
+}
+
+/**
+ * Deduplicate content by title + courseName + type
+ * Prefers canonical URLs (e.g. /assignments/123) over module item URLs
+ */
+function deduplicateContent(content) {
+    const seen = new Map();
+
+    for (const item of content) {
+        const key = `${(item.title || '').trim()}|${(item.courseName || '').trim()}|${item.type}`;
+
+        if (!seen.has(key)) {
+            seen.set(key, item);
+        } else {
+            const existing = seen.get(key);
+
+            const isCanonical = (url) => {
+                return url && (
+                    url.includes('/assignments/') ||
+                    url.includes('/quizzes/') ||
+                    url.includes('/files/') ||
+                    url.includes('/discussion_topics/')
+                );
+            };
+
+            const existingIsCanonical = isCanonical(existing.url);
+            const newIsCanonical = isCanonical(item.url);
+
+            if (newIsCanonical && !existingIsCanonical) {
+                seen.set(key, item);
+            } else if (newIsCanonical === existingIsCanonical && item.url.length < existing.url.length) {
+                seen.set(key, item);
+            }
+        }
+    }
+
+    return Array.from(seen.values());
 }
 
 function sleep(ms) {
