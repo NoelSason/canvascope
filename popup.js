@@ -18,6 +18,24 @@
 // CONFIGURATION
 // ============================================
 
+// Unified domain lists — mirrors background.js
+const CANVAS_DOMAIN_SUFFIXES = ['.instructure.com'];
+const KNOWN_CANVAS_DOMAINS = [
+  'bcourses.berkeley.edu',
+  'bruinlearn.ucla.edu',
+  'canvas.ucsd.edu',
+  'canvas.asu.edu',
+  'canvas.mit.edu'
+];
+let popupCustomDomains = [];
+
+// Load custom domains so openResult / isValidCanvasUrl work for user-added domains
+try {
+  chrome.storage.local.get(['customDomains']).then(data => {
+    popupCustomDomains = data.customDomains || [];
+  });
+} catch (e) { /* storage unavailable during tests */ }
+
 const FUSE_OPTIONS = {
   threshold: 0.35,
   includeScore: true,
@@ -284,6 +302,11 @@ function checkOverlayMode() {
 
     // Listen for messages from parent
     window.addEventListener('message', (event) => {
+      // Strict origin/source check: only accept messages from our extension's parent
+      if (event.source !== window.parent) return;
+      const extensionOrigin = new URL(chrome.runtime.getURL('')).origin;
+      if (event.origin !== extensionOrigin) return;
+
       if (event.data && event.data.type === 'FOCUS_INPUT') {
         setTimeout(() => elements.searchInput.focus(), 50);
       }
@@ -292,7 +315,8 @@ function checkOverlayMode() {
     // Handle Escape key to close overlay
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') {
-        window.parent.postMessage({ type: 'CLOSE_OVERLAY' }, '*');
+        const extensionOrigin = new URL(chrome.runtime.getURL('')).origin;
+        window.parent.postMessage({ type: 'CLOSE_OVERLAY' }, extensionOrigin);
       }
     });
   }
@@ -585,13 +609,8 @@ async function checkCurrentTab() {
     const url = new URL(tab.url);
     const hostname = url.hostname.toLowerCase();
 
-    // Skip if already a known domain pattern
-    if (hostname.endsWith('.instructure.com') ||
-      hostname === 'bcourses.berkeley.edu' ||
-      hostname === 'bruinlearn.ucla.edu' ||
-      hostname === 'canvas.ucsd.edu' ||
-      hostname === 'canvas.asu.edu' ||
-      hostname === 'canvas.mit.edu') return;
+    // Skip if already a known domain (use unified check)
+    if (isKnownCanvasHost(hostname)) return;
 
     // Try to detect Canvas from URL patterns (content script may not be loaded)
     if (url.pathname.includes('/courses/') ||
@@ -600,6 +619,7 @@ async function checkCurrentTab() {
       url.pathname.includes('/quizzes')) {
       // Likely Canvas, add domain
       await chrome.runtime.sendMessage({ action: 'addDomain', domain: hostname });
+      popupCustomDomains.push(hostname);
       console.log('[Canvascope] Auto-detected Canvas domain from URL:', hostname);
     }
   } catch (e) {
@@ -912,9 +932,10 @@ function calculateScore(item, fuseScore, normalizedQuery) {
   const typeBoost = TYPE_BOOST[item.type] || 0;
   score += typeBoost;
 
-  // Recency boost (if item has indexedAt timestamp)
-  if (item.indexedAt) {
-    const daysAgo = (Date.now() - item.indexedAt) / (1000 * 60 * 60 * 24);
+  // Recency boost — items store scannedAt (ISO string), not indexedAt
+  const ts = item.scannedAt ? new Date(item.scannedAt).getTime() : 0;
+  if (ts > 0) {
+    const daysAgo = (Date.now() - ts) / (1000 * 60 * 60 * 24);
     // Boost decays over 30 days from 0.15 to 0
     score += Math.max(0, 0.15 - (daysAgo * 0.005));
   }
@@ -1155,9 +1176,10 @@ function openResult(item) {
 
     chrome.tabs.update({ url: item.url });
 
-    // If in overlay mode, tell parent to close
+    // If in overlay mode, tell parent to close (use strict origin)
     if (window.self !== window.top) {
-      window.parent.postMessage({ type: 'CLOSE_OVERLAY' }, '*');
+      const extensionOrigin = new URL(chrome.runtime.getURL('')).origin;
+      window.parent.postMessage({ type: 'CLOSE_OVERLAY' }, extensionOrigin);
     } else {
       window.close(); // Close popup after navigation
     }
@@ -1259,17 +1281,23 @@ function showOverlayRecents() {
   elements.resultsContainer.after(recentsSection);
 }
 
+/**
+ * Check if a hostname is a known Canvas host (unified check).
+ * @param {string} hostname - lowercase hostname
+ * @returns {boolean}
+ */
+function isKnownCanvasHost(hostname) {
+  if (CANVAS_DOMAIN_SUFFIXES.some(s => hostname.endsWith(s))) return true;
+  if (KNOWN_CANVAS_DOMAINS.includes(hostname)) return true;
+  if (popupCustomDomains.includes(hostname)) return true;
+  return false;
+}
+
 function isValidCanvasUrl(url) {
   try {
     const parsed = new URL(url);
     if (parsed.protocol !== 'https:') return false;
-    const hostname = parsed.hostname.toLowerCase();
-    return hostname.endsWith('.instructure.com') ||
-      hostname === 'bcourses.berkeley.edu' ||
-      hostname === 'bruinlearn.ucla.edu' ||
-      hostname === 'canvas.ucsd.edu' ||
-      hostname === 'canvas.asu.edu' ||
-      hostname === 'canvas.mit.edu';
+    return isKnownCanvasHost(parsed.hostname.toLowerCase());
   } catch {
     return false;
   }
@@ -1328,26 +1356,44 @@ async function loadContent() {
 }
 
 /**
- * Remove duplicate entries with same base URL
- * URLs like /assignments/123?module_item_id=456 should match /assignments/123
+ * Derive a stable canonical identity key for a content item.
+ * Prefers URL-based identity (origin + pathname, no query params).
+ * Falls back to title|course|type hash.
+ */
+function getCanonicalId(item) {
+  if (!item || typeof item !== 'object') return '__invalid__';
+
+  if (item.url && typeof item.url === 'string') {
+    try {
+      const u = new URL(item.url);
+      return `${u.origin}${u.pathname}`;
+    } catch { /* fall through */ }
+  }
+
+  const raw = `${(item.title || '').trim()}|${(item.courseName || '').trim()}|${item.type || ''}`;
+  return `__hash__${raw}`;
+}
+
+/**
+ * Remove duplicate entries using canonical ID.
+ * Prefers canonical URLs (e.g. /assignments/123) over module item URLs.
  */
 function deduplicateContent(content) {
   const seen = new Map();
 
   for (const item of content) {
-    // Create a strict key based on Title + Course + Type
-    // This merges "PLWS 10" from "Chem 3A" regardless of the URL
-    // We include type to avoid merging a file named "Syllabus" with a page named "Syllabus"
-    const key = `${item.title.trim()}|${item.courseName.trim()}|${item.type}`;
+    // Null guard: skip malformed items
+    if (!item || typeof item !== 'object') continue;
+
+    const key = getCanonicalId(item);
 
     if (!seen.has(key)) {
       seen.set(key, item);
     } else {
-      // If we already have this item, check if the new one has a "better" URL
       const existing = seen.get(key);
 
-      // Prefer canonical URLs (e.g. /assignments/123) over module item URLs (/courses/123/modules/items/456)
       const isCanonical = (url) => {
+        if (!url || typeof url !== 'string') return false;
         return url.includes('/assignments/') ||
           url.includes('/quizzes/') ||
           url.includes('/files/') ||
@@ -1358,11 +1404,9 @@ function deduplicateContent(content) {
       const newIsCanonical = isCanonical(item.url);
 
       if (newIsCanonical && !existingIsCanonical) {
-        // Replace with new item if it has a better URL
         seen.set(key, item);
       } else if (newIsCanonical === existingIsCanonical) {
-        // If both are same "quality", prefer the shorter URL
-        if (item.url.length < existing.url.length) {
+        if ((item.url || '').length < (existing.url || '').length) {
           seen.set(key, item);
         }
       }

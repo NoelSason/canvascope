@@ -27,6 +27,24 @@
 // CONFIGURATION
 // ============================================
 
+// Unified domain lists — mirrors background.js
+const CANVAS_DOMAIN_SUFFIXES = ['.instructure.com'];
+const KNOWN_CANVAS_DOMAINS = [
+    'bcourses.berkeley.edu',
+    'bruinlearn.ucla.edu',
+    'canvas.ucsd.edu',
+    'canvas.asu.edu',
+    'canvas.mit.edu'
+];
+let contentCustomDomains = [];
+
+// Load custom domains from storage so domain checks work for user-added domains
+try {
+    chrome.storage.local.get(['customDomains']).then(data => {
+        contentCustomDomains = data.customDomains || [];
+    });
+} catch (e) { /* ignore if storage unavailable */ }
+
 /**
  * CSS selectors for Canvas elements
  * 
@@ -114,22 +132,20 @@ const CONTENT_TYPES = {
 function isCanvasDomain() {
     const hostname = window.location.hostname.toLowerCase();
 
-    // Official Canvas domains
-    if (hostname.endsWith('.instructure.com')) {
+    // Check suffix patterns (e.g. .instructure.com)
+    if (CANVAS_DOMAIN_SUFFIXES.some(s => hostname.endsWith(s))) {
         return true;
     }
 
-    // UC Berkeley, UCLA, UCSD
-    if (hostname === 'bcourses.berkeley.edu' ||
-        hostname === 'bruinlearn.ucla.edu' ||
-        hostname === 'canvas.ucsd.edu' ||
-        hostname === 'canvas.asu.edu' ||
-        hostname === 'canvas.mit.edu') {
+    // Check exact known domains
+    if (KNOWN_CANVAS_DOMAINS.includes(hostname)) {
         return true;
     }
 
-    // Add your school's custom Canvas domain here if needed
-    // Example: if (hostname.endsWith('.myschool.edu')) return true;
+    // Check user-added custom domains
+    if (contentCustomDomains.includes(hostname)) {
+        return true;
+    }
 
     return false;
 }
@@ -731,12 +747,17 @@ function isCanvasUrl(url) {
     try {
         const parsed = new URL(url);
         const hostname = parsed.hostname.toLowerCase();
-        return hostname.endsWith('.instructure.com') ||
-            hostname === 'bcourses.berkeley.edu' ||
-            hostname === 'bruinlearn.ucla.edu' ||
-            hostname === 'canvas.ucsd.edu' ||
-            hostname === 'canvas.asu.edu' ||
-            hostname === 'canvas.mit.edu';
+
+        // Check suffix patterns
+        if (CANVAS_DOMAIN_SUFFIXES.some(s => hostname.endsWith(s))) return true;
+
+        // Check exact known domains
+        if (KNOWN_CANVAS_DOMAINS.includes(hostname)) return true;
+
+        // Check user-added custom domains
+        if (contentCustomDomains.includes(hostname)) return true;
+
+        return false;
     } catch {
         return false;
     }
@@ -893,8 +914,9 @@ function showOverlay() {
         overlayIframe.style.transform = 'scale(1)';
         overlayIframe.style.opacity = '1';
         overlayIframe.focus();
-        // Send message to popup to focus input
-        overlayIframe.contentWindow.postMessage({ type: 'FOCUS_INPUT' }, '*');
+        // Send message to popup to focus input (use extension origin, not '*')
+        const extensionOrigin = new URL(chrome.runtime.getURL('')).origin;
+        overlayIframe.contentWindow.postMessage({ type: 'FOCUS_INPUT' }, extensionOrigin);
     });
 }
 
@@ -953,8 +975,12 @@ document.addEventListener('keydown', (e) => {
     }
 });
 
-// Listen for messages from the iframe/popup
+// Listen for messages from the iframe/popup (strict origin + source check)
 window.addEventListener('message', (event) => {
+    const extensionOrigin = new URL(chrome.runtime.getURL('')).origin;
+    if (event.origin !== extensionOrigin) return;
+    if (!overlayIframe || event.source !== overlayIframe.contentWindow) return;
+
     if (event.data && event.data.type === 'CLOSE_OVERLAY') {
         hideOverlay();
     }
