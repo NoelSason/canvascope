@@ -142,16 +142,17 @@ function computeNumericAlignment(queryNums, titleText) {
 const STOP_TOKENS = new Set(['a', 'an', 'the', 'in', 'on', 'of', 'to', 'for', 'and', 'or', 'is']);
 
 /**
- * Compute fraction of query tokens present in titleText.
+ * Compute fraction of query tokens present in searchable text.
+ * Checks title and optional context (folderPath, moduleName).
  * Ignores stop words and single-char tokens.
  */
-function computeTokenCoverage(normalizedQuery, titleText) {
+function computeTokenCoverage(normalizedQuery, titleText, contextText) {
   const qTokens = normalizedQuery.split(/\s+/).filter(t => t.length > 1 && !STOP_TOKENS.has(t));
   if (qTokens.length === 0) return 1;
-  const normTitle = (titleText || '').toLowerCase();
+  const combined = ((titleText || '') + ' ' + (contextText || '')).toLowerCase();
   let found = 0;
   for (const t of qTokens) {
-    if (normTitle.includes(t)) found++;
+    if (combined.includes(t)) found++;
   }
   return found / qTokens.length;
 }
@@ -1255,12 +1256,13 @@ function calculateScore(item, fuseScore, normalizedQuery, intent, queryNums, isP
   // ── Token coverage ──────────────────────────────
   if (normalizedQuery) {
     const titleText = (item.searchTitleNormalized || normalizeText(item.title || '')).toLowerCase();
-    const coverage = computeTokenCoverage(normalizedQuery, titleText);
+    const contextText = normalizeText((item.folderPath || '') + ' ' + (item.moduleName || ''));
+    const coverage = computeTokenCoverage(normalizedQuery, titleText, contextText);
     const qTokenCount = normalizedQuery.split(/\s+/).filter(t => t.length > 1 && !STOP_TOKENS.has(t)).length;
     if (coverage >= 0.8) {
-      score += 0.08;
+      score += 0.12;
     } else if (coverage < 0.5 && qTokenCount >= 2) {
-      score -= 0.12 * (1 - coverage);
+      score -= 0.15 * (1 - coverage);
     }
   }
 
@@ -1279,8 +1281,8 @@ function calculateScore(item, fuseScore, normalizedQuery, intent, queryNums, isP
         if (folderText.includes(t)) folderHits++;
       }
       if (folderHits > 0) {
-        // Proportional boost, max +0.20
-        score += Math.min(0.20, 0.12 * (folderHits / qTokens.length));
+        // Proportional boost, max +0.35
+        score += Math.min(0.35, 0.25 * (folderHits / qTokens.length));
       }
     }
   }
