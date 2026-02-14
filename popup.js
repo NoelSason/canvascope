@@ -1125,9 +1125,40 @@ function performSearch(query) {
     }
   }
 
-  // If course-scoped, filter results to the matching course
-  if (courseScope && results.length > 0) {
+  // If course-scoped, ensure items from the target course are in the pool
+  if (courseScope) {
     const prefix = courseScope.coursePrefix;
+    const seenUrls = new Set(results.map(r => r.item.url));
+
+    // Secondary recall: scan target course items for query token matches
+    // in title + folderPath + moduleName (catches folder-name matches)
+    const qTokens = normalizedQuery.toLowerCase().split(/\s+/).filter(t => t.length > 1);
+    if (qTokens.length > 0) {
+      for (const item of state.filteredContent) {
+        if (seenUrls.has(item.url)) continue;
+        const itemCourse = normalizeText(item.courseName || '');
+        if (!itemCourse.includes(prefix)) continue;
+
+        // Check if enough query tokens appear across searchable text
+        const searchableText = [
+          (item.searchTitleNormalized || normalizeText(item.title || '')),
+          normalizeText(item.folderPath || ''),
+          normalizeText(item.moduleName || '')
+        ].join(' ').toLowerCase();
+
+        let hits = 0;
+        for (const t of qTokens) {
+          if (searchableText.includes(t)) hits++;
+        }
+        // Require at least half the tokens to match
+        if (hits >= Math.ceil(qTokens.length / 2)) {
+          results.push({ item, score: 0.5, prePass: false, courseRecall: true });
+          seenUrls.add(item.url);
+        }
+      }
+    }
+
+    // Now filter to only course-scoped results
     const scopedResults = results.filter(r => {
       const itemCourse = normalizeText(r.item.courseName || '');
       return itemCourse.includes(prefix);
