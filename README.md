@@ -4,12 +4,12 @@
 
 A privacy-first Chrome extension that indexes your Canvas courses and lets you find assignments, files, lectures, and more—all in under 50ms.
 
-![Version](https://img.shields.io/badge/version-1.0.1%20Beta-orange)
+![Version](https://img.shields.io/badge/version-0.2.0%20Beta-orange)
 ![Chrome](https://img.shields.io/badge/Chrome-88%2B-green)
 ![License](https://img.shields.io/badge/license-MIT-purple)
 
 > [!IMPORTANT]
-> **Beta Version 0.1.0 is now available!**
+> **Beta Version 0.2.0 is now available!**
 > 
 > We are currently onboarding beta testers. To get started and help us improve Canvascope, please fill out the onboarding form below:
 > 
@@ -25,6 +25,13 @@ A privacy-first Chrome extension that indexes your Canvas courses and lets you f
 - **Smart Filters** — Filter by course, content type (assignments, quizzes, files, etc.)
 - **Search History** — Quick access to recent and frequent searches
 - **4600+ Items** — Capable of indexing thousands of items across all your courses
+
+### Smart Search (New in v0.2.0)
+- **Abbreviation Expansion** — Type `hw4` to find "Homework 4", `proj2` for "Project 2", `assn` for assignments, and more
+- **Number Normalization** — Matches both padded and unpadded numbers (e.g., `hw4` finds "Homework 04" and "Homework 4")
+- **Suffix Matching** — Queries like "Chemical Quiz 3" strongly prefer titles ending with that exact phrase
+- **Two-Pass Search** — Strict matching first, with intelligent fuzzy fallback when no exact matches exist
+- **Smarter Deduplication** — Items appearing from multiple Canvas API endpoints are properly merged, so item counts are accurate
 
 ### Privacy First
 - **100% Local** — All data stays on your device, never sent to external servers
@@ -90,6 +97,12 @@ Canvascope/
 - ~~Filter by content type~~
 - ~~Search history~~
 - ~~Better ranking algorithm~~
+
+### ~~Phase 1.5: Search Relevance (Completed — v0.2.0)~~
+- ~~Abbreviation & compact-number expansion (hw4, proj2, etc.)~~
+- ~~Suffix/phrase-position boosting for precise ranking~~
+- ~~Two-pass strict/relaxed search pipeline~~
+- ~~Smarter deduplication across Canvas API endpoints~~
 
 ### Phase 2: Content Extraction *(In Progress)*
 - PDF text extraction

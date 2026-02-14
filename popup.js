@@ -19,16 +19,25 @@
 // ============================================
 
 const FUSE_OPTIONS = {
-  threshold: 0.4,
+  threshold: 0.35,
   includeScore: true,
   includeMatches: true,
   minMatchCharLength: 2,
+  ignoreLocation: true,
+  findAllMatches: true,
   keys: [
     { name: 'title', weight: 3.0 },
+    { name: 'searchTitleNormalized', weight: 2.5 },
+    { name: 'searchAliases', weight: 2.0 },
     { name: 'moduleName', weight: 1.5 },
     { name: 'courseName', weight: 1.2 },
     { name: 'type', weight: 0.5 }
   ]
+};
+
+const FUSE_OPTIONS_RELAXED = {
+  ...FUSE_OPTIONS,
+  threshold: 0.55
 };
 
 const MAX_RESULTS = 20;
@@ -46,6 +55,99 @@ const TYPE_BOOST = {
   video: 0.08,
   externalurl: 0.05
 };
+
+// ============================================
+// SEARCH NORMALIZATION HELPERS
+// ============================================
+
+const ABBREV_MAP = {
+  hw: 'homework',
+  proj: 'project',
+  assn: 'assignment',
+  assign: 'assignment',
+  disc: 'discussion',
+  lec: 'lecture',
+  lab: 'laboratory',
+  mt: 'midterm',
+  ch: 'chapter',
+  chap: 'chapter',
+  wk: 'week',
+  pset: 'problem set',
+  ps: 'problem set'
+};
+
+// Regex to split compact tokens like hw4, proj2, quiz10
+const COMPACT_TOKEN_RE = /^([a-z]+)(\d{1,3})$/i;
+
+/**
+ * Normalize text: lowercase, strip punctuation, collapse whitespace
+ */
+function normalizeText(str) {
+  return (str || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * Expand abbreviations and split compact forms (hw4 → homework 4)
+ */
+function expandAbbreviations(text) {
+  const tokens = normalizeText(text).split(' ');
+  const expanded = [];
+
+  for (const token of tokens) {
+    const compactMatch = token.match(COMPACT_TOKEN_RE);
+    if (compactMatch) {
+      const [, letters, digits] = compactMatch;
+      const expandedWord = ABBREV_MAP[letters] || letters;
+      expanded.push(expandedWord, digits.replace(/^0+/, '') || '0');
+    } else {
+      expanded.push(ABBREV_MAP[token] || token);
+    }
+  }
+
+  return expanded.join(' ');
+}
+
+/**
+ * Generate number variants: for each number token, include both padded and unpadded
+ * "homework 4" → "homework 4 homework 04"
+ */
+function numberVariants(text) {
+  const tokens = text.split(' ');
+  const variants = [text];
+  let hasVariant = false;
+
+  const altTokens = tokens.map(t => {
+    if (/^\d{1,3}$/.test(t)) {
+      hasVariant = true;
+      const unpadded = t.replace(/^0+/, '') || '0';
+      const padded = unpadded.padStart(2, '0');
+      return unpadded === t ? padded : unpadded;
+    }
+    return t;
+  });
+
+  if (hasVariant) {
+    variants.push(altTokens.join(' '));
+  }
+
+  return variants.join(' ');
+}
+
+/**
+ * Build searchable fields for an item
+ */
+function buildSearchFields(item) {
+  const normalized = expandAbbreviations(item.title || '');
+  const aliases = numberVariants(normalized);
+  return {
+    searchTitleNormalized: normalized,
+    searchAliases: aliases
+  };
+}
 
 // ============================================
 // DOM ELEMENTS
@@ -549,10 +651,20 @@ function getTimeAgo(timestamp) {
 
 function initializeFuse() {
   applyFilters();
+
+  // Enrich items with normalized search fields
+  for (const item of state.filteredContent) {
+    const fields = buildSearchFields(item);
+    item.searchTitleNormalized = fields.searchTitleNormalized;
+    item.searchAliases = fields.searchAliases;
+  }
+
   if (state.filteredContent.length > 0) {
     state.fuse = new Fuse(state.filteredContent, FUSE_OPTIONS);
+    state.fuseRelaxed = new Fuse(state.filteredContent, FUSE_OPTIONS_RELAXED);
   } else {
     state.fuse = null;
+    state.fuseRelaxed = null;
   }
   populateCourseFilter();
 }
@@ -671,8 +783,33 @@ function performSearch(query) {
     return;
   }
 
+  // Normalize query for improved matching
+  const normalizedQuery = expandAbbreviations(query);
   const searchStart = performance.now();
-  let results = state.fuse.search(query, { limit: MAX_RESULTS * 2 });
+
+  // Pass A: strict search with normalized query
+  let results = state.fuse.search(normalizedQuery, { limit: MAX_RESULTS * 2 });
+
+  // Also search with original query and merge unique results
+  if (normalizedQuery !== normalizeText(query)) {
+    const origResults = state.fuse.search(query, { limit: MAX_RESULTS * 2 });
+    const seenUrls = new Set(results.map(r => r.item.url));
+    for (const r of origResults) {
+      if (!seenUrls.has(r.item.url)) {
+        results.push(r);
+        seenUrls.add(r.item.url);
+      }
+    }
+  }
+
+  // Pass B: relaxed fallback if strict yielded nothing
+  if (results.length === 0 && state.fuseRelaxed) {
+    results = state.fuseRelaxed.search(normalizedQuery, { limit: MAX_RESULTS * 2 });
+    if (results.length === 0) {
+      results = state.fuseRelaxed.search(query, { limit: MAX_RESULTS * 2 });
+    }
+  }
+
   const searchTimeMs = Math.round(performance.now() - searchStart);
 
   if (results.length === 0) {
@@ -681,8 +818,8 @@ function performSearch(query) {
     return;
   }
 
-  // Apply custom ranking
-  results = rankResults(results);
+  // Apply custom ranking with suffix/position boosting
+  results = rankResults(results, normalizedQuery);
   results = results.slice(0, MAX_RESULTS);
 
   state.lastSearchTimeMs = searchTimeMs;
@@ -691,18 +828,18 @@ function performSearch(query) {
   displayResults(results);
   updateOverlayFooter(results.length, searchTimeMs);
 
-  // Save to history
+  // Save to history (original query, not normalized)
   saveSearchToHistory(query);
 }
 
 /**
- * Calculate custom score combining Fuse score with type and recency boosts
+ * Calculate custom score combining Fuse score with type, recency, and position boosts
  */
-function calculateScore(item, fuseScore) {
+function calculateScore(item, fuseScore, normalizedQuery) {
   // Convert Fuse score (0 = perfect, 1 = worst) to (1 = best, 0 = worst)
   let score = 1 - fuseScore;
 
-  // Type boost
+  // Type boost (0.05–0.30)
   const typeBoost = TYPE_BOOST[item.type] || 0;
   score += typeBoost;
 
@@ -713,17 +850,44 @@ function calculateScore(item, fuseScore) {
     score += Math.max(0, 0.15 - (daysAgo * 0.005));
   }
 
+  // Suffix / position boost using normalized title
+  if (normalizedQuery && normalizedQuery.length > 0) {
+    const normTitle = (item.searchTitleNormalized || normalizeText(item.title || '')).toLowerCase();
+    const normQ = normalizedQuery.toLowerCase();
+
+    if (normTitle.endsWith(normQ)) {
+      // Title ends with the full query — strongest signal
+      score += 0.60;
+    } else if (normTitle.includes(normQ)) {
+      // Full query phrase found in title
+      score += 0.35;
+    } else {
+      // Check ordered token presence
+      const qTokens = normQ.split(' ').filter(Boolean);
+      let lastIdx = -1;
+      let allInOrder = true;
+      for (const qt of qTokens) {
+        const idx = normTitle.indexOf(qt, lastIdx + 1);
+        if (idx === -1) { allInOrder = false; break; }
+        lastIdx = idx;
+      }
+      if (allInOrder && qTokens.length > 0) {
+        score += 0.20;
+      }
+    }
+  }
+
   return score;
 }
 
 /**
- * Re-rank results using custom scoring
+ * Re-rank results using custom scoring with query-aware boosting
  */
-function rankResults(results) {
+function rankResults(results, normalizedQuery) {
   return results
     .map(r => ({
       ...r,
-      finalScore: calculateScore(r.item, r.score)
+      finalScore: calculateScore(r.item, r.score, normalizedQuery)
     }))
     .sort((a, b) => b.finalScore - a.finalScore);
 }
