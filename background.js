@@ -350,7 +350,10 @@ async function fetchCourseContent(baseUrl, course) {
                 moduleName: 'Assignments',
                 courseName: course.name,
                 courseId: course.id,
-                scannedAt: new Date().toISOString()
+                scannedAt: new Date().toISOString(),
+                dueAt: item.due_at || null,
+                unlockAt: item.unlock_at || null,
+                lockAt: item.lock_at || null
             });
         }
     } catch (e) { }
