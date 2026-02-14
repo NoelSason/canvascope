@@ -16,8 +16,18 @@
 // CONFIGURATION
 // ============================================
 
-const CANVAS_DOMAINS = [
-    '.instructure.com'
+/**
+ * Single source of truth for Canvas domains.
+ * Any domain listed here is treated as a Canvas instance.
+ * Suffix entries (starting with '.') match any subdomain.
+ */
+const CANVAS_DOMAIN_SUFFIXES = ['.instructure.com'];
+const KNOWN_CANVAS_DOMAINS = [
+    'bcourses.berkeley.edu',
+    'bruinlearn.ucla.edu',
+    'canvas.ucsd.edu',
+    'canvas.asu.edu',
+    'canvas.mit.edu'
 ];
 
 // Dynamically detected Canvas domains (stored in chrome.storage)
@@ -25,6 +35,9 @@ let customDomains = [];
 
 // Minimum time between scans (in milliseconds) - 5 minutes
 const MIN_SCAN_INTERVAL = 5 * 60 * 1000;
+
+// Safety limit for pagination to prevent infinite loops
+const MAX_PAGES = 50;
 
 // ============================================
 // STATE
@@ -156,7 +169,7 @@ async function performBackgroundScan(baseUrl) {
     broadcastMessage({ type: 'scanStarted' });
 
     try {
-        // Fetch course list
+        // Fetch course list (with full pagination)
         const courses = await fetchCourseList(baseUrl);
 
         if (courses.length === 0) {
@@ -200,16 +213,23 @@ async function performBackgroundScan(baseUrl) {
         // Same item can appear from multiple API endpoints (e.g. /assignments and /modules/items)
         const dedupedContent = deduplicateContent(allContent);
 
-        // Merge with existing content (deduplicated)
+        // ── Snapshot-aware merge ──────────────────────────────
+        // Items from courses we just scanned are REPLACED wholesale,
+        // which naturally removes stale / deleted items.
+        // Items from courses we did NOT scan (e.g. another domain) are preserved.
         const existingData = await chrome.storage.local.get(['indexedContent']);
         const existingContent = existingData.indexedContent || [];
-        const existingKeys = new Set(existingContent.map(item => `${(item.title || '').trim()}|${(item.courseName || '').trim()}|${item.type}`));
 
-        const newItems = dedupedContent.filter(item => {
-            const key = `${(item.title || '').trim()}|${(item.courseName || '').trim()}|${item.type}`;
-            return !existingKeys.has(key);
-        });
-        const mergedContent = [...existingContent, ...newItems];
+        const scannedCourseIds = new Set(
+            dedupedContent.map(i => i.courseId).filter(Boolean)
+        );
+
+        // Preserve items that belong to courses we did NOT scan this run
+        const preservedItems = existingContent.filter(item =>
+            !item.courseId || !scannedCourseIds.has(item.courseId)
+        );
+
+        const mergedContent = [...preservedItems, ...dedupedContent];
 
         // Save to storage
         await chrome.storage.local.set({
@@ -220,12 +240,13 @@ async function performBackgroundScan(baseUrl) {
             }
         });
 
-        console.log(`[Canvascope] Scan complete! Total: ${mergedContent.length}, New: ${newItems.length}`);
+        const newItemsDelta = mergedContent.length - existingContent.length;
+        console.log(`[Canvascope] Scan complete! Total: ${mergedContent.length}, Delta: ${newItemsDelta}`);
 
         broadcastMessage({
             type: 'scanComplete',
             totalItems: mergedContent.length,
-            newItems: newItems.length
+            newItems: Math.max(0, newItemsDelta)
         });
 
     } catch (error) {
@@ -241,24 +262,69 @@ async function performBackgroundScan(baseUrl) {
 // CANVAS API FUNCTIONS
 // ============================================
 
+/**
+ * Parse the `Link` header to extract the `rel="next"` URL.
+ * Canvas uses RFC-5988 style: <https://...?page=2&per_page=50>; rel="next"
+ *
+ * @param {string|null} linkHeader - The Link header value
+ * @returns {string|null} The next page URL, or null
+ */
+function parseLinkNext(linkHeader) {
+    if (!linkHeader) return null;
+    const parts = linkHeader.split(',');
+    for (const part of parts) {
+        const match = part.match(/<([^>]+)>;\s*rel="next"/);
+        if (match) return match[1];
+    }
+    return null;
+}
+
+/**
+ * Fetch all pages from a paginated Canvas API endpoint.
+ * Follows `Link: rel="next"` headers automatically.
+ *
+ * @param {string} url - Initial API URL (should include per_page)
+ * @returns {Promise<Array>} All items across all pages
+ */
+async function fetchAllPages(url) {
+    const allItems = [];
+    let nextUrl = url;
+    let page = 0;
+
+    while (nextUrl && page < MAX_PAGES) {
+        page++;
+        const resp = await fetch(nextUrl, { credentials: 'include' });
+        if (!resp.ok) break;
+
+        const items = await resp.json();
+        if (!Array.isArray(items) || items.length === 0) break;
+
+        allItems.push(...items);
+        nextUrl = parseLinkNext(resp.headers.get('Link'));
+    }
+
+    if (page >= MAX_PAGES) {
+        console.warn(`[Canvascope] Hit pagination safety limit (${MAX_PAGES} pages) for ${url}`);
+    }
+
+    return allItems;
+}
+
 async function fetchCourseList(baseUrl) {
     const courses = [];
 
     try {
-        const response = await fetch(`${baseUrl}/api/v1/courses?per_page=50&enrollment_state=active`, {
-            credentials: 'include'
-        });
+        const data = await fetchAllPages(
+            `${baseUrl}/api/v1/courses?per_page=50&enrollment_state=active`
+        );
 
-        if (response.ok) {
-            const data = await response.json();
-            for (const course of data) {
-                if (course.id && course.name) {
-                    courses.push({
-                        id: course.id,
-                        name: course.name,
-                        code: course.course_code || ''
-                    });
-                }
+        for (const course of data) {
+            if (course.id && course.name) {
+                courses.push({
+                    id: course.id,
+                    name: course.name,
+                    code: course.course_code || ''
+                });
             }
         }
     } catch (e) {
@@ -271,184 +337,150 @@ async function fetchCourseList(baseUrl) {
 async function fetchCourseContent(baseUrl, course) {
     const content = [];
 
-    // Fetch assignments
+    // Fetch assignments (paginated)
     try {
-        const response = await fetch(
-            `${baseUrl}/api/v1/courses/${course.id}/assignments?per_page=100`,
-            { credentials: 'include' }
+        const items = await fetchAllPages(
+            `${baseUrl}/api/v1/courses/${course.id}/assignments?per_page=100`
         );
-        if (response.ok) {
-            const items = await response.json();
-            for (const item of items) {
-                content.push({
-                    title: item.name,
-                    url: item.html_url,
-                    type: 'assignment',
-                    moduleName: 'Assignments',
-                    courseName: course.name,
-                    courseId: course.id,
-                    scannedAt: new Date().toISOString()
-                });
-            }
+        for (const item of items) {
+            content.push({
+                title: item.name || '',
+                url: item.html_url || '',
+                type: 'assignment',
+                moduleName: 'Assignments',
+                courseName: course.name,
+                courseId: course.id,
+                scannedAt: new Date().toISOString()
+            });
         }
     } catch (e) { }
 
-    // Fetch files
+    // Fetch files (paginated)
     try {
-        const response = await fetch(
-            `${baseUrl}/api/v1/courses/${course.id}/files?per_page=100`,
-            { credentials: 'include' }
+        const items = await fetchAllPages(
+            `${baseUrl}/api/v1/courses/${course.id}/files?per_page=100`
         );
-        if (response.ok) {
-            const items = await response.json();
-            for (const item of items) {
-                const ext = (item.display_name || '').split('.').pop()?.toLowerCase();
-                let type = 'file';
-                if (ext === 'pdf') type = 'pdf';
-                if (['ppt', 'pptx'].includes(ext)) type = 'slides';
-                if (['mp4', 'mov', 'webm'].includes(ext)) type = 'video';
-                if (['doc', 'docx'].includes(ext)) type = 'document';
+        for (const item of items) {
+            const ext = (item.display_name || '').split('.').pop()?.toLowerCase();
+            let type = 'file';
+            if (ext === 'pdf') type = 'pdf';
+            if (['ppt', 'pptx'].includes(ext)) type = 'slides';
+            if (['mp4', 'mov', 'webm'].includes(ext)) type = 'video';
+            if (['doc', 'docx'].includes(ext)) type = 'document';
 
-                content.push({
-                    title: item.display_name,
-                    url: item.url || `${baseUrl}/courses/${course.id}/files/${item.id}`,
-                    type,
-                    moduleName: 'Files',
-                    courseName: course.name,
-                    courseId: course.id,
-                    scannedAt: new Date().toISOString()
-                });
-            }
+            content.push({
+                title: item.display_name || '',
+                url: item.url || `${baseUrl}/courses/${course.id}/files/${item.id}`,
+                type,
+                moduleName: 'Files',
+                courseName: course.name,
+                courseId: course.id,
+                scannedAt: new Date().toISOString()
+            });
         }
     } catch (e) { }
 
-    // Fetch pages
+    // Fetch pages (paginated)
     try {
-        const response = await fetch(
-            `${baseUrl}/api/v1/courses/${course.id}/pages?per_page=100`,
-            { credentials: 'include' }
+        const items = await fetchAllPages(
+            `${baseUrl}/api/v1/courses/${course.id}/pages?per_page=100`
         );
-        if (response.ok) {
-            const items = await response.json();
-            for (const item of items) {
-                content.push({
-                    title: item.title,
-                    url: item.html_url,
-                    type: 'page',
-                    moduleName: 'Pages',
-                    courseName: course.name,
-                    courseId: course.id,
-                    scannedAt: new Date().toISOString()
-                });
-            }
+        for (const item of items) {
+            content.push({
+                title: item.title || '',
+                url: item.html_url || '',
+                type: 'page',
+                moduleName: 'Pages',
+                courseName: course.name,
+                courseId: course.id,
+                scannedAt: new Date().toISOString()
+            });
         }
     } catch (e) { }
 
-    // Fetch modules
+    // Fetch modules (paginated)
     try {
-        const modResponse = await fetch(
-            `${baseUrl}/api/v1/courses/${course.id}/modules?per_page=50&include[]=items`,
-            { credentials: 'include' }
+        const modules = await fetchAllPages(
+            `${baseUrl}/api/v1/courses/${course.id}/modules?per_page=50&include[]=items`
         );
-        if (modResponse.ok) {
-            const modules = await modResponse.json();
-            for (const mod of modules) {
-                if (mod.items) {
-                    for (const item of mod.items) {
-                        if (item.html_url) {
-                            content.push({
-                                title: item.title,
-                                url: item.html_url,
-                                type: item.type?.toLowerCase() || 'link',
-                                moduleName: mod.name,
-                                courseName: course.name,
-                                courseId: course.id,
-                                scannedAt: new Date().toISOString()
-                            });
-                        }
+        for (const mod of modules) {
+            if (mod.items) {
+                for (const item of mod.items) {
+                    if (item.html_url) {
+                        content.push({
+                            title: item.title || '',
+                            url: item.html_url,
+                            type: item.type?.toLowerCase() || 'link',
+                            moduleName: mod.name || '',
+                            courseName: course.name,
+                            courseId: course.id,
+                            scannedAt: new Date().toISOString()
+                        });
                     }
                 }
             }
         }
     } catch (e) { }
 
-    // Fetch quizzes
+    // Fetch quizzes (paginated)
     try {
-        const response = await fetch(
-            `${baseUrl}/api/v1/courses/${course.id}/quizzes?per_page=100`,
-            { credentials: 'include' }
+        const items = await fetchAllPages(
+            `${baseUrl}/api/v1/courses/${course.id}/quizzes?per_page=100`
         );
-        if (response.ok) {
-            const items = await response.json();
-            for (const item of items) {
-                content.push({
-                    title: item.title,
-                    url: item.html_url,
-                    type: 'quiz',
-                    moduleName: 'Quizzes',
-                    courseName: course.name,
-                    courseId: course.id,
-                    scannedAt: new Date().toISOString()
-                });
-            }
+        for (const item of items) {
+            content.push({
+                title: item.title || '',
+                url: item.html_url || '',
+                type: 'quiz',
+                moduleName: 'Quizzes',
+                courseName: course.name,
+                courseId: course.id,
+                scannedAt: new Date().toISOString()
+            });
         }
     } catch (e) { }
 
-    // Fetch discussions
+    // Fetch discussions (paginated)
     try {
-        const response = await fetch(
-            `${baseUrl}/api/v1/courses/${course.id}/discussion_topics?per_page=100`,
-            { credentials: 'include' }
+        const items = await fetchAllPages(
+            `${baseUrl}/api/v1/courses/${course.id}/discussion_topics?per_page=100`
         );
-        if (response.ok) {
-            const items = await response.json();
-            for (const item of items) {
-                content.push({
-                    title: item.title,
-                    url: item.html_url,
-                    type: 'discussion',
-                    moduleName: 'Discussions',
-                    courseName: course.name,
-                    courseId: course.id,
-                    scannedAt: new Date().toISOString()
-                });
-            }
+        for (const item of items) {
+            content.push({
+                title: item.title || '',
+                url: item.html_url || '',
+                type: 'discussion',
+                moduleName: 'Discussions',
+                courseName: course.name,
+                courseId: course.id,
+                scannedAt: new Date().toISOString()
+            });
         }
     } catch (e) { }
 
-    // Fetch media objects (new in Phase 2)
+    // Fetch media objects (paginated)
     try {
-        // We only fetch titles to be lightweight
-        const response = await fetch(
-            `${baseUrl}/api/v1/courses/${course.id}/media_objects?per_page=100&sort=title&exclude[]=sources&exclude[]=tracks`,
-            { credentials: 'include' }
+        const items = await fetchAllPages(
+            `${baseUrl}/api/v1/courses/${course.id}/media_objects?per_page=100&sort=title&exclude[]=sources&exclude[]=tracks`
         );
-        if (response.ok) {
-            const items = await response.json();
-            for (const item of items) {
-                // Determine the best title
-                const title = item.user_entered_title || item.title || 'Untitled Video';
+        for (const item of items) {
+            // Determine the best title
+            const title = item.user_entered_title || item.title || 'Untitled Video';
 
-                // Skip if title looks like a filename ID (common in automated uploads)
-                if (title.match(/^[a-z0-9-]{30,}/)) continue;
+            // Skip if title looks like a filename ID (common in automated uploads)
+            if (title.match(/^[a-z0-9-]{30,}/)) continue;
 
-                // Construct a viewable URL
-                // Note: The API gives us the media object itself, but linking to it directly often requires
-                // going through a specific course context. We'll link to the media object's embedded view
-                // or fall back to the course media gallery if possible. 
-                // For now, let's try constructing a direct media link which Canvas usually redirects correctly.
-                const mediaUrl = `${baseUrl}/courses/${course.id}/media_download?entryId=${item.media_id}&redirect=1`;
+            const mediaUrl = `${baseUrl}/courses/${course.id}/media_download?entryId=${item.media_id}&redirect=1`;
 
-                content.push({
-                    title: title,
-                    url: mediaUrl, // This triggers a download/view of the media file
-                    type: 'video',
-                    moduleName: 'Media Gallery',
-                    courseName: course.name,
-                    courseId: course.id,
-                    scannedAt: new Date().toISOString()
-                });
-            }
+            content.push({
+                title: title,
+                url: mediaUrl,
+                type: 'video',
+                moduleName: 'Media Gallery',
+                courseName: course.name,
+                courseId: course.id,
+                scannedAt: new Date().toISOString()
+            });
         }
     } catch (e) {
         console.warn(`[Canvascope] Error fetching media for course ${course.id}:`, e);
@@ -461,27 +493,33 @@ async function fetchCourseContent(baseUrl, course) {
 // UTILITY FUNCTIONS
 // ============================================
 
+/**
+ * Check if a URL belongs to a known Canvas instance.
+ * Uses the unified KNOWN_CANVAS_DOMAINS + CANVAS_DOMAIN_SUFFIXES arrays,
+ * plus any user-added customDomains.
+ *
+ * @param {string} url - URL to check
+ * @returns {boolean}
+ */
 function isCanvasDomain(url) {
     try {
         const hostname = new URL(url).hostname.toLowerCase();
-        // Check known Canvas patterns
-        if (CANVAS_DOMAINS.some(domain => hostname.endsWith(domain))) {
+
+        // Check suffix patterns (e.g. .instructure.com)
+        if (CANVAS_DOMAIN_SUFFIXES.some(s => hostname.endsWith(s))) {
             return true;
         }
 
-        // Check specific school domains
-        if (hostname === 'bcourses.berkeley.edu' ||
-            hostname === 'bruinlearn.ucla.edu' ||
-            hostname === 'canvas.ucsd.edu' ||
-            hostname === 'canvas.asu.edu' ||
-            hostname === 'canvas.mit.edu') {
+        // Check exact known domains
+        if (KNOWN_CANVAS_DOMAINS.includes(hostname)) {
             return true;
         }
 
-        // Check custom domains
+        // Check user-added custom domains
         if (customDomains.includes(hostname)) {
             return true;
         }
+
         return false;
     } catch {
         return false;
@@ -489,14 +527,45 @@ function isCanvasDomain(url) {
 }
 
 /**
- * Deduplicate content by title + courseName + type
- * Prefers canonical URLs (e.g. /assignments/123) over module item URLs
+ * Derive a stable canonical identity for a content item.
+ * Prefers URL-based identity (origin + pathname, no query params).
+ * Falls back to a string hash of title|courseName|type.
+ *
+ * @param {Object} item - Content item
+ * @returns {string} Canonical identity key
+ */
+function getCanonicalId(item) {
+    if (!item || typeof item !== 'object') return '__invalid__';
+
+    if (item.url && typeof item.url === 'string') {
+        try {
+            const u = new URL(item.url);
+            return `${u.origin}${u.pathname}`;
+        } catch {
+            // URL is not valid, fall through to hash
+        }
+    }
+
+    // Fallback: deterministic key from fields
+    const raw = `${(item.title || '').trim()}|${(item.courseName || '').trim()}|${item.type || ''}`;
+    return `__hash__${raw}`;
+}
+
+/**
+ * Deduplicate content by canonical ID.
+ * Prefers canonical URLs (e.g. /assignments/123) over module item URLs.
+ *
+ * @param {Array} content - Array of content items
+ * @returns {Array} Deduplicated array
  */
 function deduplicateContent(content) {
     const seen = new Map();
 
     for (const item of content) {
-        const key = `${(item.title || '').trim()}|${(item.courseName || '').trim()}|${item.type}`;
+        // Null guard: skip malformed items
+        if (!item || typeof item !== 'object') continue;
+
+        const key = getCanonicalId(item);
 
         if (!seen.has(key)) {
             seen.set(key, item);
@@ -504,12 +573,11 @@ function deduplicateContent(content) {
             const existing = seen.get(key);
 
             const isCanonical = (url) => {
-                return url && (
-                    url.includes('/assignments/') ||
+                if (!url || typeof url !== 'string') return false;
+                return url.includes('/assignments/') ||
                     url.includes('/quizzes/') ||
                     url.includes('/files/') ||
-                    url.includes('/discussion_topics/')
-                );
+                    url.includes('/discussion_topics/');
             };
 
             const existingIsCanonical = isCanonical(existing.url);
@@ -517,7 +585,8 @@ function deduplicateContent(content) {
 
             if (newIsCanonical && !existingIsCanonical) {
                 seen.set(key, item);
-            } else if (newIsCanonical === existingIsCanonical && item.url.length < existing.url.length) {
+            } else if (newIsCanonical === existingIsCanonical &&
+                (item.url || '').length < (existing.url || '').length) {
                 seen.set(key, item);
             }
         }
@@ -569,7 +638,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
 
     if (message.action === 'addDomain') {
-        const domain = message.domain.toLowerCase();
+        const domain = (message.domain || '').toLowerCase().trim();
+        if (!domain) {
+            sendResponse({ success: false, error: 'Empty domain' });
+            return true;
+        }
         if (!customDomains.includes(domain)) {
             customDomains.push(domain);
             chrome.storage.local.set({ customDomains }).then(() => {
@@ -587,10 +660,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         const url = message.url;
         if (url) {
             try {
-                const hostname = new URL(url).hostname.toLowerCase();
                 if (!isCanvasDomain(url)) {
-                    // Check if we should add this domain
-                    // For now, just trigger a scan if user explicitly requests
                     sendResponse({ isCanvas: false });
                 } else {
                     triggerBackgroundScan(url);
@@ -603,9 +673,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return true;
     }
 
+    if (message.action === 'getCanvasDomains') {
+        // Allow popup/content scripts to request the domain list
+        sendResponse({
+            suffixes: CANVAS_DOMAIN_SUFFIXES,
+            domains: KNOWN_CANVAS_DOMAINS,
+            custom: customDomains
+        });
+        return true;
+    }
+
     if (message.action === 'scanFrames') {
         // Received request to scan all frames in the current tab (for LTI tools like Kaltura)
-        const tabId = sender.tab.id;
+        const tabId = sender.tab?.id;
         if (!tabId) return true;
 
         console.log('[Canvascope] Scanning frames for tab', tabId);
@@ -647,7 +727,6 @@ function scanFrameForVideos() {
     const videos = [];
     try {
         // 1. Kaltura Media Gallery Selectors
-        // Look for titles in prominent text elements
         const kalturaItems = document.querySelectorAll('.photo-group, .entry-title, .cb-entry-title, li.media-item');
 
         kalturaItems.forEach(item => {
@@ -659,7 +738,7 @@ function scanFrameForVideos() {
                 if (title && title.length > 3) {
                     videos.push({
                         title: title,
-                        url: linkEl.href || window.location.href, // If link is JS, use page URL (users can find it there)
+                        url: linkEl.href || window.location.href,
                         type: 'video'
                     });
                 }
@@ -667,7 +746,6 @@ function scanFrameForVideos() {
         });
 
         // 2. Generic "Video" finding in iframes
-        // Sometimes titles are in alt text of thumbnails
         if (videos.length === 0) {
             const potentialVideos = document.querySelectorAll('a[href*="video"], a[class*="video"]');
             potentialVideos.forEach(link => {
@@ -693,27 +771,24 @@ async function saveScrapedVideos(videos) {
 
     const data = await chrome.storage.local.get(['indexedContent']);
     let content = data.indexedContent || [];
-    const seen = new Set(content.map(c => c.url + c.title));
+    const seen = new Set(content.map(c => (c.url || '') + (c.title || '')));
 
     let addedCount = 0;
     for (const v of videos) {
         // Generate a pseudo-url if needed since LTI links are often javascript:void(0)
         let finalUrl = v.url;
         if (!finalUrl || finalUrl.startsWith('javascript') || finalUrl === 'about:blank') {
-            // Can't do much without a real URL, but maybe we can link to the current page + hash?
-            // For now, assume if we scraped it, the user is On the page, so using that page's URL is better than nothing?
-            // Actually, we don't have the top frame URL easily here unless we pass it.
             continue;
         }
 
-        const key = finalUrl + v.title;
+        const key = finalUrl + (v.title || '');
         if (!seen.has(key)) {
             content.push({
-                title: v.title,
+                title: v.title || '',
                 url: finalUrl,
                 type: 'video',
-                moduleName: 'Media Gallery', // Inferred
-                courseName: 'Current Course', // We might update this later or infer from context
+                moduleName: 'Media Gallery',
+                courseName: 'Current Course',
                 scannedAt: new Date().toISOString()
             });
             seen.add(key);
