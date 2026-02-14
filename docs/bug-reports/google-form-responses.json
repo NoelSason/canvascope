@@ -1,15 +1,37 @@
-[
-  {
-    "Timestamp": "2/11/2026 20:03:30",
-    "Name": "Noel Sason",
-    "Email": "cubemasternoel@gmail.com",
-    "School": "UC Berkeley",
-    "Type of Feedback": "General Comments",
-    "Bug": "",
-    "Steps to recreate": "",
-    "Screenshot (if applicable)": "",
-    "Feature request": "",
-    "General comments?": "Cool App",
-    "Questions?": ""
-  }
-]
+{
+  "synced_at_utc": "2026-02-13T23:31:50.710101+00:00",
+  "spreadsheet_id": "1eouppsU28gec9r1x8XNCeZtQ6BMgoZ54kfKE4HDHIjg",
+  "range": "Form Responses 1!A:Z",
+  "excluded_columns": [],
+  "total_records": 1,
+  "headers": [
+    "Timestamp",
+    "Name",
+    "Email",
+    "School",
+    "Type of Feedback",
+    "Bug",
+    "Steps to recreate",
+    "Screenshot (if applicable)",
+    "Feature request",
+    "Screenshot (if applicable)_2",
+    "General comments?",
+    "Questions?"
+  ],
+  "records": [
+    {
+      "Timestamp": "2/11/2026 20:03:30",
+      "Name": "Noel Sason",
+      "Email": "cubemasternoel@gmail.com",
+      "School": "UC Berkeley",
+      "Type of Feedback": "General Comments",
+      "Bug": "",
+      "Steps to recreate": "",
+      "Screenshot (if applicable)": "",
+      "Feature request": "",
+      "Screenshot (if applicable)_2": "",
+      "General comments?": "Cool App",
+      "Questions?": ""
+    }
+  ]
+}
