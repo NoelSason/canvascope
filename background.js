@@ -358,6 +358,21 @@ async function fetchCourseContent(baseUrl, course) {
         }
     } catch (e) { }
 
+    // Fetch folder hierarchy (for file context)
+    const folderMap = new Map(); // folder_id → { name, fullName }
+    try {
+        const folders = await fetchAllPages(
+            `${baseUrl}/api/v1/courses/${course.id}/folders?per_page=100`
+        );
+        for (const f of folders) {
+            // full_name is like "course files/4. Practice Exams/Exam 1"
+            const fullName = (f.full_name || '')
+                .replace(/^course files\/?/i, '') // strip "course files/" prefix
+                .replace(/\//g, ' > ');           // use > as separator
+            folderMap.set(f.id, { name: f.name || '', fullName });
+        }
+    } catch (e) { }
+
     // Fetch files (paginated)
     try {
         const items = await fetchAllPages(
@@ -371,11 +386,17 @@ async function fetchCourseContent(baseUrl, course) {
             if (['mp4', 'mov', 'webm'].includes(ext)) type = 'video';
             if (['doc', 'docx'].includes(ext)) type = 'document';
 
+            // Look up folder info
+            const folder = folderMap.get(item.folder_id);
+            const folderName = folder?.name || 'Files';
+            const folderPath = folder?.fullName || '';
+
             content.push({
                 title: item.display_name || '',
                 url: item.url || `${baseUrl}/courses/${course.id}/files/${item.id}`,
                 type,
-                moduleName: 'Files',
+                moduleName: folderName,
+                folderPath,
                 courseName: course.name,
                 courseId: course.id,
                 scannedAt: new Date().toISOString()

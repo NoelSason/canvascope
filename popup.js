@@ -47,6 +47,7 @@ const FUSE_OPTIONS = {
     { name: 'title', weight: 3.0 },
     { name: 'searchTitleNormalized', weight: 2.5 },
     { name: 'searchAliases', weight: 2.0 },
+    { name: 'folderPath', weight: 1.8 },
     { name: 'moduleName', weight: 1.5 },
     { name: 'courseName', weight: 1.2 },
     { name: 'type', weight: 0.5 }
@@ -365,7 +366,14 @@ function numberVariants(text) {
  */
 function buildSearchFields(item) {
   const normalized = expandAbbreviations(item.title || '');
-  const aliases = numberVariants(normalized);
+  let aliases = numberVariants(normalized);
+  // Include folder path in aliases so folder names are searchable
+  if (item.folderPath) {
+    aliases += ' ' + normalizeText(item.folderPath);
+  }
+  if (item.moduleName && item.moduleName !== 'Files') {
+    aliases += ' ' + normalizeText(item.moduleName);
+  }
   return {
     searchTitleNormalized: normalized,
     searchAliases: aliases
@@ -1227,6 +1235,24 @@ function calculateScore(item, fuseScore, normalizedQuery, intent, queryNums, isP
 
   // ── Active-course prior ─────────────────────────
   score += getActiveCourseBoost(item);
+
+  // ── Folder-context boost ────────────────────────
+  // Boost items whose folder/module name matches query tokens
+  if (normalizedQuery && (item.folderPath || item.moduleName)) {
+    const folderText = normalizeText((item.folderPath || '') + ' ' + (item.moduleName || ''));
+    const normQ = normalizedQuery.toLowerCase();
+    const qTokens = normQ.split(/\s+/).filter(t => t.length > 1 && !STOP_TOKENS.has(t));
+    if (qTokens.length > 0) {
+      let folderHits = 0;
+      for (const t of qTokens) {
+        if (folderText.includes(t)) folderHits++;
+      }
+      if (folderHits > 0) {
+        // Proportional boost, max +0.20
+        score += Math.min(0.20, 0.12 * (folderHits / qTokens.length));
+      }
+    }
+  }
 
   // ── Click-feedback boost ────────────────────────
   score += getClickBoost(item);
