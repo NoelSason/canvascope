@@ -72,6 +72,9 @@ chrome.runtime.onInstalled.addListener((details) => {
 
     // Set up periodic alarm for background scanning
     chrome.alarms.create('periodicScan', { periodInMinutes: 30 });
+
+    // Set up deadline reminder alarm (every 60 min)
+    chrome.alarms.create('deadlineReminder', { periodInMinutes: 60 });
 });
 
 // ============================================
@@ -112,6 +115,9 @@ chrome.alarms.onAlarm.addListener((alarm) => {
     if (alarm.name === 'periodicScan') {
         console.log('[Canvascope] Periodic scan triggered');
         triggerBackgroundScan();
+    }
+    if (alarm.name === 'deadlineReminder') {
+        checkDeadlineReminders();
     }
 });
 
@@ -211,7 +217,7 @@ async function performBackgroundScan(baseUrl) {
 
         // Deduplicate scanned content before merging
         // Same item can appear from multiple API endpoints (e.g. /assignments and /modules/items)
-        const dedupedContent = deduplicateContent(allContent);
+        const dedupedContent = deduplicateCrossType(deduplicateContent(allContent));
 
         // ── Snapshot-aware merge ──────────────────────────────
         // Items from courses we just scanned are REPLACED wholesale,
@@ -459,7 +465,10 @@ async function fetchCourseContent(baseUrl, course) {
                 moduleName: 'Quizzes',
                 courseName: course.name,
                 courseId: course.id,
-                scannedAt: new Date().toISOString()
+                scannedAt: new Date().toISOString(),
+                dueAt: item.due_at || null,
+                unlockAt: item.unlock_at || null,
+                lockAt: item.lock_at || null
             });
         }
     } catch (e) { }
@@ -470,6 +479,8 @@ async function fetchCourseContent(baseUrl, course) {
             `${baseUrl}/api/v1/courses/${course.id}/discussion_topics?per_page=100`
         );
         for (const item of items) {
+            // Discussions linked to an assignment carry due dates
+            const asgn = item.assignment || null;
             content.push({
                 title: item.title || '',
                 url: item.html_url || '',
@@ -477,7 +488,10 @@ async function fetchCourseContent(baseUrl, course) {
                 moduleName: 'Discussions',
                 courseName: course.name,
                 courseId: course.id,
-                scannedAt: new Date().toISOString()
+                scannedAt: new Date().toISOString(),
+                dueAt: asgn?.due_at || null,
+                unlockAt: asgn?.unlock_at || null,
+                lockAt: asgn?.lock_at || null
             });
         }
     } catch (e) { }
@@ -607,16 +621,60 @@ function deduplicateContent(content) {
             const existingIsCanonical = isCanonical(existing.url);
             const newIsCanonical = isCanonical(item.url);
 
+            let winner = existing;
             if (newIsCanonical && !existingIsCanonical) {
+                winner = item;
                 seen.set(key, item);
             } else if (newIsCanonical === existingIsCanonical &&
                 (item.url || '').length < (existing.url || '').length) {
+                winner = item;
                 seen.set(key, item);
             }
+
+            // Merge due-date fields from either copy (prefer non-null)
+            const loser = winner === item ? existing : item;
+            if (!winner.dueAt && loser.dueAt) winner.dueAt = loser.dueAt;
+            if (!winner.unlockAt && loser.unlockAt) winner.unlockAt = loser.unlockAt;
+            if (!winner.lockAt && loser.lockAt) winner.lockAt = loser.lockAt;
         }
     }
 
     return Array.from(seen.values());
+}
+
+/**
+ * Second-pass dedup: merge items with identical title + course but different types
+ * (e.g. Canvas creates both /assignments/X and /quizzes/Y for the same quiz).
+ * Prefers assignment > quiz > discussion, merges due-date fields.
+ */
+function deduplicateCrossType(content) {
+    const TYPE_PRIORITY = { assignment: 0, quiz: 1, discussion: 2 };
+    const groups = new Map();
+
+    for (const item of content) {
+        if (!item || !item.title) continue;
+        const key = `${(item.title || '').trim().toLowerCase()}|${(item.courseName || '').trim().toLowerCase()}`;
+        if (!groups.has(key)) {
+            groups.set(key, item);
+        } else {
+            const existing = groups.get(key);
+            const existingPri = TYPE_PRIORITY[(existing.type || '').toLowerCase()] ?? 99;
+            const newPri = TYPE_PRIORITY[(item.type || '').toLowerCase()] ?? 99;
+
+            let winner = existing;
+            if (newPri < existingPri) {
+                winner = item;
+                groups.set(key, item);
+            }
+            // Merge due-date fields
+            const loser = winner === item ? existing : item;
+            if (!winner.dueAt && loser.dueAt) winner.dueAt = loser.dueAt;
+            if (!winner.unlockAt && loser.unlockAt) winner.unlockAt = loser.unlockAt;
+            if (!winner.lockAt && loser.lockAt) winner.lockAt = loser.lockAt;
+        }
+    }
+
+    return Array.from(groups.values());
 }
 
 function sleep(ms) {
@@ -827,6 +885,100 @@ async function saveScrapedVideos(videos) {
     }
 }
 
+
+// ============================================
+// DEADLINE REMINDERS
+// ============================================
+
+const REMINDER_WINDOW_MS = 12 * 60 * 60 * 1000; // 12h dedup window
+const REMINDER_LOOKAHEAD_MS = 24 * 60 * 60 * 1000; // 24h lookahead
+const MAX_NOTIFICATIONS_PER_CYCLE = 3;
+
+async function checkDeadlineReminders() {
+    try {
+        const data = await chrome.storage.local.get(['indexedContent', 'reminderState']);
+        const items = data.indexedContent || [];
+        const state = data.reminderState || {};
+        const now = Date.now();
+        const notifications = [];
+
+        for (const item of items) {
+            if (!item.dueAt) continue;
+            const type = (item.type || '').toLowerCase();
+            if (!['assignment', 'quiz', 'discussion'].includes(type)) continue;
+
+            const dueTs = new Date(item.dueAt).getTime();
+            if (isNaN(dueTs)) continue;
+
+            const taskId = canonicalBgTaskId(item);
+            const timeUntilDue = dueTs - now;
+
+            // Upcoming: due within 24h in the future
+            if (timeUntilDue > 0 && timeUntilDue <= REMINDER_LOOKAHEAD_MS) {
+                const windowKey = `${taskId}:upcoming`;
+                if (!state[windowKey] || (now - state[windowKey]) > REMINDER_WINDOW_MS) {
+                    const hoursLeft = Math.round(timeUntilDue / (60 * 60 * 1000));
+                    notifications.push({
+                        id: windowKey,
+                        title: `⏰ Due in ${hoursLeft}h: ${item.title}`,
+                        message: `${item.courseName || 'Course'} — ${type}`,
+                        taskId: windowKey
+                    });
+                }
+            }
+            // Overdue: past due within last 24h
+            if (timeUntilDue < 0 && timeUntilDue > -REMINDER_LOOKAHEAD_MS) {
+                const windowKey = `${taskId}:overdue`;
+                if (!state[windowKey] || (now - state[windowKey]) > REMINDER_WINDOW_MS) {
+                    notifications.push({
+                        id: windowKey,
+                        title: `⚠ Overdue: ${item.title}`,
+                        message: `${item.courseName || 'Course'} — ${type}`,
+                        taskId: windowKey
+                    });
+                }
+            }
+        }
+
+        // Fire at most MAX_NOTIFICATIONS_PER_CYCLE
+        const toFire = notifications.slice(0, MAX_NOTIFICATIONS_PER_CYCLE);
+        for (const n of toFire) {
+            try {
+                chrome.notifications.create(n.id, {
+                    type: 'basic',
+                    iconUrl: 'icons/icon128.png',
+                    title: n.title,
+                    message: n.message
+                });
+                state[n.taskId] = now;
+            } catch (e) {
+                console.warn('[Canvascope] Notification error:', e);
+            }
+        }
+
+        // Prune old state entries (older than 48h)
+        for (const key of Object.keys(state)) {
+            if ((now - state[key]) > 48 * 60 * 60 * 1000) {
+                delete state[key];
+            }
+        }
+
+        if (toFire.length > 0) {
+            await chrome.storage.local.set({ reminderState: state });
+            console.log(`[Canvascope] Sent ${toFire.length} deadline reminder(s)`);
+        }
+    } catch (e) {
+        console.warn('[Canvascope] Deadline reminder error:', e);
+    }
+}
+
+function canonicalBgTaskId(item) {
+    try {
+        return new URL(item.url).pathname;
+    } catch {
+        return (item.url || '') + ':' + (item.title || '');
+    }
+}
 
 // ============================================
 // STARTUP

@@ -231,6 +231,188 @@ function getActiveCourseBoost(item) {
 }
 
 // ============================================
+// DUE PLANNER HELPERS
+// ============================================
+
+const TASK_TYPES = new Set(['assignment', 'quiz', 'discussion']);
+
+function isTaskType(item) {
+  return TASK_TYPES.has((item.type || '').toLowerCase());
+}
+
+function parseDueTs(item) {
+  if (!item.dueAt) return 0;
+  const ts = new Date(item.dueAt).getTime();
+  return isNaN(ts) ? 0 : ts;
+}
+
+function canonicalTaskId(item) {
+  try {
+    return new URL(item.url).pathname;
+  } catch {
+    return (item.url || '') + ':' + (item.title || '');
+  }
+}
+
+function bucketTasks(items, now, lookaheadDays = 7) {
+  const overdue = [];
+  const today = [];
+  const next7Days = [];
+  const undated = [];
+
+  const startOfDay = new Date(now);
+  startOfDay.setHours(0, 0, 0, 0);
+  const endOfDay = new Date(now);
+  endOfDay.setHours(23, 59, 59, 999);
+  const endLookahead = endOfDay.getTime() + (lookaheadDays - 1) * 24 * 60 * 60 * 1000;
+
+  for (const item of items) {
+    if (!isTaskType(item)) continue;
+
+    // Respect active course filter
+    if (state.filters.course) {
+      const ic = (item.courseName || '').toLowerCase();
+      const fc = state.filters.course.toLowerCase();
+      if (ic !== fc && !ic.includes(fc)) continue;
+    }
+
+    const dueTs = parseDueTs(item);
+    if (dueTs === 0) {
+      undated.push(item);
+    } else if (dueTs < startOfDay.getTime()) {
+      overdue.push(item);
+    } else if (dueTs <= endOfDay.getTime()) {
+      today.push(item);
+    } else if (dueTs <= endLookahead) {
+      next7Days.push(item);
+    }
+    // Items further than lookaheadDays are not shown
+  }
+
+  // Sort by urgency (earliest first)
+  const byDue = (a, b) => parseDueTs(a) - parseDueTs(b);
+  overdue.sort(byDue);
+  today.sort(byDue);
+  next7Days.sort(byDue);
+  // Undated: alphabetical
+  undated.sort((a, b) => (a.title || '').localeCompare(b.title || ''));
+
+  return { overdue, today, next7Days, undated };
+}
+
+function formatDueLabel(item) {
+  const ts = parseDueTs(item);
+  if (ts === 0) return 'No due date';
+  const d = new Date(ts);
+  const now = new Date();
+  const diffMs = ts - now.getTime();
+  const diffDays = Math.round(diffMs / (24 * 60 * 60 * 1000));
+
+  if (diffMs < 0) {
+    const absDays = Math.abs(diffDays);
+    if (absDays === 0) return 'Overdue today';
+    return `${absDays}d overdue`;
+  }
+  if (diffDays === 0) {
+    const hrs = Math.round(diffMs / (60 * 60 * 1000));
+    return hrs <= 1 ? 'Due soon' : `Due in ${hrs}h`;
+  }
+  if (diffDays === 1) return 'Due tomorrow';
+  // Show date
+  return `Due ${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
+}
+
+function dueUrgencyClass(item) {
+  const ts = parseDueTs(item);
+  if (ts === 0) return 'undated';
+  const now = Date.now();
+  if (ts < now) return 'overdue';
+  const diffMs = ts - now;
+  const endOfDay = new Date();
+  endOfDay.setHours(23, 59, 59, 999);
+  if (ts <= endOfDay.getTime()) return 'today';
+  return 'upcoming';
+}
+
+function renderDuePlanner() {
+  const planner = elements.duePlanner;
+  if (!planner || state.isOverlayMode) return;
+
+  const buckets = bucketTasks(state.indexedContent, Date.now());
+  const total = buckets.overdue.length + buckets.today.length + buckets.next7Days.length + buckets.undated.length;
+
+  planner.innerHTML = '';
+
+  if (total === 0) {
+    planner.innerHTML = '<div class="due-planner-empty">No upcoming tasks found</div>';
+    return;
+  }
+
+  const sections = [
+    { key: 'overdue', label: '⚠ Overdue', items: buckets.overdue, cls: 'overdue' },
+    { key: 'today', label: '📅 Due Today', items: buckets.today, cls: 'today' },
+    { key: 'next7Days', label: '📋 Next 7 Days', items: buckets.next7Days, cls: 'upcoming' },
+    { key: 'undated', label: '❓ No Due Date', items: buckets.undated, cls: 'undated' }
+  ];
+
+  for (const sec of sections) {
+    if (sec.items.length === 0) continue;
+
+    const sectionEl = document.createElement('div');
+    sectionEl.className = 'due-section';
+
+    const header = document.createElement('div');
+    header.className = `due-section-header ${sec.cls}`;
+    header.textContent = `${sec.label} (${sec.items.length})`;
+    sectionEl.appendChild(header);
+
+    for (const item of sec.items) {
+      const row = document.createElement('div');
+      row.className = 'due-item';
+
+      const left = document.createElement('div');
+      left.className = 'due-item-left';
+
+      const title = document.createElement('div');
+      title.className = 'due-item-title';
+      title.textContent = item.title || 'Untitled';
+      left.appendChild(title);
+
+      const meta = document.createElement('div');
+      meta.className = 'due-item-meta';
+
+      const typeBadge = document.createElement('span');
+      typeBadge.className = 'result-type';
+      typeBadge.textContent = item.type || 'task';
+      meta.appendChild(typeBadge);
+
+      if (item.courseName) {
+        const course = document.createElement('span');
+        course.textContent = item.courseName;
+        meta.appendChild(course);
+      }
+      left.appendChild(meta);
+
+      const right = document.createElement('div');
+      right.className = 'due-item-right';
+
+      const chip = document.createElement('span');
+      chip.className = `due-chip ${dueUrgencyClass(item)}`;
+      chip.textContent = formatDueLabel(item);
+      right.appendChild(chip);
+
+      row.appendChild(left);
+      row.appendChild(right);
+
+      row.addEventListener('click', () => openResult(item));
+      sectionEl.appendChild(row);
+    }
+
+    planner.appendChild(sectionEl);
+  }
+}
+
+// ============================================
 // DIVERSITY RE-RANK
 // ============================================
 
@@ -472,6 +654,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   await detectActiveCourseContext();
   initializeFuse();
   updateUI();
+  renderDuePlanner();
   elements.searchInput.focus();
 
   // Request status from background
@@ -573,6 +756,9 @@ function initializeElements() {
   elements.typeText = document.getElementById('type-text');
 
   elements.searchHistory = document.getElementById('search-history');
+
+  // Due Planner
+  elements.duePlanner = document.getElementById('due-planner');
 }
 
 function setupEventListeners() {
@@ -1396,6 +1582,9 @@ function displayResults(results) {
   clearResultsContainer();
   elements.emptyState.classList.add('hidden');
 
+  // Hide planner when showing search results
+  if (elements.duePlanner) elements.duePlanner.classList.add('hidden');
+
   // Hide recents section when showing search results
   const recents = document.getElementById('overlay-recents');
   if (recents) recents.remove();
@@ -1430,6 +1619,15 @@ function displayResults(results) {
         const courseEl = document.createElement('div');
         courseEl.className = 'overlay-result-course';
         courseEl.textContent = item.courseName;
+        // Append color-coded due label
+        if (item.dueAt && isTaskType(item)) {
+          const sep = document.createTextNode('  ·  ');
+          courseEl.appendChild(sep);
+          const dueSpan = document.createElement('span');
+          dueSpan.className = `due-chip-search ${dueUrgencyClass(item)}`;
+          dueSpan.textContent = formatDueLabel(item);
+          courseEl.appendChild(dueSpan);
+        }
         textCol.appendChild(courseEl);
       }
 
@@ -1460,6 +1658,14 @@ function displayResults(results) {
       metaElement.appendChild(typeElement);
       if (item.courseName) {
         metaElement.appendChild(courseElement);
+      }
+
+      // Due-date chip for task items in search results
+      if (item.dueAt && isTaskType(item)) {
+        const dueChip = document.createElement('span');
+        dueChip.className = `due-chip-search ${dueUrgencyClass(item)}`;
+        dueChip.textContent = formatDueLabel(item);
+        metaElement.appendChild(dueChip);
       }
 
       resultElement.appendChild(metaElement);
@@ -1655,6 +1861,16 @@ function showEmptyState() {
   clearResultsContainer();
   elements.emptyState.classList.remove('hidden');
   updateOverlayFooter(0, 0);
+
+  // Show Due Planner when search is empty (popup mode only)
+  if (elements.duePlanner && !state.isOverlayMode) {
+    renderDuePlanner();
+    const hasTasks = elements.duePlanner.innerHTML.trim().length > 0;
+    elements.duePlanner.classList.toggle('hidden', !hasTasks);
+    if (hasTasks) {
+      elements.emptyState.classList.add('hidden');
+    }
+  }
 }
 
 function showNoResults(message) {
@@ -1670,7 +1886,7 @@ function showNoResults(message) {
 function clearResultsContainer() {
   const children = Array.from(elements.resultsContainer.children);
   children.forEach(child => {
-    if (child.id !== 'empty-state') {
+    if (child.id !== 'empty-state' && child.id !== 'due-planner') {
       child.remove();
     }
   });
@@ -1686,7 +1902,7 @@ async function loadContent() {
     let content = result.indexedContent || [];
 
     // Deduplicate by normalizing URLs (strip module_item_id)
-    content = deduplicateContent(content);
+    content = deduplicateCrossType(deduplicateContent(content));
 
     state.indexedContent = content;
     console.log(`[Canvascope] Loaded ${state.indexedContent.length} items (after dedup)`);
@@ -1744,17 +1960,59 @@ function deduplicateContent(content) {
       const existingIsCanonical = isCanonical(existing.url);
       const newIsCanonical = isCanonical(item.url);
 
+      let winner = existing;
       if (newIsCanonical && !existingIsCanonical) {
+        winner = item;
         seen.set(key, item);
       } else if (newIsCanonical === existingIsCanonical) {
         if ((item.url || '').length < (existing.url || '').length) {
+          winner = item;
           seen.set(key, item);
         }
       }
+
+      // Merge due-date fields from either copy (prefer non-null)
+      const loser = winner === item ? existing : item;
+      if (!winner.dueAt && loser.dueAt) winner.dueAt = loser.dueAt;
+      if (!winner.unlockAt && loser.unlockAt) winner.unlockAt = loser.unlockAt;
+      if (!winner.lockAt && loser.lockAt) winner.lockAt = loser.lockAt;
     }
   }
 
   return Array.from(seen.values());
+}
+
+/**
+ * Second-pass dedup: merge items with identical title + course but different types.
+ * Prefers assignment > quiz > discussion, merges due-date fields.
+ */
+function deduplicateCrossType(content) {
+  const TYPE_PRIORITY = { assignment: 0, quiz: 1, discussion: 2 };
+  const groups = new Map();
+
+  for (const item of content) {
+    if (!item || !item.title) continue;
+    const key = `${(item.title || '').trim().toLowerCase()}|${(item.courseName || '').trim().toLowerCase()}`;
+    if (!groups.has(key)) {
+      groups.set(key, item);
+    } else {
+      const existing = groups.get(key);
+      const existingPri = TYPE_PRIORITY[(existing.type || '').toLowerCase()] ?? 99;
+      const newPri = TYPE_PRIORITY[(item.type || '').toLowerCase()] ?? 99;
+
+      let winner = existing;
+      if (newPri < existingPri) {
+        winner = item;
+        groups.set(key, item);
+      }
+      const loser = winner === item ? existing : item;
+      if (!winner.dueAt && loser.dueAt) winner.dueAt = loser.dueAt;
+      if (!winner.unlockAt && loser.unlockAt) winner.unlockAt = loser.unlockAt;
+      if (!winner.lockAt && loser.lockAt) winner.lockAt = loser.lockAt;
+    }
+  }
+
+  return Array.from(groups.values());
 }
 
 async function handleRefresh() {
