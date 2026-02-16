@@ -47,6 +47,7 @@ const FUSE_OPTIONS = {
     { name: 'title', weight: 3.0 },
     { name: 'searchTitleNormalized', weight: 2.5 },
     { name: 'searchAliases', weight: 2.0 },
+    { name: 'folderPath', weight: 1.8 },
     { name: 'moduleName', weight: 1.5 },
     { name: 'courseName', weight: 1.2 },
     { name: 'type', weight: 0.5 }
@@ -73,6 +74,212 @@ const TYPE_BOOST = {
   video: 0.08,
   externalurl: 0.05
 };
+
+// ============================================
+// INTENT DETECTION
+// ============================================
+
+const INTENT_PATTERNS = {
+  assignment: /\b(hw|homework|pset|problem\s*set|project|lab|worksheet|due|assn|assign|proj)\b/,
+  quiz: /\b(quiz|midterm|exam|final|mt|test)\b/,
+  page: /\b(lecture|notes|slides|reading|chapter|lec|ch|chap)\b/,
+  file: /\b(pdf|doc|file|handout|document)\b/
+};
+
+// Intent ↔ item.type mapping
+const INTENT_TYPE_MAP = {
+  assignment: ['assignment'],
+  quiz: ['quiz'],
+  page: ['page', 'video', 'slides'],
+  file: ['file', 'pdf', 'document']
+};
+
+const INTENT_MAX_BOOST = { assignment: 0.22, quiz: 0.22, page: 0.16, file: 0.16 };
+const INTENT_CAP = 0.25;
+
+/**
+ * Detect query intent — returns { assignment, quiz, page, file } confidences [0..1]
+ */
+function detectQueryIntent(normalizedQuery) {
+  const intent = { assignment: 0, quiz: 0, page: 0, file: 0 };
+  for (const [key, re] of Object.entries(INTENT_PATTERNS)) {
+    intent[key] = re.test(normalizedQuery) ? 1.0 : 0;
+  }
+  return intent;
+}
+
+// ============================================
+// NUMERIC TOKEN HELPERS
+// ============================================
+
+/**
+ * Extract numeric tokens from text as strings.
+ */
+function extractNumericTokens(text) {
+  const matches = (text || '').match(/\b\d{1,4}\b/g);
+  return matches ? matches.map(n => n.replace(/^0+/, '') || '0') : [];
+}
+
+/**
+ * Compute numeric alignment between query numbers and title numbers.
+ * Returns { aligned, mismatched, queryHasNumbers }
+ */
+function computeNumericAlignment(queryNums, titleText) {
+  if (queryNums.length === 0) return { aligned: 0, mismatched: 0, queryHasNumbers: false };
+  const titleNums = new Set(extractNumericTokens(titleText));
+  let aligned = 0, mismatched = 0;
+  for (const qn of queryNums) {
+    if (titleNums.has(qn)) aligned++;
+    else mismatched++;
+  }
+  return { aligned, mismatched, queryHasNumbers: true };
+}
+
+// ============================================
+// TOKEN COVERAGE
+// ============================================
+
+const STOP_TOKENS = new Set(['a', 'an', 'the', 'in', 'on', 'of', 'to', 'for', 'and', 'or', 'is']);
+
+/**
+ * Compute fraction of query tokens present in searchable text.
+ * Checks title and optional context (folderPath, moduleName).
+ * Ignores stop words and single-char tokens.
+ */
+function computeTokenCoverage(normalizedQuery, titleText, contextText) {
+  const qTokens = normalizedQuery.split(/\s+/).filter(t => t.length > 1 && !STOP_TOKENS.has(t));
+  if (qTokens.length === 0) return 1;
+  const combined = ((titleText || '') + ' ' + (contextText || '')).toLowerCase();
+  let found = 0;
+  for (const t of qTokens) {
+    if (combined.includes(t)) found++;
+  }
+  return found / qTokens.length;
+}
+
+// ============================================
+// CLICK FEEDBACK
+// ============================================
+
+let clickFeedbackMap = {}; // keyed by canonical path, { openCount, lastOpenedAt }
+
+async function loadClickFeedbackMap() {
+  try {
+    const data = await chrome.storage.local.get(['clickFeedback']);
+    clickFeedbackMap = data.clickFeedback || {};
+  } catch (e) { clickFeedbackMap = {}; }
+}
+
+async function updateClickFeedback(item) {
+  const key = getClickKey(item);
+  if (!key) return;
+  const entry = clickFeedbackMap[key] || { openCount: 0, lastOpenedAt: 0 };
+  entry.openCount++;
+  entry.lastOpenedAt = Date.now();
+  clickFeedbackMap[key] = entry;
+  try {
+    await chrome.storage.local.set({ clickFeedback: clickFeedbackMap });
+  } catch (e) { /* ignore */ }
+}
+
+function getClickKey(item) {
+  if (!item || !item.url) return null;
+  try {
+    const u = new URL(item.url);
+    return u.pathname;
+  } catch { return null; }
+}
+
+function getClickBoost(item) {
+  const key = getClickKey(item);
+  if (!key || !clickFeedbackMap[key]) return 0;
+  const { openCount, lastOpenedAt } = clickFeedbackMap[key];
+  // Frequency boost: log-scaled, max ~0.08
+  const freqBoost = Math.min(0.08, Math.log2(1 + openCount) * 0.025);
+  // Recency boost: decays over 14 days, max 0.05
+  const daysSinceOpen = (Date.now() - lastOpenedAt) / (1000 * 60 * 60 * 24);
+  const recencyBoost = Math.max(0, 0.05 - daysSinceOpen * 0.0036);
+  return Math.min(0.12, freqBoost + recencyBoost);
+}
+
+// ============================================
+// ACTIVE COURSE CONTEXT
+// ============================================
+
+let activeCourseContext = null; // { courseId, courseName }
+
+async function detectActiveCourseContext() {
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab?.url) return;
+    const m = tab.url.match(/\/courses\/(\d+)/);
+    if (m) {
+      const cid = parseInt(m[1], 10);
+      // Try to find course name from indexed content
+      const match = state.indexedContent.find(i => i.courseId === cid);
+      activeCourseContext = { courseId: cid, courseName: match?.courseName || null };
+    }
+  } catch (e) { /* ignore */ }
+}
+
+function getActiveCourseBoost(item) {
+  if (!activeCourseContext) return 0;
+  if (item.courseId && item.courseId === activeCourseContext.courseId) return 0.12;
+  if (activeCourseContext.courseName && item.courseName &&
+    normalizeText(item.courseName) === normalizeText(activeCourseContext.courseName)) return 0.08;
+  return 0;
+}
+
+// ============================================
+// DIVERSITY RE-RANK
+// ============================================
+
+/**
+ * Greedy diversity re-rank for top-N results.
+ * Penalizes over-represented types and courses when score deltas are small.
+ */
+function applyDiversityRerank(scoredResults, limit = 15) {
+  if (scoredResults.length <= 3) return scoredResults;
+
+  const topN = scoredResults.slice(0, Math.min(scoredResults.length, limit));
+  const rest = scoredResults.slice(limit);
+  const picked = [];
+  const typeCounts = {};
+  const courseCounts = {};
+
+  while (topN.length > 0) {
+    let bestIdx = 0;
+    let bestAdjScore = -Infinity;
+
+    for (let i = 0; i < topN.length; i++) {
+      const r = topN[i];
+      let adj = r.finalScore;
+      const t = r.item.type || 'other';
+      const c = normalizeText(r.item.courseName || '');
+
+      // Penalty for over-representation (only if score delta from top is small)
+      const topScore = picked.length > 0 ? picked[0].finalScore : adj;
+      if (topScore - adj < 0.3) {
+        if ((typeCounts[t] || 0) >= 2) adj -= 0.04 * ((typeCounts[t] || 0) - 1);
+        if ((courseCounts[c] || 0) >= 2) adj -= 0.03 * ((courseCounts[c] || 0) - 1);
+      }
+
+      if (adj > bestAdjScore) {
+        bestAdjScore = adj;
+        bestIdx = i;
+      }
+    }
+
+    const chosen = topN.splice(bestIdx, 1)[0];
+    const t = chosen.item.type || 'other';
+    const c = normalizeText(chosen.item.courseName || '');
+    typeCounts[t] = (typeCounts[t] || 0) + 1;
+    courseCounts[c] = (courseCounts[c] || 0) + 1;
+    picked.push(chosen);
+  }
+
+  return [...picked, ...rest];
+}
 
 // ============================================
 // SEARCH NORMALIZATION HELPERS
@@ -160,7 +367,14 @@ function numberVariants(text) {
  */
 function buildSearchFields(item) {
   const normalized = expandAbbreviations(item.title || '');
-  const aliases = numberVariants(normalized);
+  let aliases = numberVariants(normalized);
+  // Include folder path in aliases so folder names are searchable
+  if (item.folderPath) {
+    aliases += ' ' + normalizeText(item.folderPath);
+  }
+  if (item.moduleName && item.moduleName !== 'Files') {
+    aliases += ' ' + normalizeText(item.moduleName);
+  }
   return {
     searchTitleNormalized: normalized,
     searchAliases: aliases
@@ -254,6 +468,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   await loadContent();
   await loadSearchHistory();
   await loadRecentlyOpened();
+  await loadClickFeedbackMap();
+  await detectActiveCourseContext();
   initializeFuse();
   updateUI();
   elements.searchInput.focus();
@@ -861,39 +1077,93 @@ function performSearch(query) {
     normalizedQuery = expandAbbreviations(query);
   }
 
+  // Derive search metadata once
+  const intent = detectQueryIntent(normalizedQuery);
+  const queryNums = extractNumericTokens(normalizedQuery);
+
   const searchStart = performance.now();
 
-  // Pass A: strict search with normalized query
-  let results = state.fuse.search(normalizedQuery, { limit: MAX_RESULTS * 3 });
+  // ── Exact/prefix pre-pass ──────────────────────────
+  const normQ = normalizedQuery.toLowerCase();
+  const prePassHits = [];
+  const prePassUrls = new Set();
+  for (const item of state.filteredContent) {
+    const nt = (item.searchTitleNormalized || normalizeText(item.title || '')).toLowerCase();
+    if (nt === normQ || nt.startsWith(normQ + ' ') || nt.startsWith(normQ)) {
+      prePassHits.push({ item, score: 0, prePass: true });
+      prePassUrls.add(item.url);
+    }
+  }
+
+  // ── Fuse pass A: strict ────────────────────────────
+  let fuseResults = state.fuse.search(normalizedQuery, { limit: MAX_RESULTS * 3 });
 
   // Also search with effective query and merge unique results
   if (normalizedQuery !== normalizeText(effectiveQuery)) {
     const origResults = state.fuse.search(effectiveQuery, { limit: MAX_RESULTS * 3 });
-    const seenUrls = new Set(results.map(r => r.item.url));
+    const seenUrls = new Set(fuseResults.map(r => r.item.url));
     for (const r of origResults) {
       if (!seenUrls.has(r.item.url)) {
-        results.push(r);
+        fuseResults.push(r);
         seenUrls.add(r.item.url);
       }
     }
   }
 
-  // Pass B: relaxed fallback if strict yielded nothing
-  if (results.length === 0 && state.fuseRelaxed) {
-    results = state.fuseRelaxed.search(normalizedQuery, { limit: MAX_RESULTS * 3 });
-    if (results.length === 0) {
-      results = state.fuseRelaxed.search(effectiveQuery, { limit: MAX_RESULTS * 3 });
+  // ── Fuse pass B: relaxed fallback ──────────────────
+  if (fuseResults.length === 0 && state.fuseRelaxed) {
+    fuseResults = state.fuseRelaxed.search(normalizedQuery, { limit: MAX_RESULTS * 3 });
+    if (fuseResults.length === 0) {
+      fuseResults = state.fuseRelaxed.search(effectiveQuery, { limit: MAX_RESULTS * 3 });
     }
   }
 
-  // If course-scoped, filter results to the matching course
-  if (courseScope && results.length > 0) {
+  // ── Merge pre-pass + Fuse (dedup by URL) ───────────
+  let results = [...prePassHits];
+  for (const r of fuseResults) {
+    if (!prePassUrls.has(r.item.url)) {
+      results.push(r);
+    }
+  }
+
+  // If course-scoped, ensure items from the target course are in the pool
+  if (courseScope) {
     const prefix = courseScope.coursePrefix;
+    const seenUrls = new Set(results.map(r => r.item.url));
+
+    // Secondary recall: scan target course items for query token matches
+    // in title + folderPath + moduleName (catches folder-name matches)
+    const qTokens = normalizedQuery.toLowerCase().split(/\s+/).filter(t => t.length > 1);
+    if (qTokens.length > 0) {
+      for (const item of state.filteredContent) {
+        if (seenUrls.has(item.url)) continue;
+        const itemCourse = normalizeText(item.courseName || '');
+        if (!itemCourse.includes(prefix)) continue;
+
+        // Check if enough query tokens appear across searchable text
+        const searchableText = [
+          (item.searchTitleNormalized || normalizeText(item.title || '')),
+          normalizeText(item.folderPath || ''),
+          normalizeText(item.moduleName || '')
+        ].join(' ').toLowerCase();
+
+        let hits = 0;
+        for (const t of qTokens) {
+          if (searchableText.includes(t)) hits++;
+        }
+        // Require at least half the tokens to match
+        if (hits >= Math.ceil(qTokens.length / 2)) {
+          results.push({ item, score: 0.5, prePass: false, courseRecall: true });
+          seenUrls.add(item.url);
+        }
+      }
+    }
+
+    // Now filter to only course-scoped results
     const scopedResults = results.filter(r => {
       const itemCourse = normalizeText(r.item.courseName || '');
       return itemCourse.includes(prefix);
     });
-    // Use scoped results if any match; otherwise fall back to unscoped
     if (scopedResults.length > 0) {
       results = scopedResults;
     }
@@ -907,8 +1177,8 @@ function performSearch(query) {
     return;
   }
 
-  // Apply custom ranking with suffix/position boosting
-  results = rankResults(results, normalizedQuery);
+  // Apply full ranking pipeline (intent, numeric, coverage, click, due, diversity)
+  results = rankResults(results, normalizedQuery, intent, queryNums);
   results = results.slice(0, MAX_RESULTS);
 
   state.lastSearchTimeMs = searchTimeMs;
@@ -917,52 +1187,120 @@ function performSearch(query) {
   displayResults(results);
   updateOverlayFooter(results.length, searchTimeMs);
 
+  // Single-line diagnostic
+  console.log(`[Canvascope] query="${query}" intent=${JSON.stringify(intent)} nums=[${queryNums}] results=${results.length} ${searchTimeMs}ms`);
+
   // Save to history (original query, not normalized)
   saveSearchToHistory(query);
 }
 
 /**
- * Calculate custom score combining Fuse score with type, recency, and position boosts
+ * Calculate custom score combining Fuse score with type, recency, position,
+ * intent, numeric, coverage, click-feedback, due-date, and active-course boosts.
  */
-function calculateScore(item, fuseScore, normalizedQuery) {
-  // Convert Fuse score (0 = perfect, 1 = worst) to (1 = best, 0 = worst)
-  let score = 1 - fuseScore;
+function calculateScore(item, fuseScore, normalizedQuery, intent, queryNums, isPrePass) {
+  // Base: invert Fuse score. Pre-pass items start at 1.0 (perfect match)
+  let score = isPrePass ? 1.0 : (1 - fuseScore);
 
-  // Type boost (0.05–0.30)
-  const typeBoost = TYPE_BOOST[item.type] || 0;
-  score += typeBoost;
+  // ── Type boost (0.05–0.30) ──────────────────────
+  score += TYPE_BOOST[item.type] || 0;
 
-  // Recency boost — items store scannedAt (ISO string), not indexedAt
+  // ── Recency boost (scannedAt) ───────────────────
   const ts = item.scannedAt ? new Date(item.scannedAt).getTime() : 0;
   if (ts > 0) {
     const daysAgo = (Date.now() - ts) / (1000 * 60 * 60 * 24);
-    // Boost decays over 30 days from 0.15 to 0
     score += Math.max(0, 0.15 - (daysAgo * 0.005));
   }
 
-  // Suffix / position boost using normalized title
+  // ── Suffix / position boost ─────────────────────
   if (normalizedQuery && normalizedQuery.length > 0) {
     const normTitle = (item.searchTitleNormalized || normalizeText(item.title || '')).toLowerCase();
     const normQ = normalizedQuery.toLowerCase();
 
     if (normTitle.endsWith(normQ)) {
-      // Title ends with the full query — strongest signal
       score += 0.60;
     } else if (normTitle.includes(normQ)) {
-      // Full query phrase found in title
       score += 0.35;
     } else {
-      // Check ordered token presence
       const qTokens = normQ.split(' ').filter(Boolean);
-      let lastIdx = -1;
-      let allInOrder = true;
+      let lastIdx = -1, allInOrder = true;
       for (const qt of qTokens) {
         const idx = normTitle.indexOf(qt, lastIdx + 1);
         if (idx === -1) { allInOrder = false; break; }
         lastIdx = idx;
       }
-      if (allInOrder && qTokens.length > 0) {
-        score += 0.20;
+      if (allInOrder && qTokens.length > 0) score += 0.20;
+    }
+  }
+
+  // ── Intent boost (capped at INTENT_CAP = 0.25) ──
+  if (intent) {
+    let intentBoost = 0;
+    for (const [key, confidence] of Object.entries(intent)) {
+      if (confidence > 0 && INTENT_TYPE_MAP[key]) {
+        const matches = INTENT_TYPE_MAP[key].includes(item.type);
+        if (matches) intentBoost += INTENT_MAX_BOOST[key] * confidence;
+      }
+    }
+    score += Math.min(intentBoost, INTENT_CAP);
+  }
+
+  // ── Numeric alignment ───────────────────────────
+  if (queryNums && queryNums.length > 0) {
+    const titleText = (item.searchTitleNormalized || normalizeText(item.title || '')).toLowerCase();
+    const { aligned, mismatched } = computeNumericAlignment(queryNums, titleText);
+    if (aligned > 0) score += 0.10 * (aligned / queryNums.length);
+    if (mismatched > 0) score -= 0.18 * (mismatched / queryNums.length);
+  }
+
+  // ── Token coverage ──────────────────────────────
+  if (normalizedQuery) {
+    const titleText = (item.searchTitleNormalized || normalizeText(item.title || '')).toLowerCase();
+    const contextText = normalizeText((item.folderPath || '') + ' ' + (item.moduleName || ''));
+    const coverage = computeTokenCoverage(normalizedQuery, titleText, contextText);
+    const qTokenCount = normalizedQuery.split(/\s+/).filter(t => t.length > 1 && !STOP_TOKENS.has(t)).length;
+    if (coverage >= 0.8) {
+      score += 0.12;
+    } else if (coverage < 0.5 && qTokenCount >= 2) {
+      score -= 0.15 * (1 - coverage);
+    }
+  }
+
+  // ── Active-course prior ─────────────────────────
+  score += getActiveCourseBoost(item);
+
+  // ── Folder-context boost ────────────────────────
+  // Boost items whose folder/module name matches query tokens
+  if (normalizedQuery && (item.folderPath || item.moduleName)) {
+    const folderText = normalizeText((item.folderPath || '') + ' ' + (item.moduleName || ''));
+    const normQ = normalizedQuery.toLowerCase();
+    const qTokens = normQ.split(/\s+/).filter(t => t.length > 1 && !STOP_TOKENS.has(t));
+    if (qTokens.length > 0) {
+      let folderHits = 0;
+      for (const t of qTokens) {
+        if (folderText.includes(t)) folderHits++;
+      }
+      if (folderHits > 0) {
+        // Proportional boost, max +0.35
+        score += Math.min(0.35, 0.25 * (folderHits / qTokens.length));
+      }
+    }
+  }
+
+  // ── Click-feedback boost ────────────────────────
+  score += getClickBoost(item);
+
+  // ── Due-date-aware freshness ────────────────────
+  if (item.dueAt && (intent?.assignment > 0 || intent?.quiz > 0)) {
+    const dueTs = new Date(item.dueAt).getTime();
+    if (dueTs > 0) {
+      const daysUntilDue = (dueTs - Date.now()) / (1000 * 60 * 60 * 24);
+      if (daysUntilDue >= 0 && daysUntilDue <= 14) {
+        // Upcoming: boost more the closer the due date
+        score += Math.max(0, 0.18 - daysUntilDue * 0.012);
+      } else if (daysUntilDue < 0 && daysUntilDue > -30) {
+        // Recently past: mild decay
+        score += Math.max(0, 0.05 + daysUntilDue * 0.002);
       }
     }
   }
@@ -971,15 +1309,17 @@ function calculateScore(item, fuseScore, normalizedQuery) {
 }
 
 /**
- * Re-rank results using custom scoring with query-aware boosting
+ * Re-rank results using full scoring pipeline + diversity pass
  */
-function rankResults(results, normalizedQuery) {
-  return results
+function rankResults(results, normalizedQuery, intent, queryNums) {
+  const scored = results
     .map(r => ({
       ...r,
-      finalScore: calculateScore(r.item, r.score, normalizedQuery)
+      finalScore: calculateScore(r.item, r.score, normalizedQuery, intent, queryNums, !!r.prePass)
     }))
     .sort((a, b) => b.finalScore - a.finalScore);
+
+  return applyDiversityRerank(scored);
 }
 
 // ============================================
@@ -1171,8 +1511,9 @@ function updateOverlayFooter(count, timeMs) {
 
 function openResult(item) {
   if (item.url && isValidCanvasUrl(item.url)) {
-    // Save to recently opened
+    // Save to recently opened + update click feedback
     saveToRecents(item);
+    updateClickFeedback(item);
 
     chrome.tabs.update({ url: item.url });
 
