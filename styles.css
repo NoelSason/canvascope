@@ -617,16 +617,30 @@ body::after {
   border: none;
   padding: 6px 14px;
   cursor: pointer;
-  display: inline-flex;
+  display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 10px;
+  justify-content: center;
+  gap: 4px;
   border-radius: var(--radius-sm);
   transition: var(--transition);
   color: var(--text-primary);
+  width: 100%;
 }
 
-.stats-btn:hover {
+.stats-btn:not(.empty) {
+  flex-direction: row;
+  display: inline-flex;
+  width: auto;
+  gap: 10px;
+}
+
+.stats-btn:not(.empty):hover {
   background: rgba(239, 68, 68, 0.1);
+}
+
+.stats-btn.empty {
+  cursor: default;
 }
 
 .stats-text {

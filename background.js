@@ -4,8 +4,8 @@
  * ============================================
  * 
  * PURPOSE:
- * - Automatically scans Canvas courses in the background
- * - Triggers when Canvas tabs are detected
+ * - Automatically scans LMS courses in the background
+ * - Triggers when supported LMS tabs are detected
  * - Runs periodic updates to keep content fresh
  * - No user interaction required
  * 
@@ -17,8 +17,8 @@
 // ============================================
 
 /**
- * Single source of truth for Canvas domains.
- * Any domain listed here is treated as a Canvas instance.
+ * Single source of truth for LMS domains.
+ * Any domain listed here is treated as a supported LMS instance.
  * Suffix entries (starting with '.') match any subdomain.
  */
 const CANVAS_DOMAIN_SUFFIXES = ['.instructure.com'];
@@ -29,8 +29,13 @@ const KNOWN_CANVAS_DOMAINS = [
     'canvas.asu.edu',
     'canvas.mit.edu'
 ];
+const BRIGHTSPACE_DOMAIN_SUFFIXES = ['.brightspace.com', '.d2l.com'];
+const KNOWN_BRIGHTSPACE_DOMAINS = [];
 
-// Dynamically detected Canvas domains (stored in chrome.storage)
+const BRIGHTSPACE_DEFAULT_LP_VERSION = '1.49';
+const BRIGHTSPACE_DEFAULT_LE_VERSION = '1.82';
+
+// Dynamically detected LMS domains (stored in chrome.storage)
 let customDomains = [];
 
 // Minimum time between scans (in milliseconds) - 5 minutes
@@ -78,28 +83,29 @@ chrome.runtime.onInstalled.addListener((details) => {
 });
 
 // ============================================
-// TAB LISTENERS - Auto-scan when Canvas opens
+// TAB LISTENERS - Auto-scan when LMS opens
 // ============================================
 
 /**
- * Listen for tab updates - trigger scan when Canvas is loaded
+ * Listen for tab updates - trigger scan when supported LMS is loaded
  */
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     if (changeInfo.status === 'complete' && tab.url) {
-        if (isCanvasDomain(tab.url)) {
-            console.log('[Canvascope] Canvas tab detected, checking if scan needed...');
+        const context = getLmsContext(tab.url);
+        if (context) {
+            console.log(`[Canvascope] ${context.platform} tab detected, checking if scan needed...`);
             triggerBackgroundScan(tab.url);
         }
     }
 });
 
 /**
- * Listen for tab activation - scan when switching to Canvas
+ * Listen for tab activation - scan when switching to supported LMS
  */
 chrome.tabs.onActivated.addListener(async (activeInfo) => {
     try {
         const tab = await chrome.tabs.get(activeInfo.tabId);
-        if (tab.url && isCanvasDomain(tab.url)) {
+        if (tab.url && getLmsContext(tab.url)) {
             triggerBackgroundScan(tab.url);
         }
     } catch (e) {
@@ -145,19 +151,38 @@ async function triggerBackgroundScan(tabUrl = null) {
         return;
     }
 
-    // Determine base URL
-    let baseUrl = 'https://bcourses.berkeley.edu'; // Default fallback
-    if (tabUrl) {
-        try {
-            const parsed = new URL(tabUrl);
-            if (isCanvasDomain(tabUrl)) {
-                baseUrl = `${parsed.protocol}//${parsed.hostname}`;
-            }
-        } catch (e) { }
+    const target = await resolveScanTarget(tabUrl);
+    if (!target) {
+        console.log('[Canvascope] No supported LMS tab found, skipping scan');
+        return;
     }
 
     // Start background scan
-    performBackgroundScan(baseUrl);
+    performBackgroundScan(target.baseUrl, target.platform);
+}
+
+/**
+ * Resolve which LMS tab should be scanned.
+ * Prefers the triggering tab URL; falls back to any open LMS tab.
+ */
+async function resolveScanTarget(tabUrl = null) {
+    if (tabUrl) {
+        const direct = getLmsContext(tabUrl);
+        if (direct) return direct;
+    }
+
+    try {
+        const tabs = await chrome.tabs.query({});
+        for (const tab of tabs) {
+            if (!tab?.url) continue;
+            const context = getLmsContext(tab.url);
+            if (context) return context;
+        }
+    } catch (e) {
+        console.warn('[Canvascope] Could not inspect open tabs for LMS target:', e.message);
+    }
+
+    return null;
 }
 
 // ============================================
@@ -167,8 +192,8 @@ async function triggerBackgroundScan(tabUrl = null) {
 /**
  * Perform the background scan
  */
-async function performBackgroundScan(baseUrl) {
-    console.log('[Canvascope] Starting background scan...');
+async function performBackgroundScan(baseUrl, platform = 'canvas') {
+    console.log(`[Canvascope] Starting ${platform} background scan...`);
     isScanning = true;
 
     // Notify popup that scan is starting
@@ -176,7 +201,9 @@ async function performBackgroundScan(baseUrl) {
 
     try {
         // Fetch course list (with full pagination)
-        const courses = await fetchCourseList(baseUrl);
+        const courses = platform === 'brightspace'
+            ? await fetchBrightspaceCourseList(baseUrl)
+            : await fetchCourseList(baseUrl);
 
         if (courses.length === 0) {
             console.log('[Canvascope] No courses found, user may not be logged in');
@@ -197,7 +224,9 @@ async function performBackgroundScan(baseUrl) {
             const course = courses[i];
 
             try {
-                const courseContent = await fetchCourseContent(baseUrl, course);
+                const courseContent = platform === 'brightspace'
+                    ? await fetchBrightspaceCourseContent(baseUrl, course)
+                    : await fetchCourseContent(baseUrl, course);
                 allContent.push(...courseContent);
             } catch (e) {
                 console.warn(`[Canvascope] Error scanning ${course.name}:`, e.message);
@@ -226,14 +255,15 @@ async function performBackgroundScan(baseUrl) {
         const existingData = await chrome.storage.local.get(['indexedContent']);
         const existingContent = existingData.indexedContent || [];
 
-        const scannedCourseIds = new Set(
-            dedupedContent.map(i => i.courseId).filter(Boolean)
+        const scannedCourseKeys = new Set(
+            dedupedContent.map(getCourseKey).filter(Boolean)
         );
 
         // Preserve items that belong to courses we did NOT scan this run
-        const preservedItems = existingContent.filter(item =>
-            !item.courseId || !scannedCourseIds.has(item.courseId)
-        );
+        const preservedItems = existingContent.filter(item => {
+            const key = getCourseKey(item);
+            return !key || !scannedCourseKeys.has(key);
+        });
 
         const mergedContent = [...preservedItems, ...dedupedContent];
 
@@ -342,6 +372,7 @@ async function fetchCourseList(baseUrl) {
 
 async function fetchCourseContent(baseUrl, course) {
     const content = [];
+    const sourceMeta = buildSourceMeta(baseUrl, 'canvas');
 
     // Fetch assignments (paginated)
     try {
@@ -356,6 +387,7 @@ async function fetchCourseContent(baseUrl, course) {
                 moduleName: 'Assignments',
                 courseName: course.name,
                 courseId: course.id,
+                ...sourceMeta,
                 scannedAt: new Date().toISOString(),
                 dueAt: item.due_at || null,
                 unlockAt: item.unlock_at || null,
@@ -405,6 +437,7 @@ async function fetchCourseContent(baseUrl, course) {
                 folderPath,
                 courseName: course.name,
                 courseId: course.id,
+                ...sourceMeta,
                 scannedAt: new Date().toISOString()
             });
         }
@@ -423,6 +456,7 @@ async function fetchCourseContent(baseUrl, course) {
                 moduleName: 'Pages',
                 courseName: course.name,
                 courseId: course.id,
+                ...sourceMeta,
                 scannedAt: new Date().toISOString()
             });
         }
@@ -444,6 +478,7 @@ async function fetchCourseContent(baseUrl, course) {
                             moduleName: mod.name || '',
                             courseName: course.name,
                             courseId: course.id,
+                            ...sourceMeta,
                             scannedAt: new Date().toISOString()
                         });
                     }
@@ -465,6 +500,7 @@ async function fetchCourseContent(baseUrl, course) {
                 moduleName: 'Quizzes',
                 courseName: course.name,
                 courseId: course.id,
+                ...sourceMeta,
                 scannedAt: new Date().toISOString(),
                 dueAt: item.due_at || null,
                 unlockAt: item.unlock_at || null,
@@ -488,6 +524,7 @@ async function fetchCourseContent(baseUrl, course) {
                 moduleName: 'Discussions',
                 courseName: course.name,
                 courseId: course.id,
+                ...sourceMeta,
                 scannedAt: new Date().toISOString(),
                 dueAt: asgn?.due_at || null,
                 unlockAt: asgn?.unlock_at || null,
@@ -517,6 +554,7 @@ async function fetchCourseContent(baseUrl, course) {
                 moduleName: 'Media Gallery',
                 courseName: course.name,
                 courseId: course.id,
+                ...sourceMeta,
                 scannedAt: new Date().toISOString()
             });
         }
@@ -528,45 +566,530 @@ async function fetchCourseContent(baseUrl, course) {
 }
 
 // ============================================
+// BRIGHTSPACE API FUNCTIONS
+// ============================================
+
+const brightspaceVersionCache = new Map();
+
+async function fetchBrightspaceApiVersions(baseUrl) {
+    const cacheKey = normalizeBaseUrl(baseUrl);
+    if (cacheKey && brightspaceVersionCache.has(cacheKey)) {
+        return brightspaceVersionCache.get(cacheKey);
+    }
+
+    const fallback = {
+        lpVersion: BRIGHTSPACE_DEFAULT_LP_VERSION,
+        leVersion: BRIGHTSPACE_DEFAULT_LE_VERSION
+    };
+
+    try {
+        const resp = await fetch(`${baseUrl}/d2l/api/versions/`, { credentials: 'include' });
+        if (!resp.ok) {
+            if (cacheKey) brightspaceVersionCache.set(cacheKey, fallback);
+            return fallback;
+        }
+
+        const products = await resp.json();
+        const lpVersion = findLatestBrightspaceVersion(products, 'lp') || BRIGHTSPACE_DEFAULT_LP_VERSION;
+        const leVersion = findLatestBrightspaceVersion(products, 'le') || BRIGHTSPACE_DEFAULT_LE_VERSION;
+        const resolved = { lpVersion, leVersion };
+
+        if (cacheKey) brightspaceVersionCache.set(cacheKey, resolved);
+        return resolved;
+    } catch (e) {
+        console.warn('[Canvascope] Could not resolve Brightspace API versions, using defaults:', e.message);
+        if (cacheKey) brightspaceVersionCache.set(cacheKey, fallback);
+        return fallback;
+    }
+}
+
+function findLatestBrightspaceVersion(products, productCode) {
+    if (!Array.isArray(products)) return null;
+    const code = (productCode || '').toLowerCase();
+    const product = products.find(p => String(p?.ProductCode || '').toLowerCase() === code);
+    if (!product) return null;
+
+    const explicitLatest = product.LatestVersion;
+    if (typeof explicitLatest === 'string' && explicitLatest.trim()) {
+        return explicitLatest.trim();
+    }
+
+    const supported = Array.isArray(product.SupportedVersions)
+        ? product.SupportedVersions
+            .map(v => String(v || '').trim())
+            .filter(Boolean)
+        : [];
+    if (supported.length === 0) return null;
+    supported.sort(compareApiVersionsDesc);
+    return supported[0];
+}
+
+function compareApiVersionsDesc(a, b) {
+    const aParts = String(a || '').split('.').map(n => Number.parseInt(n, 10) || 0);
+    const bParts = String(b || '').split('.').map(n => Number.parseInt(n, 10) || 0);
+    const len = Math.max(aParts.length, bParts.length);
+    for (let i = 0; i < len; i++) {
+        const diff = (bParts[i] || 0) - (aParts[i] || 0);
+        if (diff !== 0) return diff;
+    }
+    return 0;
+}
+
+function extractBrightspaceItems(payload) {
+    if (!payload) return [];
+    if (Array.isArray(payload)) return payload;
+    if (Array.isArray(payload.Items)) return payload.Items;
+    if (Array.isArray(payload.Objects)) return payload.Objects;
+    if (Array.isArray(payload.Results)) return payload.Results;
+    if (Array.isArray(payload.items)) return payload.items;
+    return [];
+}
+
+function extractBrightspaceBookmark(payload) {
+    if (!payload || typeof payload !== 'object') return null;
+    const pagingInfo = payload.PagingInfo || payload.pagingInfo || payload.Paging || payload.paging;
+    const bookmark = pagingInfo?.Bookmark ?? pagingInfo?.bookmark ?? payload.Bookmark ?? payload.bookmark ?? null;
+    if (!bookmark) return null;
+    return String(bookmark);
+}
+
+async function fetchBrightspacePagedResult(urlBuilder) {
+    const allItems = [];
+    let bookmark = null;
+    let page = 0;
+
+    while (page < MAX_PAGES) {
+        page++;
+        const url = urlBuilder(bookmark);
+        const resp = await fetch(url, { credentials: 'include' });
+        if (!resp.ok) break;
+
+        const payload = await resp.json();
+        const items = extractBrightspaceItems(payload);
+        if (!items.length) break;
+
+        allItems.push(...items);
+
+        const nextBookmark = extractBrightspaceBookmark(payload);
+        if (!nextBookmark || nextBookmark === bookmark) break;
+        bookmark = nextBookmark;
+    }
+
+    if (page >= MAX_PAGES) {
+        console.warn('[Canvascope] Hit Brightspace pagination safety limit');
+    }
+
+    return allItems;
+}
+
+function isLikelyBrightspaceCourse(orgUnit) {
+    if (!orgUnit || typeof orgUnit !== 'object') return false;
+    const typeCode = String(orgUnit?.Type?.Code || '').toLowerCase();
+    const typeName = String(orgUnit?.Type?.Name || '').toLowerCase();
+    const homeUrl = String(orgUnit?.HomeUrl || '');
+
+    if (typeCode.includes('course') || typeName.includes('course')) return true;
+    if (/\/d2l\/home\/\d+/.test(homeUrl)) return true;
+    return false;
+}
+
+async function fetchBrightspaceCourseList(baseUrl) {
+    const { lpVersion } = await fetchBrightspaceApiVersions(baseUrl);
+    const seenCourseIds = new Set();
+
+    const enrollments = await fetchBrightspacePagedResult((bookmark) => {
+        const url = new URL(`${baseUrl}/d2l/api/lp/${lpVersion}/enrollments/myenrollments/`);
+        url.searchParams.set('canAccess', 'true');
+        url.searchParams.set('isActive', 'true');
+        if (bookmark) url.searchParams.set('bookmark', bookmark);
+        return url.toString();
+    });
+
+    const courses = [];
+    for (const enrollment of enrollments) {
+        const org = enrollment?.OrgUnit;
+        const access = enrollment?.Access || {};
+        if (!org?.Id || !org?.Name) continue;
+        if (access.CanAccess === false || access.IsActive === false) continue;
+        if (!isLikelyBrightspaceCourse(org)) continue;
+
+        const courseId = String(org.Id);
+        if (seenCourseIds.has(courseId)) continue;
+        seenCourseIds.add(courseId);
+
+        courses.push({
+            id: courseId,
+            name: org.Name,
+            code: org.Code || '',
+            homeUrl: normalizeBrightspaceUrl(baseUrl, org.HomeUrl || `/d2l/home/${courseId}`)
+        });
+    }
+
+    return courses;
+}
+
+function normalizeBrightspaceUrl(baseUrl, maybeRelativeUrl) {
+    const value = String(maybeRelativeUrl || '').trim();
+    if (!value) return '';
+    if (value.startsWith('javascript:') || value.startsWith('data:')) return '';
+    try {
+        return new URL(value, baseUrl).toString();
+    } catch {
+        return '';
+    }
+}
+
+function inferBrightspaceTopicType(topic, resolvedUrl) {
+    const activity = String(topic?.ActivityType || '').toLowerCase();
+    const typeIdentifier = String(topic?.TypeIdentifier || '').toLowerCase();
+    const url = String(resolvedUrl || '').toLowerCase();
+
+    if (activity.includes('dropbox') || activity.includes('assignment') || url.includes('/dropbox/')) return 'assignment';
+    if (activity.includes('quiz') || url.includes('/quizzing/')) return 'quiz';
+    if (activity.includes('discussion') || url.includes('/discussions/')) return 'discussion';
+    if (activity.includes('link') || activity.includes('external') || url.includes('/external/')) return 'external';
+    if (activity.includes('video')) return 'video';
+    if (typeIdentifier.includes('file') || url.includes('/managefiles/')) return 'file';
+
+    const extMatch = url.match(/\.([a-z0-9]{2,5})(?:\?|$)/i);
+    if (extMatch) {
+        const ext = extMatch[1].toLowerCase();
+        if (ext === 'pdf') return 'pdf';
+        if (['ppt', 'pptx'].includes(ext)) return 'slides';
+        if (['doc', 'docx'].includes(ext)) return 'document';
+        if (['mp4', 'mov', 'webm'].includes(ext)) return 'video';
+    }
+
+    return 'page';
+}
+
+function flattenBrightspaceModules(modules, trail = []) {
+    const topics = [];
+    if (!Array.isArray(modules)) return topics;
+
+    for (const module of modules) {
+        const moduleTitle = (module?.Title || module?.ShortTitle || '').trim();
+        const nextTrail = moduleTitle ? [...trail, moduleTitle] : trail;
+
+        if (Array.isArray(module?.Topics)) {
+            for (const topic of module.Topics) {
+                topics.push({ topic, moduleTrail: nextTrail });
+            }
+        }
+        if (Array.isArray(module?.Modules) && module.Modules.length > 0) {
+            topics.push(...flattenBrightspaceModules(module.Modules, nextTrail));
+        }
+    }
+
+    return topics;
+}
+
+function toIsoOrNull(value) {
+    if (!value) return null;
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return null;
+    return date.toISOString();
+}
+
+async function fetchBrightspaceCourseContent(baseUrl, course) {
+    const content = [];
+    const sourceMeta = buildSourceMeta(baseUrl, 'brightspace');
+    const { leVersion } = await fetchBrightspaceApiVersions(baseUrl);
+    const fallbackCourseUrl = normalizeBrightspaceUrl(baseUrl, course.homeUrl || `/d2l/home/${course.id}`);
+
+    // Content topics
+    try {
+        const resp = await fetch(
+            `${baseUrl}/d2l/api/le/${leVersion}/${course.id}/content/toc?ignoreDateRestrictions=false`,
+            { credentials: 'include' }
+        );
+        if (resp.ok) {
+            const toc = await resp.json();
+            const flattened = flattenBrightspaceModules(toc?.Modules || []);
+
+            for (const entry of flattened) {
+                const topic = entry.topic;
+                if (!topic || topic.IsHidden === true) continue;
+
+                const title = (topic.Title || topic.ShortTitle || '').trim();
+                const topicUrl = normalizeBrightspaceUrl(baseUrl, topic.Url);
+                if (!title || !topicUrl) continue;
+
+                content.push({
+                    title,
+                    url: topicUrl,
+                    type: inferBrightspaceTopicType(topic, topicUrl),
+                    moduleName: entry.moduleTrail.join(' > ') || 'Content',
+                    courseName: course.name,
+                    courseId: course.id,
+                    ...sourceMeta,
+                    scannedAt: new Date().toISOString(),
+                    dueAt: toIsoOrNull(topic.DueDate),
+                    unlockAt: toIsoOrNull(topic.StartDate),
+                    lockAt: toIsoOrNull(topic.EndDate)
+                });
+            }
+        }
+    } catch (e) {
+        console.warn(`[Canvascope] Brightspace TOC scan failed for course ${course.id}:`, e.message);
+    }
+
+    // Assignments (Dropbox folders)
+    try {
+        const resp = await fetch(
+            `${baseUrl}/d2l/api/le/${leVersion}/${course.id}/dropbox/folders/`,
+            { credentials: 'include' }
+        );
+        if (resp.ok) {
+            const folders = extractBrightspaceItems(await resp.json());
+            for (const folder of folders) {
+                if (!folder?.Id || !folder?.Name) continue;
+                const folderUrl = normalizeBrightspaceUrl(
+                    baseUrl,
+                    `/d2l/lms/dropbox/user/folder_submit.d2l?ou=${course.id}&db=${folder.Id}`
+                ) || fallbackCourseUrl;
+
+                content.push({
+                    title: folder.Name,
+                    url: folderUrl,
+                    type: 'assignment',
+                    moduleName: 'Assignments',
+                    courseName: course.name,
+                    courseId: course.id,
+                    ...sourceMeta,
+                    scannedAt: new Date().toISOString(),
+                    dueAt: toIsoOrNull(folder.DueDate),
+                    unlockAt: toIsoOrNull(folder?.Availability?.StartDate),
+                    lockAt: toIsoOrNull(folder?.Availability?.EndDate)
+                });
+            }
+        }
+    } catch (e) {
+        console.warn(`[Canvascope] Brightspace assignment scan failed for course ${course.id}:`, e.message);
+    }
+
+    // Quizzes
+    try {
+        const resp = await fetch(
+            `${baseUrl}/d2l/api/le/${leVersion}/${course.id}/quizzes/`,
+            { credentials: 'include' }
+        );
+        if (resp.ok) {
+            const quizzes = extractBrightspaceItems(await resp.json());
+            for (const quiz of quizzes) {
+                if (!quiz?.QuizId || !quiz?.Name) continue;
+                const quizUrl = normalizeBrightspaceUrl(
+                    baseUrl,
+                    `/d2l/lms/quizzing/user/quiz_summary.d2l?ou=${course.id}&qi=${quiz.QuizId}`
+                ) || fallbackCourseUrl;
+
+                content.push({
+                    title: quiz.Name,
+                    url: quizUrl,
+                    type: 'quiz',
+                    moduleName: 'Quizzes',
+                    courseName: course.name,
+                    courseId: course.id,
+                    ...sourceMeta,
+                    scannedAt: new Date().toISOString(),
+                    dueAt: toIsoOrNull(quiz.DueDate),
+                    unlockAt: toIsoOrNull(quiz.StartDate),
+                    lockAt: toIsoOrNull(quiz.EndDate)
+                });
+            }
+        }
+    } catch (e) {
+        console.warn(`[Canvascope] Brightspace quiz scan failed for course ${course.id}:`, e.message);
+    }
+
+    // Discussion topics
+    try {
+        const forumsResp = await fetch(
+            `${baseUrl}/d2l/api/le/${leVersion}/${course.id}/discussions/forums/`,
+            { credentials: 'include' }
+        );
+        if (forumsResp.ok) {
+            const forums = extractBrightspaceItems(await forumsResp.json());
+            for (const forum of forums) {
+                if (!forum?.ForumId) continue;
+
+                const topicsResp = await fetch(
+                    `${baseUrl}/d2l/api/le/${leVersion}/${course.id}/discussions/forums/${forum.ForumId}/topics/`,
+                    { credentials: 'include' }
+                );
+                if (!topicsResp.ok) continue;
+
+                const topics = extractBrightspaceItems(await topicsResp.json());
+                for (const topic of topics) {
+                    if (!topic?.TopicId || !topic?.Name) continue;
+                    const topicUrl = normalizeBrightspaceUrl(
+                        baseUrl,
+                        `/d2l/lms/discussions/list.d2l?ou=${course.id}&forumId=${forum.ForumId}&topicId=${topic.TopicId}`
+                    ) || fallbackCourseUrl;
+
+                    content.push({
+                        title: topic.Name,
+                        url: topicUrl,
+                        type: 'discussion',
+                        moduleName: forum?.Name || 'Discussions',
+                        courseName: course.name,
+                        courseId: course.id,
+                        ...sourceMeta,
+                        scannedAt: new Date().toISOString(),
+                        dueAt: toIsoOrNull(topic.DueDate),
+                        unlockAt: toIsoOrNull(topic.StartDate),
+                        lockAt: toIsoOrNull(topic.EndDate)
+                    });
+                }
+            }
+        }
+    } catch (e) {
+        console.warn(`[Canvascope] Brightspace discussion scan failed for course ${course.id}:`, e.message);
+    }
+
+    // Announcements (News)
+    try {
+        const newsResp = await fetch(
+            `${baseUrl}/d2l/api/le/${leVersion}/${course.id}/news/`,
+            { credentials: 'include' }
+        );
+        if (newsResp.ok) {
+            const newsItems = extractBrightspaceItems(await newsResp.json());
+            for (const item of newsItems) {
+                if (!item?.Id || !item?.Title) continue;
+                const newsUrl = normalizeBrightspaceUrl(
+                    baseUrl,
+                    `/d2l/lms/news/main.d2l?ou=${course.id}&newsItemId=${item.Id}`
+                ) || fallbackCourseUrl;
+
+                content.push({
+                    title: item.Title,
+                    url: newsUrl,
+                    type: 'announcement',
+                    moduleName: 'Announcements',
+                    courseName: course.name,
+                    courseId: course.id,
+                    ...sourceMeta,
+                    scannedAt: new Date().toISOString()
+                });
+            }
+        }
+    } catch (e) {
+        console.warn(`[Canvascope] Brightspace news scan failed for course ${course.id}:`, e.message);
+    }
+
+    return content;
+}
+
+// ============================================
 // UTILITY FUNCTIONS
 // ============================================
 
-/**
- * Check if a URL belongs to a known Canvas instance.
- * Uses the unified KNOWN_CANVAS_DOMAINS + CANVAS_DOMAIN_SUFFIXES arrays,
- * plus any user-added customDomains.
- *
- * @param {string} url - URL to check
- * @returns {boolean}
- */
-function isCanvasDomain(url) {
+function normalizeBaseUrl(url) {
     try {
-        const hostname = new URL(url).hostname.toLowerCase();
-
-        // Check suffix patterns (e.g. .instructure.com)
-        if (CANVAS_DOMAIN_SUFFIXES.some(s => hostname.endsWith(s))) {
-            return true;
-        }
-
-        // Check exact known domains
-        if (KNOWN_CANVAS_DOMAINS.includes(hostname)) {
-            return true;
-        }
-
-        // Check user-added custom domains
-        if (customDomains.includes(hostname)) {
-            return true;
-        }
-
-        return false;
+        const parsed = new URL(url);
+        return `${parsed.protocol}//${parsed.hostname}`.toLowerCase();
     } catch {
-        return false;
+        return '';
     }
+}
+
+function getHostnameFromUrl(url) {
+    try {
+        return new URL(url).hostname.toLowerCase();
+    } catch {
+        return '';
+    }
+}
+
+function isCanvasHost(hostname) {
+    if (!hostname) return false;
+    if (CANVAS_DOMAIN_SUFFIXES.some(s => hostname.endsWith(s))) return true;
+    if (KNOWN_CANVAS_DOMAINS.includes(hostname)) return true;
+    return false;
+}
+
+function isBrightspaceHost(hostname) {
+    if (!hostname) return false;
+    if (BRIGHTSPACE_DOMAIN_SUFFIXES.some(s => hostname.endsWith(s))) return true;
+    if (KNOWN_BRIGHTSPACE_DOMAINS.includes(hostname)) return true;
+    return false;
+}
+
+function looksLikeCanvasPath(pathname) {
+    const path = String(pathname || '').toLowerCase();
+    return path.includes('/courses/') ||
+        path.includes('/modules') ||
+        path.includes('/assignments/') ||
+        path.includes('/quizzes');
+}
+
+function looksLikeBrightspacePath(pathname) {
+    const path = String(pathname || '').toLowerCase();
+    return path.startsWith('/d2l/') || path.includes('/d2l/');
+}
+
+function getLmsContext(url) {
+    try {
+        const parsed = new URL(url);
+        const hostname = parsed.hostname.toLowerCase();
+        const pathname = parsed.pathname.toLowerCase();
+
+        let platform = null;
+        if (isCanvasHost(hostname)) {
+            platform = 'canvas';
+        } else if (isBrightspaceHost(hostname)) {
+            platform = 'brightspace';
+        } else if (customDomains.includes(hostname)) {
+            if (looksLikeBrightspacePath(pathname) || hostname.includes('brightspace') || hostname.includes('d2l')) {
+                platform = 'brightspace';
+            } else {
+                platform = 'canvas';
+            }
+        }
+
+        if (!platform) return null;
+        return {
+            platform,
+            hostname,
+            baseUrl: `${parsed.protocol}//${parsed.hostname}`
+        };
+    } catch {
+        return null;
+    }
+}
+
+function isCanvasDomain(url) {
+    return getLmsContext(url)?.platform === 'canvas';
+}
+
+function buildSourceMeta(baseUrl, platform) {
+    return {
+        platform: platform || 'canvas',
+        platformDomain: getHostnameFromUrl(baseUrl)
+    };
+}
+
+function getCourseKey(item) {
+    if (!item || typeof item !== 'object') return null;
+    const courseId = item.courseId !== undefined && item.courseId !== null
+        ? String(item.courseId).trim()
+        : '';
+    if (!courseId) return null;
+
+    const platform = String(item.platform || '').toLowerCase() ||
+        (getLmsContext(item.url || '')?.platform || 'canvas');
+    const platformDomain = String(item.platformDomain || '').toLowerCase() ||
+        getHostnameFromUrl(item.url || '');
+
+    return `${platform}:${platformDomain}:${courseId}`;
 }
 
 /**
  * Derive a stable canonical identity for a content item.
- * Prefers URL-based identity (origin + pathname, no query params).
+ * Prefers URL-based identity (origin + pathname).
+ * For Brightspace item URLs that encode identity in query params,
+ * keeps a small set of stable query keys.
  * Falls back to a string hash of title|courseName|type.
  *
  * @param {Object} item - Content item
@@ -578,6 +1101,17 @@ function getCanonicalId(item) {
     if (item.url && typeof item.url === 'string') {
         try {
             const u = new URL(item.url);
+            if (isBrightspaceHost(u.hostname.toLowerCase()) || looksLikeBrightspacePath(u.pathname)) {
+                const keepKeys = ['ou', 'db', 'qi', 'forumid', 'topicid', 'newsitemid', 'id', 'itemid'];
+                const kept = [];
+                for (const key of keepKeys) {
+                    const value = u.searchParams.get(key);
+                    if (value) kept.push(`${key}=${value}`);
+                }
+                if (kept.length) {
+                    return `${u.origin}${u.pathname}?${kept.join('&')}`;
+                }
+            }
             return `${u.origin}${u.pathname}`;
         } catch {
             // URL is not valid, fall through to hash
@@ -738,18 +1272,23 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
 
     if (message.action === 'checkAndScan') {
-        // Check if URL looks like Canvas and add domain if so
+        // Check if URL looks like a supported LMS and scan if so
         const url = message.url;
         if (url) {
             try {
-                if (!isCanvasDomain(url)) {
-                    sendResponse({ isCanvas: false });
+                const context = getLmsContext(url);
+                if (!context) {
+                    sendResponse({ isCanvas: false, isSupported: false });
                 } else {
                     triggerBackgroundScan(url);
-                    sendResponse({ isCanvas: true });
+                    sendResponse({
+                        isCanvas: context.platform === 'canvas',
+                        isSupported: true,
+                        platform: context.platform
+                    });
                 }
             } catch {
-                sendResponse({ isCanvas: false });
+                sendResponse({ isCanvas: false, isSupported: false });
             }
         }
         return true;
@@ -760,7 +1299,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         sendResponse({
             suffixes: CANVAS_DOMAIN_SUFFIXES,
             domains: KNOWN_CANVAS_DOMAINS,
-            custom: customDomains
+            custom: customDomains,
+            brightspaceSuffixes: BRIGHTSPACE_DOMAIN_SUFFIXES,
+            brightspaceDomains: KNOWN_BRIGHTSPACE_DOMAINS
         });
         return true;
     }
@@ -973,11 +1514,7 @@ async function checkDeadlineReminders() {
 }
 
 function canonicalBgTaskId(item) {
-    try {
-        return new URL(item.url).pathname;
-    } catch {
-        return (item.url || '') + ':' + (item.title || '');
-    }
+    return getCanonicalId(item);
 }
 
 // ============================================
@@ -989,7 +1526,7 @@ console.log('[Canvascope] Background service worker started');
 // Check if we should scan on startup
 chrome.tabs.query({}).then(tabs => {
     for (const tab of tabs) {
-        if (tab.url && isCanvasDomain(tab.url)) {
+        if (tab.url && getLmsContext(tab.url)) {
             triggerBackgroundScan(tab.url);
             break;
         }

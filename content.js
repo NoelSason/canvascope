@@ -36,6 +36,8 @@ const KNOWN_CANVAS_DOMAINS = [
     'canvas.asu.edu',
     'canvas.mit.edu'
 ];
+const BRIGHTSPACE_DOMAIN_SUFFIXES = ['.brightspace.com', '.d2l.com'];
+const KNOWN_BRIGHTSPACE_DOMAINS = [];
 let contentCustomDomains = [];
 
 // Load custom domains from storage so domain checks work for user-added domains
@@ -122,31 +124,47 @@ const CONTENT_TYPES = {
 // ============================================
 
 /**
- * Verify that we're on a legitimate Canvas domain
+ * Verify whether the current page belongs to a supported LMS domain.
  * 
- * SECURITY: This is the FIRST check before any scanning.
- * We refuse to run on any non-Canvas domain.
- * 
- * @returns {boolean} True if on valid Canvas domain
+ * SECURITY: Domain checks run before any privileged operations.
  */
+function isKnownCanvasHost(hostname) {
+    if (CANVAS_DOMAIN_SUFFIXES.some(s => hostname.endsWith(s))) return true;
+    if (KNOWN_CANVAS_DOMAINS.includes(hostname)) return true;
+    return false;
+}
+
+function isKnownBrightspaceHost(hostname) {
+    if (BRIGHTSPACE_DOMAIN_SUFFIXES.some(s => hostname.endsWith(s))) return true;
+    if (KNOWN_BRIGHTSPACE_DOMAINS.includes(hostname)) return true;
+    return false;
+}
+
+function looksLikeBrightspacePath(pathname) {
+    const path = (pathname || '').toLowerCase();
+    return path.startsWith('/d2l/') || path.includes('/d2l/');
+}
+
 function isCanvasDomain() {
     const hostname = window.location.hostname.toLowerCase();
 
-    // Check suffix patterns (e.g. .instructure.com)
-    if (CANVAS_DOMAIN_SUFFIXES.some(s => hostname.endsWith(s))) {
+    if (isKnownCanvasHost(hostname)) {
         return true;
     }
 
-    // Check exact known domains
-    if (KNOWN_CANVAS_DOMAINS.includes(hostname)) {
+    // Custom domains default to Canvas unless path strongly indicates Brightspace.
+    if (contentCustomDomains.includes(hostname) && !looksLikeBrightspacePath(window.location.pathname)) {
         return true;
     }
 
-    // Check user-added custom domains
-    if (contentCustomDomains.includes(hostname)) {
-        return true;
-    }
+    return false;
+}
 
+function isSupportedLmsDomain() {
+    const hostname = window.location.hostname.toLowerCase();
+    if (isKnownCanvasHost(hostname)) return true;
+    if (isKnownBrightspaceHost(hostname)) return true;
+    if (contentCustomDomains.includes(hostname)) return true;
     return false;
 }
 
@@ -163,10 +181,13 @@ function isCanvasDomain() {
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     console.log('[Canvascope Content] Received message:', message.action);
 
-    // Special case: Check if this is Canvas (can work without domain verification)
+    // Special case: lightweight LMS detection (works without strict domain verification)
     if (message.action === 'checkIfCanvas') {
         const isCanvas = detectCanvasPage();
-        sendResponse({ isCanvas });
+        sendResponse({
+            isCanvas,
+            isSupported: isCanvas || detectBrightspacePage()
+        });
         return true;
     }
 
@@ -221,6 +242,34 @@ function detectCanvasPage() {
     // Check for Canvas in page title or URL
     if (document.title.toLowerCase().includes('canvas') ||
         window.location.pathname.includes('/courses/')) {
+        return true;
+    }
+
+    return false;
+}
+
+/**
+ * Detect if current page is Brightspace by checking URL + known shell elements.
+ */
+function detectBrightspacePage() {
+    const path = window.location.pathname.toLowerCase();
+    if (looksLikeBrightspacePath(path)) return true;
+
+    const brightspaceIndicators = [
+        'd2l-navigation',
+        'd2l-dropdown',
+        '[data-d2l-app-id]',
+        '.d2l-page-main',
+        '#d2l_body'
+    ];
+
+    for (const selector of brightspaceIndicators) {
+        if (document.querySelector(selector)) {
+            return true;
+        }
+    }
+
+    if (document.title.toLowerCase().includes('brightspace')) {
         return true;
     }
 
@@ -825,10 +874,10 @@ function sendProgress(percent, status) {
  * WHY: We log a message when the content script loads
  * so developers can verify it's running correctly.
  */
-if (isCanvasDomain()) {
-    console.log('[Canvascope Content] Content script loaded on Canvas page');
+if (isSupportedLmsDomain() || detectCanvasPage() || detectBrightspacePage()) {
+    console.log('[Canvascope Content] Content script loaded on supported LMS page');
 } else {
-    console.log('[Canvascope Content] Not a Canvas page, staying dormant');
+    console.log('[Canvascope Content] Not a supported LMS page, staying dormant');
 }
 
 // ============================================
@@ -962,7 +1011,7 @@ document.addEventListener('keydown', (e) => {
         e.stopPropagation();
 
         // Ensure we are on a valid page (double check)
-        if (isCanvasDomain() || detectCanvasPage()) {
+        if (isSupportedLmsDomain() || detectCanvasPage() || detectBrightspacePage()) {
             toggleOverlay();
         }
     }

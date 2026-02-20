@@ -4,7 +4,7 @@
  * ============================================
  * 
  * PURPOSE:
- * - Displays search UI for indexed Canvas content
+ * - Displays search UI for indexed LMS content
  * - Shows sync status from background worker
  * - Allows browsing all indexed content
  * 
@@ -27,9 +27,11 @@ const KNOWN_CANVAS_DOMAINS = [
   'canvas.asu.edu',
   'canvas.mit.edu'
 ];
+const BRIGHTSPACE_DOMAIN_SUFFIXES = ['.brightspace.com', '.d2l.com'];
+const KNOWN_BRIGHTSPACE_DOMAINS = [];
 let popupCustomDomains = [];
 
-// Load custom domains so openResult / isValidCanvasUrl work for user-added domains
+// Load custom domains so openResult / URL validation work for user-added domains
 try {
   chrome.storage.local.get(['customDomains']).then(data => {
     popupCustomDomains = data.customDomains || [];
@@ -660,7 +662,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Request status from background
   getBackgroundStatus();
 
-  // Check if current tab is Canvas and auto-detect domain
+  // Check if current tab is a supported LMS and auto-detect domain
   checkCurrentTab();
 
   // Check if running in overlay mode
@@ -1001,7 +1003,7 @@ async function getBackgroundStatus() {
 }
 
 /**
- * Check current tab for Canvas and auto-detect domain
+ * Check current tab for supported LMS and auto-detect custom domain
  */
 async function checkCurrentTab() {
   try {
@@ -1012,20 +1014,23 @@ async function checkCurrentTab() {
     const hostname = url.hostname.toLowerCase();
 
     // Skip if already a known domain (use unified check)
-    if (isKnownCanvasHost(hostname)) return;
+    if (isKnownLmsHost(hostname)) return;
 
-    // Try to detect Canvas from URL patterns (content script may not be loaded)
-    if (url.pathname.includes('/courses/') ||
-      url.pathname.includes('/assignments/') ||
-      url.pathname.includes('/modules') ||
-      url.pathname.includes('/quizzes')) {
-      // Likely Canvas, add domain
+    const path = url.pathname.toLowerCase();
+    const looksCanvas = path.includes('/courses/') ||
+      path.includes('/assignments/') ||
+      path.includes('/modules') ||
+      path.includes('/quizzes');
+    const looksBrightspace = path.includes('/d2l/');
+
+    if (looksCanvas || looksBrightspace) {
+      // Likely LMS, add domain
       await chrome.runtime.sendMessage({ action: 'addDomain', domain: hostname });
       popupCustomDomains.push(hostname);
-      console.log('[Canvascope] Auto-detected Canvas domain from URL:', hostname);
+      console.log('[Canvascope] Auto-detected LMS domain from URL:', hostname);
     }
   } catch (e) {
-    // Silently ignore - this is expected when not on a Canvas page
+    // Silently ignore - this is expected when not on a supported LMS page
   }
 }
 
@@ -1071,7 +1076,7 @@ function updateSyncStatus(status) {
       const ago = getTimeAgo(lastScan);
       showSyncedStatus(`Last synced ${ago}`);
     } else {
-      showSyncedStatus('Open Canvas to sync');
+      showSyncedStatus('Open Canvas or Brightspace to sync');
     }
   }
 }
@@ -1245,7 +1250,7 @@ function handleSearchInput(event) {
 
 function performSearch(query) {
   if (!state.fuse) {
-    showNoResults('No content indexed yet. Browse Canvas to sync!');
+    showNoResults('No content indexed yet. Open Canvas or Brightspace to sync!');
     updateOverlayFooter(0, 0);
     return;
   }
@@ -1716,7 +1721,7 @@ function updateOverlayFooter(count, timeMs) {
 }
 
 function openResult(item) {
-  if (item.url && isValidCanvasUrl(item.url)) {
+  if (item.url && isValidLmsUrl(item.url)) {
     // Save to recently opened + update click feedback
     saveToRecents(item);
     updateClickFeedback(item);
@@ -1829,25 +1834,42 @@ function showOverlayRecents() {
 }
 
 /**
- * Check if a hostname is a known Canvas host (unified check).
+ * Check if a hostname is a known supported LMS host (unified check).
  * @param {string} hostname - lowercase hostname
  * @returns {boolean}
  */
 function isKnownCanvasHost(hostname) {
   if (CANVAS_DOMAIN_SUFFIXES.some(s => hostname.endsWith(s))) return true;
   if (KNOWN_CANVAS_DOMAINS.includes(hostname)) return true;
+  return false;
+}
+
+function isKnownBrightspaceHost(hostname) {
+  if (BRIGHTSPACE_DOMAIN_SUFFIXES.some(s => hostname.endsWith(s))) return true;
+  if (KNOWN_BRIGHTSPACE_DOMAINS.includes(hostname)) return true;
+  return false;
+}
+
+function isKnownLmsHost(hostname) {
+  if (isKnownCanvasHost(hostname)) return true;
+  if (isKnownBrightspaceHost(hostname)) return true;
   if (popupCustomDomains.includes(hostname)) return true;
   return false;
 }
 
-function isValidCanvasUrl(url) {
+function isValidLmsUrl(url) {
   try {
     const parsed = new URL(url);
     if (parsed.protocol !== 'https:') return false;
-    return isKnownCanvasHost(parsed.hostname.toLowerCase());
+    return isKnownLmsHost(parsed.hostname.toLowerCase());
   } catch {
     return false;
   }
+}
+
+// Backward-compatible alias used by older call-sites.
+function isValidCanvasUrl(url) {
+  return isValidLmsUrl(url);
 }
 
 function clearSearch() {
@@ -1914,7 +1936,8 @@ async function loadContent() {
 
 /**
  * Derive a stable canonical identity key for a content item.
- * Prefers URL-based identity (origin + pathname, no query params).
+ * Prefers URL-based identity (origin + pathname).
+ * Keeps stable query keys for Brightspace URLs where IDs are query-based.
  * Falls back to title|course|type hash.
  */
 function getCanonicalId(item) {
@@ -1923,6 +1946,21 @@ function getCanonicalId(item) {
   if (item.url && typeof item.url === 'string') {
     try {
       const u = new URL(item.url);
+      const host = u.hostname.toLowerCase();
+      const isBrightspace = BRIGHTSPACE_DOMAIN_SUFFIXES.some(s => host.endsWith(s)) ||
+        KNOWN_BRIGHTSPACE_DOMAINS.includes(host) ||
+        u.pathname.toLowerCase().includes('/d2l/');
+      if (isBrightspace) {
+        const keepKeys = ['ou', 'db', 'qi', 'forumid', 'topicid', 'newsitemid', 'id', 'itemid'];
+        const kept = [];
+        for (const key of keepKeys) {
+          const value = u.searchParams.get(key);
+          if (value) kept.push(`${key}=${value}`);
+        }
+        if (kept.length) {
+          return `${u.origin}${u.pathname}?${kept.join('&')}`;
+        }
+      }
       return `${u.origin}${u.pathname}`;
     } catch { /* fall through */ }
   }
@@ -1954,7 +1992,10 @@ function deduplicateContent(content) {
         return url.includes('/assignments/') ||
           url.includes('/quizzes/') ||
           url.includes('/files/') ||
-          url.includes('/discussion_topics/');
+          url.includes('/discussion_topics/') ||
+          url.includes('/dropbox/') ||
+          url.includes('/quizzing/') ||
+          url.includes('/discussions/');
       };
 
       const existingIsCanonical = isCanonical(existing.url);
@@ -2036,7 +2077,7 @@ async function handleRefresh() {
 
 async function handleClearData() {
   const confirmed = confirm(
-    'Delete all indexed content?\n\nYour content will re-sync automatically when you browse Canvas.'
+    'Delete all indexed content?\n\nYour content will re-sync automatically when you browse Canvas or Brightspace.'
   );
 
   if (!confirmed) return;
@@ -2066,9 +2107,11 @@ function updateStats() {
   const count = state.indexedContent.length;
 
   if (count === 0) {
+    elements.statsBtn.classList.add('empty');
     elements.statsText.textContent = 'No content indexed';
-    elements.statsHint.textContent = 'Browse Canvas to sync';
+    elements.statsHint.textContent = 'Open Canvas or Brightspace to sync';
   } else {
+    elements.statsBtn.classList.remove('empty');
     elements.statsText.textContent = `${count} items`;
     elements.statsHint.textContent = 'Click to browse';
   }
@@ -2188,7 +2231,7 @@ function showBrowseCategory(type, items) {
     if (parts.length > 0) itemEl.appendChild(meta);
 
     itemEl.addEventListener('click', () => {
-      if (isValidCanvasUrl(item.url)) {
+      if (isValidLmsUrl(item.url)) {
         chrome.tabs.create({ url: item.url });
       }
     });
