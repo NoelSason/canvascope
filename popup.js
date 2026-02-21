@@ -209,6 +209,7 @@ function getClickBoost(item) {
 // ============================================
 
 let activeCourseContext = null; // { courseId, courseName }
+let starredCourseIds = []; // course IDs from the user's Dashboard (favorited courses)
 
 async function detectActiveCourseContext() {
   try {
@@ -230,6 +231,18 @@ function getActiveCourseBoost(item) {
   if (activeCourseContext.courseName && item.courseName &&
     normalizeText(item.courseName) === normalizeText(activeCourseContext.courseName)) return 0.08;
   return 0;
+}
+
+/**
+ * Boost items from starred (favorited) courses.
+ * If the user has no starred courses, returns 0 (no effect).
+ */
+function getStarredCourseBoost(item) {
+  if (!starredCourseIds || starredCourseIds.length === 0) return 0;
+  if (!item.courseId) return 0;
+  const cid = String(item.courseId);
+  if (starredCourseIds.map(String).includes(cid)) return 0.20;
+  return -0.08; // mild penalty for non-starred courses
 }
 
 // ============================================
@@ -638,7 +651,9 @@ let state = {
   overlayHighlightIndex: 0,
   lastSearchTimeMs: 0,
   lastResultCount: 0,
-  recentlyOpened: []
+  recentlyOpened: [],
+  isSignedIn: false,
+  user: null
 };
 
 // ============================================
@@ -661,6 +676,19 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Request status from background
   getBackgroundStatus();
+
+  // Check auth status
+  chrome.runtime.sendMessage({ type: 'checkAuthStatus' }, (response) => {
+    if (response && response.signedIn) {
+      state.isSignedIn = true;
+      state.user = response.user;
+      if (elements.googleSignInBtn) {
+        elements.googleSignInBtn.querySelector('.btn-text').textContent = 'Signed in ✓';
+        elements.googleSignInBtn.style.backgroundColor = 'var(--success-color, #4CAF50)';
+        elements.googleSignInBtn.style.color = '#fff';
+      }
+    }
+  });
 
   // Check if current tab is a supported LMS and auto-detect domain
   checkCurrentTab();
@@ -703,23 +731,40 @@ function checkOverlayMode() {
 
     // Listen for messages from parent
     window.addEventListener('message', (event) => {
-      // Strict origin/source check: only accept messages from our extension's parent
+      // Only accept messages from our parent frame
       if (event.source !== window.parent) return;
-      const extensionOrigin = new URL(chrome.runtime.getURL('')).origin;
-      if (event.origin !== extensionOrigin) return;
 
       if (event.data && event.data.type === 'FOCUS_INPUT') {
-        setTimeout(() => elements.searchInput.focus(), 50);
+        setTimeout(() => {
+          elements.searchInput.focus();
+          // Re-show recently opened if search is empty
+          if (!elements.searchInput.value.trim()) {
+            showOverlayRecents();
+          }
+        }, 50);
+      }
+
+      if (event.data && event.data.type === 'CLEAR_SEARCH') {
+        if (elements.searchInput) {
+          elements.searchInput.value = '';
+          clearSearch();
+        }
       }
     });
 
-    // Handle Escape key to close overlay
+    // Handle Escape key to close overlay (capture phase to ensure it fires first)
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') {
-        const extensionOrigin = new URL(chrome.runtime.getURL('')).origin;
-        window.parent.postMessage({ type: 'CLOSE_OVERLAY' }, extensionOrigin);
+        e.preventDefault();
+        e.stopPropagation();
+        // Clear the search input before closing
+        if (elements.searchInput) {
+          elements.searchInput.value = '';
+          clearSearch();
+        }
+        window.parent.postMessage({ type: 'CLOSE_OVERLAY' }, '*');
       }
-    });
+    }, true); // capture: true
   }
 }
 
@@ -740,6 +785,17 @@ function initializeElements() {
   elements.closeBrowse = document.getElementById('close-browse');
   elements.browseTabs = document.getElementById('browse-tabs');
   elements.browseContent = document.getElementById('browse-content');
+
+  // Auth Integration
+  elements.googleSignInBtn = document.getElementById('google-signin-btn');
+  elements.accountModal = document.getElementById('account-modal');
+  elements.closeAccountModalBtn = document.getElementById('close-account-modal');
+  elements.accountNameDisplay = document.getElementById('account-name-display');
+  elements.accountEmailDisplay = document.getElementById('account-email-display');
+  elements.accountAvatarPlaceholder = document.getElementById('account-avatar-placeholder');
+  elements.logoutBtn = document.getElementById('logout-btn');
+  elements.accountDbContent = document.getElementById('account-db-content');
+  elements.syncDbBtn = document.getElementById('sync-db-btn');
 
   // Sync Status Elements
   elements.syncStatus = document.getElementById('sync-status');
@@ -772,6 +828,116 @@ function setupEventListeners() {
       // Don't hide if we clicked a history item (handled by click event)
     }, 200);
   });
+
+  // Auth Integration
+  if (elements.googleSignInBtn) {
+    elements.googleSignInBtn.addEventListener('click', () => {
+      // If already signed in, open the account modal instead of re-authenticating
+      if (state.isSignedIn) {
+        showAccountModal();
+        return;
+      }
+
+      elements.googleSignInBtn.querySelector('.btn-text').textContent = 'Signing in...';
+      elements.googleSignInBtn.disabled = true;
+
+      chrome.runtime.sendMessage({ type: 'signInWithGoogle' }, (response) => {
+        elements.googleSignInBtn.disabled = false;
+        if (response && response.success) {
+          // Fetch the new user session
+          chrome.runtime.sendMessage({ type: 'checkAuthStatus' }, (statusRes) => {
+            if (statusRes && statusRes.signedIn) {
+              state.isSignedIn = true;
+              state.user = statusRes.user;
+              elements.googleSignInBtn.querySelector('.btn-text').textContent = 'Signed in ✓';
+              elements.googleSignInBtn.style.backgroundColor = 'var(--success-color, #4CAF50)';
+              elements.googleSignInBtn.style.color = '#fff';
+            }
+          });
+        } else {
+          elements.googleSignInBtn.querySelector('.btn-text').textContent = 'Sign in error';
+          console.error('Sign in failed:', response?.error);
+          setTimeout(() => {
+            if (elements.googleSignInBtn) {
+              elements.googleSignInBtn.querySelector('.btn-text').textContent = 'Sign in';
+            }
+          }, 3000);
+        }
+      });
+    });
+  }
+
+  // Account Modal Interaction
+  if (elements.closeAccountModalBtn) {
+    elements.closeAccountModalBtn.addEventListener('click', () => {
+      elements.accountModal.classList.add('hidden');
+    });
+  }
+
+  if (elements.syncDbBtn) {
+    elements.syncDbBtn.addEventListener('click', () => {
+      elements.syncDbBtn.disabled = true;
+      elements.syncDbBtn.querySelector('.btn-text').textContent = 'Syncing...';
+
+      chrome.runtime.sendMessage({ type: 'syncIndexedContent' }, (response) => {
+        elements.syncDbBtn.disabled = false;
+        if (response && response.success) {
+          elements.syncDbBtn.querySelector('.btn-text').textContent = `Synced ${response.synced} items \u2713`;
+          elements.syncDbBtn.style.backgroundColor = 'rgba(76, 175, 80, 0.1)';
+          elements.syncDbBtn.style.color = '#4CAF50';
+          elements.syncDbBtn.style.borderColor = 'rgba(76, 175, 80, 0.2)';
+
+          // Refresh the DB view
+          showAccountModal();
+
+          // Reset button after 3s
+          setTimeout(() => {
+            if (elements.syncDbBtn) {
+              elements.syncDbBtn.querySelector('.btn-text').textContent = 'Sync to Database';
+              elements.syncDbBtn.style.backgroundColor = 'rgba(33, 150, 243, 0.1)';
+              elements.syncDbBtn.style.color = '#2196F3';
+              elements.syncDbBtn.style.borderColor = 'rgba(33, 150, 243, 0.2)';
+            }
+          }, 3000);
+        } else {
+          elements.syncDbBtn.querySelector('.btn-text').textContent = 'Sync failed';
+          console.error('Sync failed:', response?.error);
+          setTimeout(() => {
+            if (elements.syncDbBtn) {
+              elements.syncDbBtn.querySelector('.btn-text').textContent = 'Sync to Database';
+            }
+          }, 3000);
+        }
+      });
+    });
+  }
+
+  if (elements.logoutBtn) {
+    elements.logoutBtn.addEventListener('click', () => {
+      elements.logoutBtn.disabled = true;
+      elements.logoutBtn.querySelector('.btn-text').textContent = 'Signing out...';
+
+      chrome.runtime.sendMessage({ type: 'signOut' }, (response) => {
+        elements.logoutBtn.disabled = false;
+        elements.logoutBtn.querySelector('.btn-text').textContent = 'Sign out';
+
+        if (response && response.success) {
+          state.isSignedIn = false;
+          state.user = null;
+
+          // Reset Main Sign in Button
+          elements.googleSignInBtn.querySelector('.btn-text').textContent = 'Sign in';
+          elements.googleSignInBtn.style.backgroundColor = 'var(--card-bg)';
+          elements.googleSignInBtn.style.color = 'var(--text-color)';
+
+          // Hide account modal
+          elements.accountModal.classList.add('hidden');
+        } else {
+          console.error('Sign out failed:', response?.error);
+        }
+      });
+    });
+  }
 
   // Keyboard navigation for search results
   elements.searchInput.addEventListener('keydown', (e) => {
@@ -839,6 +1005,90 @@ function setupEventListeners() {
 
   // Listen for background updates
   chrome.runtime.onMessage.addListener(handleBackgroundMessage);
+}
+
+/**
+ * Show and populate the account profile modal
+ */
+function showAccountModal() {
+  if (!state.user || !elements.accountModal) return;
+
+  const user = state.user;
+  const name = user.name || 'User';
+  const email = user.email || '';
+
+  if (elements.accountNameDisplay) elements.accountNameDisplay.textContent = name;
+  if (elements.accountEmailDisplay) elements.accountEmailDisplay.textContent = email;
+
+  if (elements.accountAvatarPlaceholder) {
+    if (user.avatar_url) {
+      elements.accountAvatarPlaceholder.innerHTML = `<img src="${user.avatar_url}" style="width: 100%; height: 100%; border-radius: 50%; object-fit: cover;">`;
+      elements.accountAvatarPlaceholder.style.backgroundColor = 'transparent';
+    } else {
+      elements.accountAvatarPlaceholder.innerHTML = name.charAt(0).toUpperCase();
+      elements.accountAvatarPlaceholder.style.backgroundColor = 'var(--border-color)';
+    }
+  }
+
+  // Show loading state for DB content
+  if (elements.accountDbContent) {
+    elements.accountDbContent.innerHTML = '<p style="color: var(--text-secondary); font-size: 12px; text-align: center;">Loading database content...</p>';
+  }
+
+  elements.accountModal.classList.remove('hidden');
+
+  // Fetch database content
+  chrome.runtime.sendMessage({ type: 'fetchUserData' }, (response) => {
+    if (!elements.accountDbContent) return;
+
+    if (!response || !response.success) {
+      elements.accountDbContent.innerHTML = `<p style="color: #f44336; font-size: 12px; text-align: center;">Error: ${response?.error || 'Failed to load'}</p>`;
+      return;
+    }
+
+    let html = '';
+    const tables = response.tables;
+    const tableNames = { users: 'Users', preferences: 'Preferences', synced_items: 'Synced Items' };
+    const tableIcons = { users: '👤', preferences: '⚙️', synced_items: '🔄' };
+
+    for (const [key, label] of Object.entries(tableNames)) {
+      const table = tables[key];
+      const icon = tableIcons[key];
+      const rowCount = table.data?.length || 0;
+
+      html += `<div style="margin-bottom: 12px;">`;
+      html += `<div style="display: flex; align-items: center; gap: 6px; margin-bottom: 6px; padding-bottom: 4px; border-bottom: 1px solid var(--border-color);">`;
+      html += `<span style="font-size: 14px;">${icon}</span>`;
+      html += `<span style="font-weight: 600; font-size: 13px; color: var(--text-color);">${label}</span>`;
+      html += `<span style="margin-left: auto; font-size: 11px; color: var(--text-secondary); background: var(--card-bg); padding: 1px 7px; border-radius: 10px;">${rowCount} row${rowCount !== 1 ? 's' : ''}</span>`;
+      html += `</div>`;
+
+      if (table.error) {
+        html += `<p style="color: #ff9800; font-size: 11px; padding: 4px 8px;">⚠ ${table.error}</p>`;
+      } else if (rowCount === 0) {
+        html += `<p style="color: var(--text-secondary); font-size: 11px; padding: 4px 8px; font-style: italic;">No data yet</p>`;
+      } else {
+        for (const row of table.data) {
+          html += `<div style="background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 8px; padding: 8px 10px; margin-bottom: 6px; font-size: 11px; word-break: break-all;">`;
+          for (const [field, value] of Object.entries(row)) {
+            // Skip internal IDs for cleaner display
+            const displayVal = (value === null || value === undefined) ? '<em style="color: var(--text-secondary);">null</em>' :
+              (typeof value === 'object' ? `<code style="background: rgba(255,255,255,0.05); padding: 1px 4px; border-radius: 3px; font-size: 10px;">${JSON.stringify(value)}</code>` :
+                String(value));
+            html += `<div style="display: flex; gap: 6px; padding: 2px 0; line-height: 1.4;">`;
+            html += `<span style="color: var(--text-secondary); min-width: 90px; flex-shrink: 0; font-weight: 500;">${field}</span>`;
+            html += `<span style="color: var(--text-color);">${displayVal}</span>`;
+            html += `</div>`;
+          }
+          html += `</div>`;
+        }
+      }
+
+      html += `</div>`;
+    }
+
+    elements.accountDbContent.innerHTML = html;
+  });
 }
 
 /**
@@ -1460,6 +1710,9 @@ function calculateScore(item, fuseScore, normalizedQuery, intent, queryNums, isP
   // ── Active-course prior ─────────────────────────
   score += getActiveCourseBoost(item);
 
+  // ── Starred-course boost ────────────────────────
+  score += getStarredCourseBoost(item);
+
   // ── Folder-context boost ────────────────────────
   // Boost items whose folder/module name matches query tokens
   if (normalizedQuery && (item.folderPath || item.moduleName)) {
@@ -1570,11 +1823,21 @@ function showSearchHistory() {
     elements.searchHistory.appendChild(historyItem);
   });
 
+  // Hide empty state, show history in its place
+  const emptyState = document.getElementById('empty-state');
+  if (emptyState) emptyState.style.display = 'none';
+
   elements.searchHistory.classList.remove('hidden');
 }
 
 function hideSearchHistory() {
   elements.searchHistory.classList.add('hidden');
+
+  // Restore empty state if no search results are showing
+  const emptyState = document.getElementById('empty-state');
+  if (emptyState && elements.searchInput.value.trim() === '') {
+    emptyState.style.display = '';
+  }
 }
 
 async function clearSearchHistory() {
@@ -1731,7 +1994,7 @@ function openResult(item) {
     // If in overlay mode, tell parent to close (use strict origin)
     if (window.self !== window.top) {
       const extensionOrigin = new URL(chrome.runtime.getURL('')).origin;
-      window.parent.postMessage({ type: 'CLOSE_OVERLAY' }, extensionOrigin);
+      window.parent.postMessage({ type: 'CLOSE_OVERLAY' }, '*');
     } else {
       window.close(); // Close popup after navigation
     }
@@ -1829,8 +2092,9 @@ function showOverlayRecents() {
     recentsSection.appendChild(el);
   });
 
-  // Insert after results container (which shows empty state)
-  elements.resultsContainer.after(recentsSection);
+  // Insert inside results container instead of after it, 
+  // so the container's padding correctly wraps it and search results.
+  elements.resultsContainer.appendChild(recentsSection);
 }
 
 /**
@@ -1920,14 +2184,15 @@ function clearResultsContainer() {
 
 async function loadContent() {
   try {
-    const result = await chrome.storage.local.get(['indexedContent']);
+    const result = await chrome.storage.local.get(['indexedContent', 'starredCourseIds']);
     let content = result.indexedContent || [];
 
     // Deduplicate by normalizing URLs (strip module_item_id)
     content = deduplicateCrossType(deduplicateContent(content));
 
     state.indexedContent = content;
-    console.log(`[Canvascope] Loaded ${state.indexedContent.length} items (after dedup)`);
+    starredCourseIds = result.starredCourseIds || [];
+    console.log(`[Canvascope] Loaded ${state.indexedContent.length} items (after dedup), ${starredCourseIds.length} starred courses`);
   } catch (error) {
     console.error('[Canvascope] Error loading content:', error);
     state.indexedContent = [];

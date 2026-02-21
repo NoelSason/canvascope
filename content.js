@@ -963,9 +963,10 @@ function showOverlay() {
         overlayIframe.style.transform = 'scale(1)';
         overlayIframe.style.opacity = '1';
         overlayIframe.focus();
-        // Send message to popup to focus input (use extension origin, not '*')
-        const extensionOrigin = new URL(chrome.runtime.getURL('')).origin;
-        overlayIframe.contentWindow.postMessage({ type: 'FOCUS_INPUT' }, extensionOrigin);
+        // Send message to popup to focus input (with delay for re-open cases)
+        setTimeout(() => {
+            overlayIframe.contentWindow.postMessage({ type: 'FOCUS_INPUT' }, '*');
+        }, 100);
     });
 }
 
@@ -973,13 +974,34 @@ function hideOverlay() {
     if (!overlayContainer) return;
 
     overlayVisible = false;
-    overlayIframe.style.transform = 'scale(0.95)';
-    overlayIframe.style.opacity = '0';
-    document.body.style.overflow = '';
+
+    // Tell the iframe to clear its search input
+    if (overlayIframe && overlayIframe.contentWindow) {
+        overlayIframe.contentWindow.postMessage({ type: 'CLEAR_SEARCH' }, '*');
+    }
+    // CRITICAL FIX: Chrome focus-trapping bug workaround.
+    // Detaching the iframe completely destroys its focus context instantly
+    // and guarantees keyboard events return to the parent document.
+    let parent = null;
+    if (overlayIframe && overlayIframe.parentNode) {
+        parent = overlayIframe.parentNode;
+        parent.removeChild(overlayIframe);
+    }
+
+    // Fade out the backdrop
+    overlayContainer.style.opacity = '0';
+    document.body.style.overflow = ''; // Restore page scroll
 
     setTimeout(() => {
         overlayContainer.style.display = 'none';
-        // Reset iframe src to reset state? No, keep it for speed.
+        overlayContainer.style.opacity = '';
+
+        // Reset state for next open and re-attach
+        if (overlayIframe && parent) {
+            overlayIframe.style.transform = 'scale(0.95)';
+            overlayIframe.style.opacity = '0';
+            parent.appendChild(overlayIframe);
+        }
     }, 200);
 }
 
@@ -1007,6 +1029,7 @@ checkForLtiPage();
 document.addEventListener('keydown', (e) => {
     // Check for Cmd+K (Mac) or Ctrl+K (Windows/Linux)
     if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        console.log('[Canvascope] Cmd+K pressed! activeElement:', document.activeElement?.tagName, document.activeElement?.id);
         e.preventDefault();
         e.stopPropagation();
 
@@ -1017,10 +1040,12 @@ document.addEventListener('keydown', (e) => {
     }
 
     // Close on Escape if overlay is open
-    if (e.key === 'Escape' && overlayVisible) {
-        e.preventDefault();
-        e.stopPropagation();
-        hideOverlay();
+    if (e.key === 'Escape') {
+        if (overlayVisible) {
+            e.preventDefault();
+            e.stopPropagation();
+            hideOverlay();
+        }
     }
 });
 

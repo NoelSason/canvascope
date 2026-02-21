@@ -352,18 +352,10 @@ body::after {
    SEARCH HISTORY
    ============================================ */
 .search-history {
-  position: absolute;
-  top: 100%;
-  left: 0;
-  right: 0;
-  background: rgba(26, 10, 10, 0.95);
-  border: 1px solid var(--glass-border);
+  background: transparent;
+  border: none;
   border-radius: var(--radius-sm);
-  margin-top: 4px;
   z-index: 50;
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
 }
 
 .history-header {
@@ -1005,7 +997,24 @@ body.in-overlay {
 }
 
 body.in-overlay .empty-state {
-  padding: 30px 20px;
+  display: none;
+}
+
+body.in-overlay .results-container {
+  padding: 8px;
+  min-height: 0;
+}
+
+body.in-overlay .search-history {
+  margin-top: 0;
+}
+
+body.in-overlay .history-header {
+  padding: 12px 12px 8px 12px;
+  border-bottom: none;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
 }
 
 body.in-overlay .result-item {
@@ -1185,6 +1194,14 @@ body.in-overlay .overlay-result-course {
   text-transform: uppercase;
   letter-spacing: 0.06em;
   padding: 6px 4px 8px;
+}
+
+body.in-overlay .overlay-recents {
+  padding: 0;
+}
+
+body.in-overlay .overlay-recents-header {
+  padding: 2px 4px 8px;
 }
 
 .overlay-recents .result-item {

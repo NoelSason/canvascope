@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Canvascope",
-  "version": "1.0.1",
-  "description": "Instantly search all your Canvas course content using natural language. Privacy-first, all data stays local.",
+  "version": "2.0.0",
+  "description": "Instantly search all your Canvas course content using natural language. Privacy-first, all data stays with you.",
   "icons": {
     "16": "icons/icon16.png",
     "32": "icons/icon32.png",
@@ -22,8 +22,16 @@
     "activeTab",
     "tabs",
     "alarms",
-    "scripting"
+    "scripting",
+    "identity"
   ],
+  "oauth2": {
+    "client_id": "961806200943-6deqch1r87uthbarmr7te483u4h7fn9m.apps.googleusercontent.com",
+    "scopes": [
+      "https://www.googleapis.com/auth/userinfo.email",
+      "https://www.googleapis.com/auth/userinfo.profile"
+    ]
+  },
   "host_permissions": [
     "*://*.instructure.com/*",
     "*://bcourses.berkeley.edu/*",
@@ -43,13 +51,14 @@
         "*://canvas.mit.edu/*"
       ],
       "js": [
+        "lib/supabase.js",
         "content.js"
       ],
       "run_at": "document_idle"
     }
   ],
   "background": {
-    "service_worker": "background.js"
+    "service_worker": "background-wrapper.js"
   },
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'none'; base-uri 'none';"
@@ -57,6 +66,7 @@
   "web_accessible_resources": [
     {
       "resources": [
+        "lib/supabase.js",
         "popup.html",
         "popup.js",
         "styles.css",

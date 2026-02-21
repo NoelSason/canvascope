@@ -13,8 +13,20 @@
  */
 
 // ============================================
-// CONFIGURATION
-// ============================================
+
+importScripts('lib/fuse.min.js');
+
+// --- SUPABASE INITIALIZATION ---
+// Create a single supabase client for the extension
+const supabaseUrl = 'https://vcadcdgnwxjlgaoqktkd.supabase.co';
+const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZjYWRjZGdud3hqbGdhb3FrdGtkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE2MzU4NDQsImV4cCI6MjA4NzIxMTg0NH0.71j6kwkwwSeG9Jppu4IUyHORM033NFyXKemOd5kuDWk';
+const supabaseClient = typeof window !== 'undefined' && window.supabase
+    ? window.supabase.createClient(supabaseUrl, supabaseKey)
+    : typeof supabase !== 'undefined' ? supabase.createClient(supabaseUrl, supabaseKey) : null;
+
+if (!supabaseClient) {
+    console.error('[Canvascope] Supabase client failed to initialize (ensure lib/supabase.js is loaded)');
+}
 
 /**
  * Single source of truth for LMS domains.
@@ -268,8 +280,16 @@ async function performBackgroundScan(baseUrl, platform = 'canvas') {
         const mergedContent = [...preservedItems, ...dedupedContent];
 
         // Save to storage
+        // Extract starred course IDs from dashboard items (type 'course' = favorited)
+        const starredCourseIds = [...new Set(
+            dedupedContent
+                .filter(item => item.type === 'course' && item.courseId)
+                .map(item => item.courseId)
+        )];
+
         await chrome.storage.local.set({
             indexedContent: mergedContent,
+            starredCourseIds: starredCourseIds.length > 0 ? starredCourseIds : (existingData.starredCourseIds || []),
             settings: {
                 lastScanTime: Date.now(),
                 version: chrome.runtime.getManifest().version
@@ -284,6 +304,13 @@ async function performBackgroundScan(baseUrl, platform = 'canvas') {
             totalItems: mergedContent.length,
             newItems: Math.max(0, newItemsDelta)
         });
+
+        // Auto-sync to Supabase if user is signed in
+        syncIndexedContentToSupabase().then(result => {
+            if (result.success && result.synced > 0) {
+                console.log(`[Canvascope Sync] Auto-synced ${result.synced} items after scan.`);
+            }
+        }).catch(() => { /* Not signed in or sync failed silently */ });
 
     } catch (error) {
         console.error('[Canvascope] Background scan error:', error);
@@ -1225,7 +1252,251 @@ function broadcastMessage(message) {
 }
 
 // ============================================
-// MESSAGE HANDLER - for popup requests
+// AUTHENTICATION FLOW
+// ============================================
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (message.type === 'signInWithGoogle') {
+        (async () => {
+            try {
+                const redirectUrl = chrome.identity.getRedirectURL();
+                console.log('[Canvascope Auth] Starting Google OAuth flow. Redirect URL:', redirectUrl);
+
+                // Get the OAuth URL from Supabase
+                const { data, error } = await supabaseClient.auth.signInWithOAuth({
+                    provider: 'google',
+                    options: {
+                        redirectTo: redirectUrl,
+                        queryParams: {
+                            access_type: 'offline',
+                            prompt: 'consent',
+                        },
+                        skipBrowserRedirect: true
+                    }
+                });
+
+                if (error) {
+                    console.error('[Canvascope Auth] Supabase OAuth error:', error);
+                    sendResponse({ success: false, error: error.message });
+                    return;
+                }
+
+                if (!data || !data.url) {
+                    throw new Error('No OAuth URL returned from Supabase');
+                }
+
+                console.log('[Canvascope Auth] OAuth URL generated:', data.url);
+
+                // Use chrome.identity for proper HTTPS OAuth flow
+                chrome.identity.launchWebAuthFlow(
+                    { url: data.url, interactive: true },
+                    (callbackUrl) => {
+                        if (chrome.runtime.lastError) {
+                            console.error('[Canvascope Auth] launchWebAuthFlow error:', chrome.runtime.lastError);
+                            sendResponse({ success: false, error: chrome.runtime.lastError.message });
+                            return;
+                        }
+
+                        if (!callbackUrl) {
+                            sendResponse({ success: false, error: 'No callback URL received' });
+                            return;
+                        }
+
+                        // Parse tokens from the callback URL hash
+                        try {
+                            const url = new URL(callbackUrl);
+                            const hashFragment = url.hash.substring(1);
+                            const hashParams = new URLSearchParams(hashFragment);
+
+                            if (hashParams.has('error_description')) {
+                                console.error('[Canvascope Auth] OAuth error:', hashParams.get('error_description'));
+                                sendResponse({ success: false, error: hashParams.get('error_description') });
+                                return;
+                            }
+
+                            const accessToken = hashParams.get('access_token');
+                            const refreshToken = hashParams.get('refresh_token');
+
+                            if (accessToken && refreshToken) {
+                                supabaseClient.auth.setSession({
+                                    access_token: accessToken,
+                                    refresh_token: refreshToken
+                                }).then(({ error: sessionError }) => {
+                                    if (sessionError) {
+                                        console.error('[Canvascope Auth] Error setting session:', sessionError);
+                                        sendResponse({ success: false, error: sessionError.message });
+                                    } else {
+                                        console.log('[Canvascope Auth] Successfully authenticated!');
+                                        // Auto-sync indexed content to Supabase after login
+                                        syncIndexedContentToSupabase().then(result => {
+                                            console.log('[Canvascope Sync] Auto-sync after login:', result);
+                                        }).catch(err => {
+                                            console.error('[Canvascope Sync] Auto-sync failed:', err);
+                                        });
+                                        sendResponse({ success: true });
+                                    }
+                                });
+                            } else {
+                                sendResponse({ success: false, error: 'Tokens missing from callback' });
+                            }
+                        } catch (parseErr) {
+                            console.error('[Canvascope Auth] Error parsing callback URL:', parseErr);
+                            sendResponse({ success: false, error: parseErr.message });
+                        }
+                    }
+                );
+            } catch (err) {
+                console.error('[Canvascope Auth] Unhandled error during sign in:', err);
+                sendResponse({ success: false, error: err.message });
+            }
+        })();
+
+    }
+
+    return true; // Keep message channel open for async response
+});
+
+// Add message handler to check auth status on popup load
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (message.type === 'checkAuthStatus') {
+        (async () => {
+            try {
+                const { data: { session }, error } = await supabaseClient.auth.getSession();
+                if (error) throw error;
+
+                if (session && session.user) {
+                    sendResponse({
+                        signedIn: true,
+                        user: {
+                            email: session.user.email,
+                            name: session.user.user_metadata?.full_name || session.user.user_metadata?.name || 'User',
+                            avatar_url: session.user.user_metadata?.avatar_url
+                        }
+                    });
+                } else {
+                    sendResponse({ signedIn: false });
+                }
+            } catch (err) {
+                console.error('[Canvascope Auth] Error checking session:', err);
+                sendResponse({ signedIn: false });
+            }
+        })();
+        return true;
+    } else if (message.type === 'fetchUserData') {
+        (async () => {
+            try {
+                const { data: { session }, error: sessionError } = await supabaseClient.auth.getSession();
+                if (sessionError) throw sessionError;
+                if (!session) { sendResponse({ success: false, error: 'Not signed in' }); return; }
+
+                // Fetch from all 3 tables in parallel
+                const [usersRes, prefsRes, syncedRes] = await Promise.all([
+                    supabaseClient.from('users').select('*').eq('id', session.user.id),
+                    supabaseClient.from('preferences').select('*').eq('user_id', session.user.id),
+                    supabaseClient.from('synced_items').select('*').eq('user_id', session.user.id)
+                ]);
+
+                sendResponse({
+                    success: true,
+                    tables: {
+                        users: { data: usersRes.data || [], error: usersRes.error?.message || null },
+                        preferences: { data: prefsRes.data || [], error: prefsRes.error?.message || null },
+                        synced_items: { data: syncedRes.data || [], error: syncedRes.error?.message || null }
+                    }
+                });
+            } catch (err) {
+                console.error('[Canvascope Auth] Error fetching user data:', err);
+                sendResponse({ success: false, error: err.message });
+            }
+        })();
+        return true;
+    } else if (message.type === 'signOut') {
+        (async () => {
+            try {
+                const { error } = await supabaseClient.auth.signOut();
+                if (error) throw error;
+                sendResponse({ success: true });
+            } catch (err) {
+                console.error('[Canvascope Auth] Error signing out:', err);
+                sendResponse({ success: false, error: err.message });
+            }
+        })();
+        return true;
+    } else if (message.type === 'syncIndexedContent') {
+        (async () => {
+            try {
+                const result = await syncIndexedContentToSupabase();
+                sendResponse(result);
+            } catch (err) {
+                console.error('[Canvascope Sync] Error:', err);
+                sendResponse({ success: false, error: err.message });
+            }
+        })();
+        return true;
+    }
+});
+
+/**
+ * Sync all locally indexed content to Supabase synced_items table.
+ * Each item is stored as a row with item_type from the content type
+ * and item_data containing the full item object.
+ */
+async function syncIndexedContentToSupabase() {
+    const { data: { session } } = await supabaseClient.auth.getSession();
+    if (!session) return { success: false, error: 'Not signed in' };
+
+    const userId = session.user.id;
+
+    // Read local indexed content
+    const storageData = await chrome.storage.local.get(['indexedContent']);
+    const items = storageData.indexedContent || [];
+
+    if (items.length === 0) {
+        return { success: true, synced: 0, message: 'No items to sync' };
+    }
+
+    console.log(`[Canvascope Sync] Syncing ${items.length} indexed items to Supabase...`);
+
+    // First, delete existing synced_items for this user to do a full refresh
+    const { error: deleteError } = await supabaseClient
+        .from('synced_items')
+        .delete()
+        .eq('user_id', userId);
+
+    if (deleteError) {
+        console.error('[Canvascope Sync] Error clearing old items:', deleteError);
+    }
+
+    // Batch insert in chunks of 50
+    const BATCH_SIZE = 50;
+    let totalSynced = 0;
+
+    for (let i = 0; i < items.length; i += BATCH_SIZE) {
+        const batch = items.slice(i, i + BATCH_SIZE);
+        const rows = batch.map(item => ({
+            user_id: userId,
+            item_type: item.type || 'unknown',
+            item_data: item,
+            sync_status: 'synced'
+        }));
+
+        const { error: insertError } = await supabaseClient
+            .from('synced_items')
+            .insert(rows);
+
+        if (insertError) {
+            console.error(`[Canvascope Sync] Batch insert error at offset ${i}:`, insertError);
+        } else {
+            totalSynced += batch.length;
+        }
+    }
+
+    console.log(`[Canvascope Sync] Done! Synced ${totalSynced}/${items.length} items.`);
+    return { success: true, synced: totalSynced, total: items.length };
+}
+
+// ============================================
+// MESSAGE PASSING (Popup/Content Script to Background)
 // ============================================
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
