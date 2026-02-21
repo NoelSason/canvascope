@@ -1526,12 +1526,42 @@ function performSearch(query) {
 
   // ── Exact/prefix pre-pass ──────────────────────────
   const normQ = normalizedQuery.toLowerCase();
+  const rawQ = normalizeText(effectiveQuery).toLowerCase();
+  const queryVariants = normQ === rawQ ? [normQ] : [normQ, rawQ];
+
   const prePassHits = [];
   const prePassUrls = new Set();
+
   for (const item of state.filteredContent) {
     const nt = (item.searchTitleNormalized || normalizeText(item.title || '')).toLowerCase();
-    if (nt === normQ || nt.startsWith(normQ + ' ') || nt.startsWith(normQ)) {
-      prePassHits.push({ item, score: 0, prePass: true });
+
+    let bestBaseScore = null;
+
+    // Check against both expanded and raw query versions
+    for (const q of queryVariants) {
+      if (!q) continue;
+
+      const escapedQ = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const exactWordRe = new RegExp(`\\b${escapedQ}\\b`, 'i');
+
+      let score = null;
+      if (nt === q) {
+        score = 0.0;
+      } else if (nt.startsWith(q + ' ') || nt.startsWith(q)) {
+        score = 0.05;
+      } else if (exactWordRe.test(nt)) {
+        score = 0.1;
+      } else if (nt.includes(q)) {
+        score = 0.15;
+      }
+
+      if (score !== null && (bestBaseScore === null || score < bestBaseScore)) {
+        bestBaseScore = score;
+      }
+    }
+
+    if (bestBaseScore !== null) {
+      prePassHits.push({ item, score: bestBaseScore, prePass: true });
       prePassUrls.add(item.url);
     }
   }
@@ -1640,8 +1670,15 @@ function performSearch(query) {
  * intent, numeric, coverage, click-feedback, due-date, and active-course boosts.
  */
 function calculateScore(item, fuseScore, normalizedQuery, intent, queryNums, isPrePass) {
-  // Base: invert Fuse score. Pre-pass items start at 1.0 (perfect match)
-  let score = isPrePass ? 1.0 : (1 - fuseScore);
+  // Base: invert Fuse score. Pre-pass items use their calculated baseScore (0.0 is perfect)
+  let score;
+  if (isPrePass && fuseScore !== undefined) {
+    // Exact/prefix match tier: massive 10.0 base score so they always beat fuzzy matches
+    score = 10.0 - fuseScore;
+  } else {
+    // Fuzzy match tier: 1.0 base score
+    score = 1.0 - fuseScore;
+  }
 
   // ── Type boost (0.05–0.30) ──────────────────────
   score += TYPE_BOOST[item.type] || 0;
@@ -1757,10 +1794,13 @@ function calculateScore(item, fuseScore, normalizedQuery, intent, queryNums, isP
  */
 function rankResults(results, normalizedQuery, intent, queryNums) {
   const scored = results
-    .map(r => ({
-      ...r,
-      finalScore: calculateScore(r.item, r.score, normalizedQuery, intent, queryNums, !!r.prePass)
-    }))
+    .map(r => {
+      const finalScore = calculateScore(r.item, r.score, normalizedQuery, intent, queryNums, !!r.prePass);
+      return {
+        ...r,
+        finalScore
+      };
+    })
     .sort((a, b) => b.finalScore - a.finalScore);
 
   return applyDiversityRerank(scored);

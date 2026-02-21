@@ -1001,7 +1001,7 @@ body.in-overlay .empty-state {
 }
 
 body.in-overlay .results-container {
-  padding: 8px;
+  padding: 8px 16px;
   min-height: 0;
 }
 
