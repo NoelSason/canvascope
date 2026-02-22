@@ -24,7 +24,7 @@
         </svg>
         Canvascope
       </h1>
-      <p class="subtitle" id="status-text">Search your course content</p>
+      <p class="subtitle" id="status-text" aria-live="polite">Search your course content</p>
     </header>
 
     <!-- Search Section -->
@@ -77,6 +77,14 @@
       <!-- Search History (shown inside results area) -->
       <div id="search-history" class="search-history hidden"></div>
 
+      <!-- Loading Shell -->
+      <div id="loading-shell" class="loading-shell hidden">
+        <div class="skeleton-row"></div>
+        <div class="skeleton-row"></div>
+        <div class="skeleton-row"></div>
+        <div class="skeleton-row"></div>
+      </div>
+
       <div class="empty-state" id="empty-state">
         <div class="empty-icon">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -92,6 +100,7 @@
     <div id="sync-status" class="sync-status synced">
       <span id="sync-icon" class="sync-icon">✓</span>
       <span id="sync-text" class="sync-text">Synced</span>
+      <progress id="scan-progress" max="100" value="0" class="hidden"></progress>
     </div>
 
     <!-- Stats Section -->
