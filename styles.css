@@ -86,6 +86,7 @@ body::-webkit-scrollbar {
 
 ::-webkit-scrollbar-track {
   background: transparent;
+  margin: 8px 0;
 }
 
 ::-webkit-scrollbar-thumb {
@@ -1318,11 +1319,15 @@ body.in-overlay .overlay-recents-header {
    DUE PLANNER
    ============================================ */
 .due-planner {
-  padding: 4px 0;
+  padding: 0 0 4px 0;
 }
 
 .due-section {
   margin-bottom: 8px;
+}
+
+.due-section:not(:first-child) {
+  margin-top: 6px;
 }
 
 .due-section:last-child {
@@ -1333,7 +1338,7 @@ body.in-overlay .overlay-recents-header {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 8px;
+  padding: 0px 8px 6px;
   font-size: 0.72rem;
   font-weight: 600;
   text-transform: uppercase;

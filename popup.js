@@ -197,12 +197,12 @@ function getClickBoost(item) {
   const key = getClickKey(item);
   if (!key || !clickFeedbackMap[key]) return 0;
   const { openCount, lastOpenedAt } = clickFeedbackMap[key];
-  // Frequency boost: log-scaled, max ~0.08
-  const freqBoost = Math.min(0.08, Math.log2(1 + openCount) * 0.025);
-  // Recency boost: decays over 14 days, max 0.05
+  // Frequency boost: log-scaled, max ~0.60
+  const freqBoost = Math.min(0.60, Math.log2(1 + openCount) * 0.20);
+  // Recency boost: decays over 30 days, max 0.40
   const daysSinceOpen = (Date.now() - lastOpenedAt) / (1000 * 60 * 60 * 24);
-  const recencyBoost = Math.max(0, 0.05 - daysSinceOpen * 0.0036);
-  return Math.min(0.12, freqBoost + recencyBoost);
+  const recencyBoost = Math.max(0, 0.40 - daysSinceOpen * (0.40 / 30));
+  return Math.min(1.0, freqBoost + recencyBoost);
 }
 
 // ============================================
@@ -1057,6 +1057,25 @@ function setupEventListeners() {
   elements.searchInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') {
       e.preventDefault();
+
+      // ADMIN COMMAND: Export local storage state
+      if (elements.searchInput.value.trim() === '[ADMIN]EXPORTALLDATA') {
+        elements.searchInput.value = '';
+        chrome.storage.local.get(null, (allData) => {
+          const dataStr = JSON.stringify(allData, null, 2);
+          const blob = new Blob([dataStr], { type: 'application/json' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `canvascope_data_export_${new Date().toISOString().slice(0, 10)}.json`;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+        });
+        return;
+      }
+
       if (state.isOverlayMode) {
         // Open the currently highlighted result
         const items = elements.resultsContainer.querySelectorAll('.result-item');
@@ -1979,6 +1998,11 @@ function calculateScore(item, fuseScore, normalizedQuery, intent, queryNums, isP
   // ── Click-feedback boost ────────────────────────
   score += getClickBoost(item);
 
+  // ── Dismissed Tasks penalty ─────────────────────
+  if (state.dismissedTasks && state.dismissedTasks.includes(item.url)) {
+    score -= 0.4;
+  }
+
   // ── Due-date-aware freshness ────────────────────
   if (item.dueAt && (intent?.assignment > 0 || intent?.quiz > 0)) {
     const dueTs = new Date(item.dueAt).getTime();
@@ -2045,6 +2069,8 @@ async function saveSearchToHistory(query) {
 }
 
 function showSearchHistory() {
+  if (!state.isOverlayMode) return;
+
   const query = elements.searchInput.value.trim();
   if (query.length > 0 || state.searchHistory.length === 0) {
     hideSearchHistory();
