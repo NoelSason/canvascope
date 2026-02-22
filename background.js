@@ -207,6 +207,9 @@ async function resolveScanTarget(tabUrl = null) {
 async function performBackgroundScan(baseUrl, platform = 'canvas') {
     console.log(`[Canvascope] Starting ${platform} background scan...`);
     isScanning = true;
+    const scanStartMs = performance.now();
+    let fastPassDurationMs = 0;
+    let fullPassDurationMs = 0;
 
     // Notify popup that scan is starting
     broadcastMessage({ type: 'scanStarted' });
@@ -227,81 +230,129 @@ async function performBackgroundScan(baseUrl, platform = 'canvas') {
         broadcastMessage({
             type: 'scanProgress',
             progress: 10,
-            status: `Scanning ${courses.length} courses...`
+            status: `Optimizing index for ${courses.length} courses...`
         });
 
-        // Fetch content from each course
+        const scanTimestamp = new Date().toISOString();
+        const sourceMeta = buildSourceMeta(baseUrl, platform);
+
+        const SCAN_COURSE_CONCURRENCY = 3;
         const allContent = [];
-        for (let i = 0; i < courses.length; i++) {
-            const course = courses[i];
 
-            try {
-                const courseContent = platform === 'brightspace'
-                    ? await fetchBrightspaceCourseContent(baseUrl, course)
-                    : await fetchCourseContent(baseUrl, course);
-                allContent.push(...courseContent);
-            } catch (e) {
-                console.warn(`[Canvascope] Error scanning ${course.name}:`, e.message);
-            }
-
-            // Update progress
-            const progress = 10 + Math.round(((i + 1) / courses.length) * 80);
-            broadcastMessage({
-                type: 'scanProgress',
-                progress,
-                status: `Scanned ${i + 1}/${courses.length} courses`
-            });
-
-            // Brief pause to avoid rate limiting
-            await sleep(50);
-        }
-
-        // Deduplicate scanned content before merging
-        // Same item can appear from multiple API endpoints (e.g. /assignments and /modules/items)
-        const dedupedContent = deduplicateCrossType(deduplicateContent(allContent));
-
-        // ── Snapshot-aware merge ──────────────────────────────
-        // Items from courses we just scanned are REPLACED wholesale,
-        // which naturally removes stale / deleted items.
-        // Items from courses we did NOT scan (e.g. another domain) are preserved.
-        const existingData = await chrome.storage.local.get(['indexedContent']);
+        const existingData = await chrome.storage.local.get(['indexedContent', 'starredCourseIds', 'settings']);
         const existingContent = existingData.indexedContent || [];
 
-        const scannedCourseKeys = new Set(
-            dedupedContent.map(getCourseKey).filter(Boolean)
-        );
+        // Helper for progressive yield
+        const incrementalSave = async (newContent) => {
+            if (!newContent || newContent.length === 0) return;
+            allContent.push(...newContent);
 
-        // Preserve items that belong to courses we did NOT scan this run
+            const scannedCourseKeys = new Set(allContent.map(getCourseKey).filter(Boolean));
+            const preservedItems = existingContent.filter(item => {
+                const key = getCourseKey(item);
+                return !key || !scannedCourseKeys.has(key);
+            });
+
+            // Single dedup pass over the stitched array
+            const mergedContent = deduplicateCrossType(deduplicateContent([...preservedItems, ...allContent]));
+
+            await chrome.storage.local.set({ indexedContent: mergedContent });
+        };
+
+        // --- PHASE 1: Fast Pass ---
+        console.log(`[Canvascope] Starting Fast Pass`);
+        let fastCount = 0;
+        const fastStartMs = performance.now();
+        const fastTasks = courses.map(course => async () => {
+            try {
+                let courseContent = [];
+                if (platform === 'brightspace') {
+                    courseContent = await fetchBrightspaceCourseContent(baseUrl, course);
+                } else {
+                    courseContent = await fetchFastEndpoints(baseUrl, course, sourceMeta, scanTimestamp);
+                }
+                fastCount++;
+                const progress = 10 + Math.round((fastCount / courses.length) * 40); // 10% to 50%
+                broadcastMessage({
+                    type: 'scanProgress',
+                    progress,
+                    status: `Fast indexing ${fastCount}/${courses.length} courses`
+                });
+
+                await incrementalSave(courseContent);
+            } catch (e) {
+                console.warn(`[Canvascope] Fast Phase Error on ${course.name}:`, e.message);
+            }
+        });
+
+        // Execute phase 1
+        await processPool(fastTasks, SCAN_COURSE_CONCURRENCY);
+        fastPassDurationMs = performance.now() - fastStartMs;
+
+        // --- PHASE 2: Deep Pass ---
+        if (platform === 'canvas') {
+            console.log(`[Canvascope] Starting Deep Pass`);
+            let deepCount = 0;
+            const deepTasks = courses.map(course => async () => {
+                try {
+                    const courseContent = await fetchHeavyEndpoints(baseUrl, course, sourceMeta, scanTimestamp);
+                    deepCount++;
+                    const progress = 50 + Math.round((deepCount / courses.length) * 40); // 50% to 90%
+                    broadcastMessage({
+                        type: 'scanProgress',
+                        progress,
+                        status: `Deep indexing ${deepCount}/${courses.length} courses`
+                    });
+
+                    await incrementalSave(courseContent);
+                } catch (e) {
+                    console.warn(`[Canvascope] Deep Phase Error on ${course.name}:`, e.message);
+                }
+            });
+            await processPool(deepTasks, SCAN_COURSE_CONCURRENCY);
+        }
+
+        fullPassDurationMs = performance.now() - scanStartMs;
+
+        // --- FINAL MERGE & SAVE ---
+        broadcastMessage({ type: 'scanProgress', progress: 95, status: `Finalizing index...` });
+
+        const scannedCourseKeys = new Set(allContent.map(getCourseKey).filter(Boolean));
         const preservedItems = existingContent.filter(item => {
             const key = getCourseKey(item);
             return !key || !scannedCourseKeys.has(key);
         });
 
-        const mergedContent = [...preservedItems, ...dedupedContent];
+        // Strict final deduplication match
+        const finalDeduped = deduplicateCrossType(deduplicateContent([...preservedItems, ...allContent]));
 
-        // Save to storage
-        // Extract starred course IDs from dashboard items (type 'course' = favorited)
         const starredCourseIds = [...new Set(
-            dedupedContent
+            finalDeduped
                 .filter(item => item.type === 'course' && item.courseId)
                 .map(item => item.courseId)
         )];
 
         await chrome.storage.local.set({
-            indexedContent: mergedContent,
+            indexedContent: finalDeduped,
             starredCourseIds: starredCourseIds.length > 0 ? starredCourseIds : (existingData.starredCourseIds || []),
             settings: {
+                ...(existingData.settings || {}),
                 lastScanTime: Date.now(),
-                version: chrome.runtime.getManifest().version
+                version: chrome.runtime.getManifest().version,
+                scanMetrics: {
+                    lastScanDurationMs: Math.round(fullPassDurationMs),
+                    fastPassDurationMs: Math.round(fastPassDurationMs),
+                    courseCount: courses.length
+                }
             }
         });
 
-        const newItemsDelta = mergedContent.length - existingContent.length;
-        console.log(`[Canvascope] Scan complete! Total: ${mergedContent.length}, Delta: ${newItemsDelta}`);
+        const newItemsDelta = finalDeduped.length - deduplicateCrossType(existingContent).length;
+        console.log(`[Canvascope] Scan complete! Total: ${finalDeduped.length}, Delta: ${newItemsDelta}`);
 
         broadcastMessage({
             type: 'scanComplete',
-            totalItems: mergedContent.length,
+            totalItems: finalDeduped.length,
             newItems: Math.max(0, newItemsDelta)
         });
 
@@ -343,8 +394,71 @@ function parseLinkNext(linkHeader) {
 }
 
 /**
+ * Resilient fetch wrapper with exponential backoff for 429/5xx and network errors.
+ */
+async function fetchWithRetry(url, options = {}, maxRetries = 3) {
+    let attempt = 0;
+    while (attempt < maxRetries) {
+        try {
+            const resp = await fetch(url, options);
+            if (resp.ok) return resp;
+
+            // Handle rate limiting and server errors
+            if (resp.status === 429 || resp.status >= 500) {
+                attempt++;
+                if (attempt >= maxRetries) return resp; // Return the failed resp to let caller handle it
+
+                let delayMs = Math.pow(2, attempt) * 1000 + Math.random() * 500;
+
+                // Respect Retry-After if present
+                const retryAfter = resp.headers.get('Retry-After');
+                if (retryAfter) {
+                    const parsed = parseInt(retryAfter, 10);
+                    if (!isNaN(parsed)) delayMs = parsed * 1000;
+                }
+
+                console.warn(`[Canvascope] HTTP ${resp.status} on ${url}. Retrying in ${Math.round(delayMs)}ms...`);
+                await sleep(delayMs);
+                continue;
+            }
+            // For 401/403/404, fail immediately without retry
+            return resp;
+        } catch (e) {
+            // Network failures (e.g. failed to fetch)
+            attempt++;
+            if (attempt >= maxRetries) throw e;
+            const delayMs = Math.pow(2, attempt) * 1000 + Math.random() * 500;
+            console.warn(`[Canvascope] Network error on ${url}: ${e.message}. Retrying in ${Math.round(delayMs)}ms...`);
+            await sleep(delayMs);
+        }
+    }
+    throw new Error(`Failed to fetch ${url} after ${maxRetries} attempts`);
+}
+
+/**
+ * Helper to process promises with a concurrency limit.
+ */
+async function processPool(tasks, concurrency) {
+    const results = [];
+    const pool = new Set();
+    for (const task of tasks) {
+        const p = task().then(res => {
+            pool.delete(p);
+            return res;
+        });
+        pool.add(p);
+        results.push(p);
+        if (pool.size >= concurrency) {
+            await Promise.race(pool);
+        }
+    }
+    return Promise.allSettled(results);
+}
+
+/**
  * Fetch all pages from a paginated Canvas API endpoint.
  * Follows `Link: rel="next"` headers automatically.
+ * Uses `fetchWithRetry` for resilience.
  *
  * @param {string} url - Initial API URL (should include per_page)
  * @returns {Promise<Array>} All items across all pages
@@ -356,7 +470,7 @@ async function fetchAllPages(url) {
 
     while (nextUrl && page < MAX_PAGES) {
         page++;
-        const resp = await fetch(nextUrl, { credentials: 'include' });
+        const resp = await fetchWithRetry(nextUrl, { credentials: 'include' });
         if (!resp.ok) break;
 
         const items = await resp.json();
@@ -378,7 +492,7 @@ async function fetchCourseList(baseUrl) {
 
     try {
         const data = await fetchAllPages(
-            `${baseUrl}/api/v1/courses?per_page=50&enrollment_state=active`
+            `${baseUrl}/api/v1/courses?per_page=100&enrollment_state=active`
         );
 
         for (const course of data) {
@@ -397,103 +511,90 @@ async function fetchCourseList(baseUrl) {
     return courses;
 }
 
-async function fetchCourseContent(baseUrl, course) {
+async function fetchFastEndpoints(baseUrl, course, sourceMeta, scanTimestamp) {
     const content = [];
-    const sourceMeta = buildSourceMeta(baseUrl, 'canvas');
+    const promises = [
+        // Fetch assignments
+        fetchAllPages(`${baseUrl}/api/v1/courses/${course.id}/assignments?per_page=100`).then(items => {
+            for (const item of items) {
+                content.push({
+                    title: item.name || '',
+                    url: item.html_url || '',
+                    type: 'assignment',
+                    moduleName: 'Assignments',
+                    courseName: course.name,
+                    courseId: course.id,
+                    ...sourceMeta,
+                    scannedAt: scanTimestamp,
+                    dueAt: item.due_at || null,
+                    unlockAt: item.unlock_at || null,
+                    lockAt: item.lock_at || null
+                });
+            }
+        }),
+        // Fetch pages
+        fetchAllPages(`${baseUrl}/api/v1/courses/${course.id}/pages?per_page=100`).then(items => {
+            for (const item of items) {
+                content.push({
+                    title: item.title || '',
+                    url: item.html_url || '',
+                    type: 'page',
+                    moduleName: 'Pages',
+                    courseName: course.name,
+                    courseId: course.id,
+                    ...sourceMeta,
+                    scannedAt: scanTimestamp
+                });
+            }
+        }),
+        // Fetch quizzes
+        fetchAllPages(`${baseUrl}/api/v1/courses/${course.id}/quizzes?per_page=100`).then(items => {
+            for (const item of items) {
+                content.push({
+                    title: item.title || '',
+                    url: item.html_url || '',
+                    type: 'quiz',
+                    moduleName: 'Quizzes',
+                    courseName: course.name,
+                    courseId: course.id,
+                    ...sourceMeta,
+                    scannedAt: scanTimestamp,
+                    dueAt: item.due_at || null,
+                    unlockAt: item.unlock_at || null,
+                    lockAt: item.lock_at || null
+                });
+            }
+        }),
+        // Fetch discussions
+        fetchAllPages(`${baseUrl}/api/v1/courses/${course.id}/discussion_topics?per_page=100`).then(items => {
+            for (const item of items) {
+                const asgn = item.assignment || null;
+                content.push({
+                    title: item.title || '',
+                    url: item.html_url || '',
+                    type: 'discussion',
+                    moduleName: 'Discussions',
+                    courseName: course.name,
+                    courseId: course.id,
+                    ...sourceMeta,
+                    scannedAt: scanTimestamp,
+                    dueAt: asgn?.due_at || null,
+                    unlockAt: asgn?.unlock_at || null,
+                    lockAt: asgn?.lock_at || null
+                });
+            }
+        })
+    ];
 
-    // Fetch assignments (paginated)
-    try {
-        const items = await fetchAllPages(
-            `${baseUrl}/api/v1/courses/${course.id}/assignments?per_page=100`
-        );
-        for (const item of items) {
-            content.push({
-                title: item.name || '',
-                url: item.html_url || '',
-                type: 'assignment',
-                moduleName: 'Assignments',
-                courseName: course.name,
-                courseId: course.id,
-                ...sourceMeta,
-                scannedAt: new Date().toISOString(),
-                dueAt: item.due_at || null,
-                unlockAt: item.unlock_at || null,
-                lockAt: item.lock_at || null
-            });
-        }
-    } catch (e) { }
+    await Promise.allSettled(promises);
+    return content;
+}
 
-    // Fetch folder hierarchy (for file context)
-    const folderMap = new Map(); // folder_id → { name, fullName }
-    try {
-        const folders = await fetchAllPages(
-            `${baseUrl}/api/v1/courses/${course.id}/folders?per_page=100`
-        );
-        for (const f of folders) {
-            // full_name is like "course files/4. Practice Exams/Exam 1"
-            const fullName = (f.full_name || '')
-                .replace(/^course files\/?/i, '') // strip "course files/" prefix
-                .replace(/\//g, ' > ');           // use > as separator
-            folderMap.set(f.id, { name: f.name || '', fullName });
-        }
-    } catch (e) { }
+async function fetchHeavyEndpoints(baseUrl, course, sourceMeta, scanTimestamp) {
+    const content = [];
 
-    // Fetch files (paginated)
-    try {
-        const items = await fetchAllPages(
-            `${baseUrl}/api/v1/courses/${course.id}/files?per_page=100`
-        );
-        for (const item of items) {
-            const ext = (item.display_name || '').split('.').pop()?.toLowerCase();
-            let type = 'file';
-            if (ext === 'pdf') type = 'pdf';
-            if (['ppt', 'pptx'].includes(ext)) type = 'slides';
-            if (['mp4', 'mov', 'webm'].includes(ext)) type = 'video';
-            if (['doc', 'docx'].includes(ext)) type = 'document';
-
-            // Look up folder info
-            const folder = folderMap.get(item.folder_id);
-            const folderName = folder?.name || 'Files';
-            const folderPath = folder?.fullName || '';
-
-            content.push({
-                title: item.display_name || '',
-                url: item.url || `${baseUrl}/courses/${course.id}/files/${item.id}`,
-                type,
-                moduleName: folderName,
-                folderPath,
-                courseName: course.name,
-                courseId: course.id,
-                ...sourceMeta,
-                scannedAt: new Date().toISOString()
-            });
-        }
-    } catch (e) { }
-
-    // Fetch pages (paginated)
-    try {
-        const items = await fetchAllPages(
-            `${baseUrl}/api/v1/courses/${course.id}/pages?per_page=100`
-        );
-        for (const item of items) {
-            content.push({
-                title: item.title || '',
-                url: item.html_url || '',
-                type: 'page',
-                moduleName: 'Pages',
-                courseName: course.name,
-                courseId: course.id,
-                ...sourceMeta,
-                scannedAt: new Date().toISOString()
-            });
-        }
-    } catch (e) { }
-
-    // Fetch modules (paginated)
-    try {
-        const modules = await fetchAllPages(
-            `${baseUrl}/api/v1/courses/${course.id}/modules?per_page=50&include[]=items`
-        );
+    // Modules
+    const fetchModules = fetchAllPages(`${baseUrl}/api/v1/courses/${course.id}/modules?per_page=50&include[]=items`).then(modules => {
         for (const mod of modules) {
             if (mod.items) {
                 for (const item of mod.items) {
@@ -506,74 +607,20 @@ async function fetchCourseContent(baseUrl, course) {
                             courseName: course.name,
                             courseId: course.id,
                             ...sourceMeta,
-                            scannedAt: new Date().toISOString()
+                            scannedAt: scanTimestamp
                         });
                     }
                 }
             }
         }
-    } catch (e) { }
+    });
 
-    // Fetch quizzes (paginated)
-    try {
-        const items = await fetchAllPages(
-            `${baseUrl}/api/v1/courses/${course.id}/quizzes?per_page=100`
-        );
+    // Media Gallery
+    const fetchMedia = fetchAllPages(`${baseUrl}/api/v1/courses/${course.id}/media_objects?per_page=100&sort=title&exclude[]=sources&exclude[]=tracks`).then(items => {
         for (const item of items) {
-            content.push({
-                title: item.title || '',
-                url: item.html_url || '',
-                type: 'quiz',
-                moduleName: 'Quizzes',
-                courseName: course.name,
-                courseId: course.id,
-                ...sourceMeta,
-                scannedAt: new Date().toISOString(),
-                dueAt: item.due_at || null,
-                unlockAt: item.unlock_at || null,
-                lockAt: item.lock_at || null
-            });
-        }
-    } catch (e) { }
-
-    // Fetch discussions (paginated)
-    try {
-        const items = await fetchAllPages(
-            `${baseUrl}/api/v1/courses/${course.id}/discussion_topics?per_page=100`
-        );
-        for (const item of items) {
-            // Discussions linked to an assignment carry due dates
-            const asgn = item.assignment || null;
-            content.push({
-                title: item.title || '',
-                url: item.html_url || '',
-                type: 'discussion',
-                moduleName: 'Discussions',
-                courseName: course.name,
-                courseId: course.id,
-                ...sourceMeta,
-                scannedAt: new Date().toISOString(),
-                dueAt: asgn?.due_at || null,
-                unlockAt: asgn?.unlock_at || null,
-                lockAt: asgn?.lock_at || null
-            });
-        }
-    } catch (e) { }
-
-    // Fetch media objects (paginated)
-    try {
-        const items = await fetchAllPages(
-            `${baseUrl}/api/v1/courses/${course.id}/media_objects?per_page=100&sort=title&exclude[]=sources&exclude[]=tracks`
-        );
-        for (const item of items) {
-            // Determine the best title
             const title = item.user_entered_title || item.title || 'Untitled Video';
-
-            // Skip if title looks like a filename ID (common in automated uploads)
             if (title.match(/^[a-z0-9-]{30,}/)) continue;
-
             const mediaUrl = `${baseUrl}/courses/${course.id}/media_download?entryId=${item.media_id}&redirect=1`;
-
             content.push({
                 title: title,
                 url: mediaUrl,
@@ -582,17 +629,56 @@ async function fetchCourseContent(baseUrl, course) {
                 courseName: course.name,
                 courseId: course.id,
                 ...sourceMeta,
-                scannedAt: new Date().toISOString()
+                scannedAt: scanTimestamp
             });
         }
-    } catch (e) {
-        console.warn(`[Canvascope] Error fetching media for course ${course.id}:`, e);
-    }
+    });
 
+    // Folders -> Files (Sequential dependency)
+    const fetchFiles = (async () => {
+        const folderMap = new Map();
+        try {
+            const folders = await fetchAllPages(`${baseUrl}/api/v1/courses/${course.id}/folders?per_page=100`);
+            for (const f of folders) {
+                const fullName = (f.full_name || '')
+                    .replace(/^course files\/?/i, '')
+                    .replace(/\//g, ' > ');
+                folderMap.set(f.id, { name: f.name || '', fullName });
+            }
+        } catch (e) { }
+
+        try {
+            const items = await fetchAllPages(`${baseUrl}/api/v1/courses/${course.id}/files?per_page=100`);
+            for (const item of items) {
+                const ext = (item.display_name || '').split('.').pop()?.toLowerCase();
+                let type = 'file';
+                if (ext === 'pdf') type = 'pdf';
+                if (['ppt', 'pptx'].includes(ext)) type = 'slides';
+                if (['mp4', 'mov', 'webm'].includes(ext)) type = 'video';
+                if (['doc', 'docx'].includes(ext)) type = 'document';
+
+                const folder = folderMap.get(item.folder_id);
+                const folderName = folder?.name || 'Files';
+                const folderPath = folder?.fullName || '';
+
+                content.push({
+                    title: item.display_name || '',
+                    url: item.url || `${baseUrl}/courses/${course.id}/files/${item.id}`,
+                    type,
+                    moduleName: folderName,
+                    folderPath,
+                    courseName: course.name,
+                    courseId: course.id,
+                    ...sourceMeta,
+                    scannedAt: scanTimestamp
+                });
+            }
+        } catch (e) { }
+    })();
+
+    await Promise.allSettled([fetchModules, fetchMedia, fetchFiles]);
     return content;
 }
-
-// ============================================
 // BRIGHTSPACE API FUNCTIONS
 // ============================================
 
@@ -1204,9 +1290,9 @@ function deduplicateContent(content) {
 }
 
 /**
- * Second-pass dedup: merge items with identical title + course but different types
+ * Second-pass dedup: merge items with identical core properties but different types
  * (e.g. Canvas creates both /assignments/X and /quizzes/Y for the same quiz).
- * Prefers assignment > quiz > discussion, merges due-date fields.
+ * Uses canonical identity.
  */
 function deduplicateCrossType(content) {
     const TYPE_PRIORITY = { assignment: 0, quiz: 1, discussion: 2 };
@@ -1214,7 +1300,10 @@ function deduplicateCrossType(content) {
 
     for (const item of content) {
         if (!item || !item.title) continue;
+
+        // Exact mapping to match popup.js logic
         const key = `${(item.title || '').trim().toLowerCase()}|${(item.courseName || '').trim().toLowerCase()}`;
+
         if (!groups.has(key)) {
             groups.set(key, item);
         } else {
@@ -1227,7 +1316,7 @@ function deduplicateCrossType(content) {
                 winner = item;
                 groups.set(key, item);
             }
-            // Merge due-date fields
+
             const loser = winner === item ? existing : item;
             if (!winner.dueAt && loser.dueAt) winner.dueAt = loser.dueAt;
             if (!winner.unlockAt && loser.unlockAt) winner.unlockAt = loser.unlockAt;
@@ -1495,6 +1584,30 @@ async function syncIndexedContentToSupabase() {
     return { success: true, synced: totalSynced, total: items.length };
 }
 
+/**
+ * Wipe all synced_items for the authenticated user in Supabase.
+ * Triggered when the user clears their local data.
+ */
+async function clearIndexedContentFromSupabase() {
+    const { data: { session } } = await supabaseClient.auth.getSession();
+    if (!session) return { success: false, error: 'Not signed in' };
+
+    const userId = session.user.id;
+    console.log(`[Canvascope Sync] Clearing synced_items for user ${userId}...`);
+
+    const { error: deleteError } = await supabaseClient
+        .from('synced_items')
+        .delete()
+        .eq('user_id', userId);
+
+    if (deleteError) {
+        console.error('[Canvascope Sync] Error clearing items from Supabase:', deleteError);
+        return { success: false, error: deleteError.message };
+    }
+
+    return { success: true };
+}
+
 // ============================================
 // MESSAGE PASSING (Popup/Content Script to Background)
 // ============================================
@@ -1520,6 +1633,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                 triggerBackgroundScan();
                 sendResponse({ started: true });
             });
+        });
+        return true;
+    }
+
+    if (message.action === 'clearSupabaseData') {
+        clearIndexedContentFromSupabase().then(res => {
+            sendResponse(res);
+        }).catch(err => {
+            sendResponse({ success: false, error: err.message });
         });
         return true;
     }

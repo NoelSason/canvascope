@@ -144,7 +144,7 @@ function computeNumericAlignment(queryNums, titleText) {
 const STOP_TOKENS = new Set(['a', 'an', 'the', 'in', 'on', 'of', 'to', 'for', 'and', 'or', 'is']);
 
 /**
- * Compute fraction of query tokens present in searchable text.
+ * Compute fraction of query tokens present in searchable text using boundaries.
  * Checks title and optional context (folderPath, moduleName).
  * Ignores stop words and single-char tokens.
  */
@@ -154,7 +154,8 @@ function computeTokenCoverage(normalizedQuery, titleText, contextText) {
   const combined = ((titleText || '') + ' ' + (contextText || '')).toLowerCase();
   let found = 0;
   for (const t of qTokens) {
-    if (combined.includes(t)) found++;
+    const escaped = t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    if (new RegExp(`\\b${escaped}\\b`, 'i').test(combined)) found++;
   }
   return found / qTokens.length;
 }
@@ -209,7 +210,7 @@ function getClickBoost(item) {
 // ============================================
 
 let activeCourseContext = null; // { courseId, courseName }
-let starredCourseIds = []; // course IDs from the user's Dashboard (favorited courses)
+let starredCourseIds = new Set(); // course IDs from the user's Dashboard (favorited courses)
 
 async function detectActiveCourseContext() {
   try {
@@ -238,10 +239,10 @@ function getActiveCourseBoost(item) {
  * If the user has no starred courses, returns 0 (no effect).
  */
 function getStarredCourseBoost(item) {
-  if (!starredCourseIds || starredCourseIds.length === 0) return 0;
+  if (starredCourseIds.size === 0) return 0;
   if (!item.courseId) return 0;
   const cid = String(item.courseId);
-  if (starredCourseIds.map(String).includes(cid)) return 0.20;
+  if (starredCourseIds.has(cid)) return 0.20;
   return -0.08; // mild penalty for non-starred courses
 }
 
@@ -291,11 +292,16 @@ function bucketTasks(items, now, lookaheadDays = 7) {
       if (ic !== fc && !ic.includes(fc)) continue;
     }
 
+    // Skip tasks dismissed by the user
+    if (state.dismissedTasks.includes(getCanonicalId(item))) continue;
+
     const dueTs = parseDueTs(item);
     if (dueTs === 0) {
       undated.push(item);
     } else if (dueTs < startOfDay.getTime()) {
-      overdue.push(item);
+      if (dueTs >= startOfDay.getTime() - 30 * 24 * 60 * 60 * 1000) {
+        overdue.push(item);
+      }
     } else if (dueTs <= endOfDay.getTime()) {
       today.push(item);
     } else if (dueTs <= endLookahead) {
@@ -416,10 +422,26 @@ function renderDuePlanner() {
       chip.textContent = formatDueLabel(item);
       right.appendChild(chip);
 
+      const dismissBtn = document.createElement('button');
+      dismissBtn.className = 'dismiss-task-btn';
+      dismissBtn.innerHTML = '&times;';
+      dismissBtn.title = "Dismiss task";
+      dismissBtn.addEventListener('click', async (e) => {
+        e.stopPropagation(); // prevent opening result
+
+        const id = getCanonicalId(item);
+        if (!state.dismissedTasks.includes(id)) {
+          state.dismissedTasks.push(id);
+          await chrome.storage.local.set({ dismissedTasks: state.dismissedTasks });
+          renderDuePlanner(); // re-render UI live
+        }
+      });
+      right.appendChild(dismissBtn);
+
       row.appendChild(left);
       row.appendChild(right);
 
-      row.addEventListener('click', () => openResult(item));
+      row.addEventListener('click', (e) => openResult(item, e));
       sectionEl.appendChild(row);
     }
 
@@ -586,7 +608,6 @@ function detectCourseScope(query) {
   const normQuery = normalizeText(query);
   if (!normQuery || normQuery.length < 3) return null;
 
-  // Build course candidates: full name + short form (without semester)
   const candidates = [];
   const seen = new Set();
 
@@ -608,10 +629,13 @@ function detectCourseScope(query) {
     }
   }
 
-  // Sort longest first for greedy matching
-  candidates.sort((a, b) => b.norm.length - a.norm.length);
+  // Cache candidates arrays to avoid O(N) generation on every keystroke
+  state._courseCandidatesCache = candidates.sort((a, b) => b.norm.length - a.norm.length);
+  state._courseCandidatesVersion = state.indexedContent.length;
 
-  for (const { norm, original } of candidates) {
+  const finalCandidates = state._courseCandidatesCache;
+
+  for (const { norm, original } of finalCandidates) {
     if (normQuery.startsWith(norm + ' ') && normQuery.length > norm.length + 1) {
       const remaining = normQuery.slice(norm.length + 1).trim();
       if (remaining.length >= 1) {
@@ -621,6 +645,71 @@ function detectCourseScope(query) {
   }
 
   return null;
+}
+
+// ============================================
+// UI STATE MACHINE
+// ============================================
+
+const UI_STATE = {
+  BOOT_LOADING: 'boot_loading',
+  SCAN_SYNCING: 'scan_syncing',
+  READY: 'ready',
+  SEARCHING: 'searching',
+  ERROR: 'error'
+};
+
+let currentUiState = UI_STATE.BOOT_LOADING;
+
+function setUiState(newState, message = '') {
+  currentUiState = newState;
+
+  // Hide all dynamic states first
+  elements.loadingShell.classList.add('hidden');
+  elements.emptyState.classList.add('hidden');
+  elements.resultsContainer.classList.remove('hidden');
+  elements.scanProgress.classList.add('hidden');
+
+  if (elements.duePlanner && !state.isOverlayMode) {
+    elements.duePlanner.classList.add('hidden');
+  }
+
+  switch (newState) {
+    case UI_STATE.BOOT_LOADING:
+      if (!state.isOverlayMode) {
+        elements.loadingShell.classList.remove('hidden');
+      }
+      elements.statusText.textContent = 'Loading Canvascope...';
+      break;
+
+    case UI_STATE.SCAN_SYNCING:
+      if (state.indexedContent && state.indexedContent.length > 0 && !(elements.searchInput && elements.searchInput.value)) {
+        showEmptyState();
+      } else if (!state.indexedContent || state.indexedContent.length === 0) {
+        if (!state.isOverlayMode) {
+          elements.loadingShell.classList.remove('hidden');
+        }
+      }
+      elements.statusText.textContent = message || 'Syncing content...';
+      elements.scanProgress.classList.remove('hidden');
+      if (elements.scanProgress.value === 100) elements.scanProgress.value = 0;
+      break;
+
+    case UI_STATE.READY:
+      elements.statusText.textContent = 'Search your course content';
+      showEmptyState(); // Handles due planner vs empty icon
+      break;
+
+    case UI_STATE.SEARCHING:
+      elements.statusText.textContent = 'Search your course content';
+      // Results container handles its own display
+      break;
+
+    case UI_STATE.ERROR:
+      elements.statusText.textContent = message || 'Error';
+      showEmptyState();
+      break;
+  }
 }
 
 // ============================================
@@ -653,7 +742,10 @@ let state = {
   lastResultCount: 0,
   recentlyOpened: [],
   isSignedIn: false,
-  user: null
+  user: null,
+  _courseCandidatesCache: null,
+  _courseCandidatesVersion: 0,
+  dismissedTasks: []
 };
 
 // ============================================
@@ -661,6 +753,28 @@ let state = {
 // ============================================
 
 document.addEventListener('DOMContentLoaded', async () => {
+  // Check if we're in overlay mode
+  const urlParams = new URLSearchParams(window.location.search);
+  state.isOverlayMode = urlParams.get('mode') === 'overlay';
+
+  // Pre-load elements into cache
+  elements.searchInput = document.getElementById('search-input');
+  elements.clearSearchBtn = document.getElementById('clear-search');
+  elements.statusText = document.getElementById('status-text');
+  elements.resultsContainer = document.getElementById('results-container');
+  elements.emptyState = document.getElementById('empty-state');
+  elements.syncStatus = document.getElementById('sync-status');
+  elements.syncIcon = document.getElementById('sync-icon');
+  elements.syncText = document.getElementById('sync-text');
+  elements.scanProgress = document.getElementById('scan-progress');
+  elements.refreshBtn = document.getElementById('refresh-btn');
+  elements.settingsBtn = document.getElementById('settings-btn');
+  elements.loadingShell = document.getElementById('loading-shell');
+  elements.searchHistory = document.getElementById('search-history');
+  elements.duePlanner = document.getElementById('due-planner');
+
+  // Start in boot loading state
+  setUiState(UI_STATE.BOOT_LOADING);
   console.log('[Canvascope] Popup opened');
   initializeElements();
   setupEventListeners();
@@ -1319,6 +1433,9 @@ function handleBackgroundMessage(message) {
 
 function updateSyncStatus(status) {
   if (status.isScanning) {
+    if (elements.searchInput && elements.searchInput.value.trim() === '') {
+      setUiState(UI_STATE.SCAN_SYNCING, 'Updating course index...');
+    }
     showScanningStatus();
   } else {
     const lastScan = status.lastScan;
@@ -1332,17 +1449,39 @@ function updateSyncStatus(status) {
 }
 
 function showScanningStatus() {
+  state.isScanning = true;
   elements.syncIcon.textContent = '⟳';
   elements.syncIcon.classList.add('spinning');
   elements.syncText.textContent = 'Syncing...';
   elements.syncStatus.className = 'sync-status syncing';
+
+  updateStats(); // Force stats UI to reflect scanning state
+
+  if (elements.searchInput && elements.searchInput.value.trim() === '') {
+    setUiState(UI_STATE.SCAN_SYNCING, 'Updating course index...');
+  }
 }
 
 function showSyncedStatus(text = 'Synced') {
+  state.isScanning = false;
   elements.syncIcon.textContent = '✓';
   elements.syncIcon.classList.remove('spinning');
   elements.syncText.textContent = text;
   elements.syncStatus.className = 'sync-status synced';
+
+  if (elements.scanProgress) {
+    elements.scanProgress.classList.add('hidden');
+    elements.scanProgress.value = 0;
+  }
+
+  // Return to ready state if we were showing the scan loader
+  if (currentUiState === UI_STATE.SCAN_SYNCING || currentUiState === UI_STATE.BOOT_LOADING) {
+    setTimeout(() => {
+      if (!state.isScanning && elements.searchInput.value.trim() === '') {
+        setUiState(UI_STATE.READY);
+      }
+    }, 300); // 300ms minimum visible delay for flicker prevention
+  }
 }
 
 function showErrorStatus(text = 'Sync failed') {
@@ -1350,10 +1489,25 @@ function showErrorStatus(text = 'Sync failed') {
   elements.syncIcon.classList.remove('spinning');
   elements.syncText.textContent = text;
   elements.syncStatus.className = 'sync-status error';
+
+  if (elements.scanProgress) elements.scanProgress.classList.add('hidden');
+
+  if (currentUiState === UI_STATE.SCAN_SYNCING || currentUiState === UI_STATE.BOOT_LOADING) {
+    setUiState(UI_STATE.ERROR, text);
+  }
 }
 
 function updateScanProgress(progress, status) {
-  elements.syncText.textContent = status || `Syncing... ${progress}%`;
+  elements.syncText.textContent = status || `Syncing... ${Math.round(progress)}%`;
+
+  if (elements.scanProgress) {
+    elements.scanProgress.classList.remove('hidden');
+    elements.scanProgress.value = progress;
+  }
+
+  if (currentUiState === UI_STATE.SCAN_SYNCING) {
+    elements.statusText.textContent = status || `Indexing courses...`;
+  }
 }
 
 function getTimeAgo(timestamp) {
@@ -1488,7 +1642,8 @@ function handleSearchInput(event) {
   }
 
   if (query.length === 0) {
-    showEmptyState();
+    setUiState(state.isScanning ? UI_STATE.SCAN_SYNCING : UI_STATE.READY);
+    showEmptyState(); // Ensure the planner reappears immediately
     if (state.isOverlayMode) showOverlayRecents();
     return;
   }
@@ -1597,6 +1752,54 @@ function performSearch(query) {
     }
   }
 
+  // ── Lexical Fallback pass & RRF Fusion ─────────────
+  // If we have a lot of items, hybrid retrieval using exact literal matching
+  // helps with hard token boundaries.
+  const lexicalResults = [];
+  const lexScores = new Map();
+  const qTokens = normalizedQuery.toLowerCase().split(/\s+/).filter(t => t.length > 1);
+  if (qTokens.length > 0) {
+    for (const item of state.filteredContent) {
+      if (prePassUrls.has(item.url)) continue;
+      const searchableText = `${item.searchTitleNormalized} ${item.folderPath || ''} ${item.moduleName || ''}`.toLowerCase();
+      let matchedTokens = 0;
+      for (const t of qTokens) {
+        if (searchableText.includes(t)) matchedTokens++;
+      }
+      if (matchedTokens === qTokens.length) { // AND boolean query basically
+        lexicalResults.push({ item, score: 0.2, prePass: false });
+      }
+    }
+
+    // Sort lexical results by length of title to prefer shorter matching titles (Occam's razor)
+    lexicalResults.sort((a, b) => (a.item.searchTitleNormalized?.length || 0) - (b.item.searchTitleNormalized?.length || 0));
+
+    // RRF Fusion: Fuse vs Lexical
+    const RRF_K = 60;
+    const rrfScores = new Map();
+
+    // Fuse Ranks
+    fuseResults.forEach((r, i) => {
+      rrfScores.set(r.item.url, (rrfScores.get(r.item.url) || 0) + (1 / (RRF_K + i + 1)));
+    });
+
+    // Lexical Ranks
+    lexicalResults.forEach((r, i) => {
+      rrfScores.set(r.item.url, (rrfScores.get(r.item.url) || 0) + (1 / (RRF_K + i + 1)));
+    });
+
+    // Re-assign unified scores to the mapped fuse results before they enter standard ranker
+    for (const r of results) {
+      if (r.prePass) continue; // let exact prefix match sail through
+      const rrfMatchScore = rrfScores.get(r.item.url);
+      if (rrfMatchScore !== undefined) {
+        // scale RRF (max ~0.033) to behave somewhat like fuse score (0.0 to 1.0)
+        // roughly RRF * 30 will map top rank to ~0.9
+        r.score = Math.max(0, 1.0 - (rrfMatchScore * 20));
+      }
+    }
+  }
+
   // If course-scoped, ensure items from the target course are in the pool
   if (courseScope) {
     const prefix = courseScope.coursePrefix;
@@ -1641,6 +1844,11 @@ function performSearch(query) {
   }
 
   const searchTimeMs = Math.round(performance.now() - searchStart);
+
+  // Transition to searching state
+  if (currentUiState !== UI_STATE.SEARCHING) {
+    setUiState(UI_STATE.SEARCHING);
+  }
 
   if (results.length === 0) {
     showNoResults(`No results for "${query}"`);
@@ -1728,7 +1936,7 @@ function calculateScore(item, fuseScore, normalizedQuery, intent, queryNums, isP
     const titleText = (item.searchTitleNormalized || normalizeText(item.title || '')).toLowerCase();
     const { aligned, mismatched } = computeNumericAlignment(queryNums, titleText);
     if (aligned > 0) score += 0.10 * (aligned / queryNums.length);
-    if (mismatched > 0) score -= 0.18 * (mismatched / queryNums.length);
+    if (mismatched > 0) score -= 0.50 * (mismatched / queryNums.length); // Severe penalty for mismatch
   }
 
   // ── Token coverage ──────────────────────────────
@@ -1863,9 +2071,9 @@ function showSearchHistory() {
     elements.searchHistory.appendChild(historyItem);
   });
 
-  // Hide empty state, show history in its place
-  const emptyState = document.getElementById('empty-state');
-  if (emptyState) emptyState.style.display = 'none';
+  // Hide empty state and planner, show history in its place
+  if (elements.emptyState) elements.emptyState.classList.add('hidden');
+  if (elements.duePlanner) elements.duePlanner.classList.add('hidden');
 
   elements.searchHistory.classList.remove('hidden');
 }
@@ -1873,10 +2081,10 @@ function showSearchHistory() {
 function hideSearchHistory() {
   elements.searchHistory.classList.add('hidden');
 
-  // Restore empty state if no search results are showing
-  const emptyState = document.getElementById('empty-state');
-  if (emptyState && elements.searchInput.value.trim() === '') {
-    emptyState.style.display = '';
+  // Restore empty state / planner if no search results are showing
+  if (elements.searchInput && elements.searchInput.value.trim() === '') {
+    // Force transition to reset planner visibility properly
+    setUiState(state.isScanning ? UI_STATE.SCAN_SYNCING : UI_STATE.READY);
   }
 }
 
@@ -1979,9 +2187,9 @@ function displayResults(results) {
       resultElement.appendChild(metaElement);
     }
 
-    resultElement.addEventListener('click', () => openResult(item));
+    resultElement.addEventListener('click', (e) => openResult(item, e));
     resultElement.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') openResult(item);
+      if (e.key === 'Enter') openResult(item, e);
     });
 
     elements.resultsContainer.appendChild(resultElement);
@@ -2023,20 +2231,25 @@ function updateOverlayFooter(count, timeMs) {
   }
 }
 
-function openResult(item) {
+function openResult(item, event) {
   if (item.url && isValidLmsUrl(item.url)) {
     // Save to recently opened + update click feedback
     saveToRecents(item);
     updateClickFeedback(item);
 
-    chrome.tabs.update({ url: item.url });
-
-    // If in overlay mode, tell parent to close (use strict origin)
-    if (window.self !== window.top) {
-      const extensionOrigin = new URL(chrome.runtime.getURL('')).origin;
-      window.parent.postMessage({ type: 'CLOSE_OVERLAY' }, '*');
+    const isNewTab = event && (event.metaKey || event.ctrlKey);
+    if (isNewTab) {
+      chrome.tabs.create({ url: item.url, active: false });
     } else {
-      window.close(); // Close popup after navigation
+      chrome.tabs.update({ url: item.url });
+
+      // If in overlay mode, tell parent to close (use strict origin)
+      if (window.self !== window.top) {
+        const extensionOrigin = new URL(chrome.runtime.getURL('')).origin;
+        window.parent.postMessage({ type: 'CLOSE_OVERLAY' }, '*');
+      } else {
+        window.close(); // Close popup after navigation
+      }
     }
   }
 }
@@ -2124,9 +2337,9 @@ function showOverlayRecents() {
     typeBadge.textContent = formatOverlayType(item.type || 'link');
     el.appendChild(typeBadge);
 
-    el.addEventListener('click', () => openResult(item));
+    el.addEventListener('click', (e) => openResult(item, e));
     el.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') openResult(item);
+      if (e.key === 'Enter') openResult(item, e);
     });
 
     recentsSection.appendChild(el);
@@ -2179,22 +2392,43 @@ function isValidCanvasUrl(url) {
 function clearSearch() {
   elements.searchInput.value = '';
   elements.clearSearchBtn.classList.remove('visible');
-  showEmptyState();
+
+  if (!state.isScanning) {
+    setUiState(UI_STATE.READY);
+  } else {
+    setUiState(UI_STATE.SCAN_SYNCING);
+  }
+
   elements.searchInput.focus();
 }
 
 function showEmptyState() {
+  // Handled by UI State machine, but we keep this function for backwards compatibility
+  // and layout configuration when empty state IS active.
   clearResultsContainer();
-  elements.emptyState.classList.remove('hidden');
+
+  const query = elements.searchInput.value.trim();
+
+  // Show empty state text only if there is no query
+  if (query.length === 0 && (currentUiState === UI_STATE.READY || currentUiState === UI_STATE.ERROR || currentUiState === UI_STATE.SCAN_SYNCING)) {
+    elements.emptyState.classList.remove('hidden');
+  } else {
+    elements.emptyState.classList.add('hidden');
+  }
+
   updateOverlayFooter(0, 0);
 
   // Show Due Planner when search is empty (popup mode only)
   if (elements.duePlanner && !state.isOverlayMode) {
-    renderDuePlanner();
-    const hasTasks = elements.duePlanner.innerHTML.trim().length > 0;
-    elements.duePlanner.classList.toggle('hidden', !hasTasks);
-    if (hasTasks) {
-      elements.emptyState.classList.add('hidden');
+    if (query.length === 0 && (currentUiState === UI_STATE.READY || currentUiState === UI_STATE.SCAN_SYNCING)) {
+      renderDuePlanner();
+      const hasTasks = elements.duePlanner.innerHTML.trim().length > 0;
+      elements.duePlanner.classList.toggle('hidden', !hasTasks);
+      if (hasTasks) {
+        elements.emptyState.classList.add('hidden');
+      }
+    } else {
+      elements.duePlanner.classList.add('hidden');
     }
   }
 }
@@ -2212,7 +2446,7 @@ function showNoResults(message) {
 function clearResultsContainer() {
   const children = Array.from(elements.resultsContainer.children);
   children.forEach(child => {
-    if (child.id !== 'empty-state' && child.id !== 'due-planner') {
+    if (child.id !== 'empty-state' && child.id !== 'due-planner' && child.id !== 'overlay-recents') {
       child.remove();
     }
   });
@@ -2224,15 +2458,33 @@ function clearResultsContainer() {
 
 async function loadContent() {
   try {
-    const result = await chrome.storage.local.get(['indexedContent', 'starredCourseIds']);
+    const result = await chrome.storage.local.get(['indexedContent', 'starredCourseIds', 'dismissedTasks']);
     let content = result.indexedContent || [];
 
     // Deduplicate by normalizing URLs (strip module_item_id)
     content = deduplicateCrossType(deduplicateContent(content));
 
     state.indexedContent = content;
-    starredCourseIds = result.starredCourseIds || [];
-    console.log(`[Canvascope] Loaded ${state.indexedContent.length} items (after dedup), ${starredCourseIds.length} starred courses`);
+    state.dismissedTasks = result.dismissedTasks || [];
+    const rawStarred = result.starredCourseIds || [];
+    starredCourseIds = new Set(rawStarred.map(String));
+
+    // Invalidate course candidates
+    state._courseCandidatesCache = null;
+    state._courseCandidatesVersion = 0;
+
+    console.log(`[Canvascope] Loaded ${state.indexedContent.length} items (after dedup), ${starredCourseIds.size} starred courses`);
+
+    // Initialize Fuse in place now that data is loaded
+    initializeFuse();
+
+    // Set UI to Ready mode after a small flicker-prevention delay
+    setTimeout(() => {
+      if (currentUiState === UI_STATE.BOOT_LOADING) {
+        setUiState(UI_STATE.READY);
+      }
+    }, 150);
+
   } catch (error) {
     console.error('[Canvascope] Error loading content:', error);
     state.indexedContent = [];
@@ -2394,6 +2646,16 @@ async function handleClearData() {
     updateUI();
     showEmptyState();
     clearSearch();
+
+    // Simultaneously wipe remote items in Supabase if logged in
+    chrome.runtime.sendMessage({ action: 'clearSupabaseData' }, (response) => {
+      if (response && response.error) {
+        console.warn('[Canvascope] Supabase clear fell back:', response.error);
+      } else {
+        console.log('[Canvascope] Supabase data successfully cleared');
+      }
+    });
+
     showSyncedStatus('Data cleared');
   } catch (error) {
     console.error('[Canvascope] Error clearing data:', error);
@@ -2409,16 +2671,25 @@ function updateUI() {
 }
 
 function updateStats() {
-  const count = state.indexedContent.length;
+  const count = state.indexedContent ? state.indexedContent.length : 0;
 
   if (count === 0) {
     elements.statsBtn.classList.add('empty');
-    elements.statsText.textContent = 'No content indexed';
-    elements.statsHint.textContent = 'Open Canvas or Brightspace to sync';
+    if (state.isScanning) {
+      elements.statsText.textContent = 'Syncing in progress...';
+      elements.statsHint.textContent = 'Please wait while we index your courses';
+      // Disable click to browse during early sync
+      elements.statsBtn.style.pointerEvents = 'none';
+    } else {
+      elements.statsText.textContent = 'No content indexed';
+      elements.statsHint.textContent = 'Open Canvas or Brightspace to sync';
+      elements.statsBtn.style.pointerEvents = 'none';
+    }
   } else {
     elements.statsBtn.classList.remove('empty');
     elements.statsText.textContent = `${count} items`;
     elements.statsHint.textContent = 'Click to browse';
+    elements.statsBtn.style.pointerEvents = 'auto';
   }
 }
 
