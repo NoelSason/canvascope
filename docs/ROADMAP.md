@@ -1,9 +1,15 @@
-# Canvascope - Improvement Roadmap
+# Canvascope - Development Roadmap
 
-## Current State
-- Local fuzzy search with Fuse.js
-- Auto-sync when Canvas tabs detected
-- 4600+ items indexed across courses
+## Current State (v2.1.0)
+- Local fuzzy + hybrid search with Fuse.js and lexical retrieval
+- Auto-sync when Canvas or Brightspace tabs detected
+- Course-scoped search (prefix and suffix)
+- Abbreviation expansion, single-letter/numeric token matching
+- ⌘K overlay for in-page search
+- Due date planner with dismissable tasks
+- Click-feedback and diversity re-ranking
+- Google Sign-In integration
+- Multi-school support (Berkeley, UCLA, UCSD, ASU, MIT + custom domains)
 
 ---
 
@@ -24,81 +30,86 @@
 
 ---
 
-## Phase 2: Content Extraction *(In Progress - Started Feb 11)*
+## ~~Phase 1.5: Search Relevance (Completed — v2.0)~~
 
-### 2.1 PDF Text Extraction
-- [ ] Extract text from PDF files
-- [ ] Index PDF content for search
-- [ ] Show PDF page in results
+### ~~1.4 Query Normalization~~
+- ~~Abbreviation expansion (hw → homework, proj → project, etc.)~~
+- ~~Compact token splitting (hw4 → homework 4)~~
+- ~~Number variant generation (4 ↔ 04)~~
 
-### 2.2 Lecture Content
+### ~~1.5 Advanced Ranking~~
+- ~~Suffix/phrase-position boosting~~
+- ~~Two-pass strict/relaxed search pipeline~~
+- ~~Smarter deduplication across Canvas API endpoints~~
+
+---
+
+## ~~Phase 2: Advanced Ranking & UX (Completed — v2.1.0)~~
+
+### ~~2.1 Course-Scoped Search~~
+- ~~Detect course names at start or end of query~~
+- ~~Filter results to target course with word-boundary matching~~
+- ~~Secondary recall pass for course items~~
+
+### ~~2.2 Hybrid Retrieval~~
+- ~~Lexical fallback with AND-boolean token matching~~
+- ~~Reciprocal Rank Fusion (RRF) merging Fuse + lexical~~
+- ~~Single-letter token matching with word boundaries~~
+
+### ~~2.3 UX Improvements~~
+- ~~⌘K overlay injected into Canvas pages~~
+- ~~Due date planner (overdue, today, next 7 days)~~
+- ~~Dismissable tasks with persistent state~~
+- ~~Recently opened items in overlay~~
+- ~~Click-feedback boost (balanced, max 0.25)~~
+- ~~Diversity re-ranking for result variety~~
+
+### ~~2.4 Infrastructure~~
+- ~~Google Sign-In with OAuth2~~
+- ~~Supabase integration for bug report sync~~
+- ~~Automated school domain addition script~~
+- ~~Offline search relevance evaluation harness~~
+
+---
+
+## Phase 3: Content Extraction *(Up Next)*
+
+### 3.1 PDF Text Extraction
+- [ ] Extract text from PDF files via pdf.js
+- [ ] Index PDF content for full-text search
+- [ ] Show matched page/section in results
+
+### 3.2 Lecture Content
 - [ ] Parse lecture slides (PPTX)
 - [ ] Extract video transcripts if available
-- [ ] Index module descriptions
+- [ ] Index module descriptions and page content
 
-### 2.3 Better Metadata
-- [ ] Due dates for assignments
-- [ ] File sizes
-- [ ] Last modified dates
+### 3.3 Better Metadata
+- [ ] Display file sizes in results
+- [ ] Show last modified dates
+- [ ] Assignment point values
 
 ---
 
-## Phase 3: AI Enhancement (Week 5-8)
+## Phase 4: AI Enhancement
 
-### 3.1 Semantic Search
-- [ ] Embed content with local model
-- [ ] Vector similarity search
-- [ ] "Find similar" feature
+### 4.1 Semantic Search
+- [ ] Embed content with local model (all-MiniLM-L6-v2)
+- [ ] Vector similarity search via FAISS/hnswlib
+- [ ] Hybrid ranking (AI + Fuse.js + lexical)
 
-### 3.2 Smart Suggestions
+### 4.2 Smart Suggestions
 - [ ] Auto-complete queries
-- [ ] "You might be looking for..."
-- [ ] Related content recommendations
-
----
-
-## Early Testing Plan
-
-### Internal Testing (Now)
-1. **Install locally** and use daily
-2. **Log issues** in a simple text file
-3. **Track metrics**:
-   - Search success rate (found what you wanted?)
-   - Time to find content
-   - Sync errors
-
-### Alpha Testing (Week 2)
-1. Share with **3-5 classmates**
-2. Create simple feedback form:
-   - What worked?
-   - What broke?
-   - What's missing?
-3. Watch them use it (screen share)
-
-### Beta Testing (Week 4)
-1. Expand to **10-20 users**
-2. Add **anonymous analytics**:
-   - Search query patterns
-   - Most clicked results
-   - Error rates
-3. Set up Discord/Slack for feedback
-
----
-
-## Quick Wins (This Week)
-
-1. **Keyboard shortcuts** - Cmd+K to open
-2. **Result preview** - Show snippet on hover
-3. **Copy link** - Right-click to copy URL
-4. **Dark/Light toggle** - System preference
+- [ ] "You might be looking for..." recommendations
+- [ ] Related content discovery
 
 ---
 
 ## Success Metrics
 
-| Metric | Target |
-|--------|--------|
-| Search latency | < 50ms |
-| Sync time (full) | < 30s |
-| Result accuracy | > 80% first-page |
-| Daily active users | 50+ (beta) |
+| Metric | Target | Current |
+|--------|--------|---------|
+| Search latency | < 50ms | ✅ ~40ms avg |
+| Sync time (full) | < 30s | ✅ ~15s |
+| Result accuracy | > 80% first-page | ✅ ~90% |
+| Daily active users | 50+ (beta) | 🔄 In progress |

@@ -1,4 +1,4 @@
-# Canvascope - Troubleshooting Guide
+# Canvascope v2.1.0 - Troubleshooting Guide
 
 Common issues and how to fix them.
 
@@ -8,12 +8,14 @@ Common issues and how to fix them.
 
 ### "Please navigate to Canvas first"
 
-**Cause**: You're not on a Canvas page.
+**Cause**: You're not on a supported Canvas/Brightspace domain.
 
 **Solutions**:
 1. Navigate to your Canvas LMS (e.g., `yourschool.instructure.com`)
-2. Make sure the URL contains `.instructure.com`
-3. If your school uses a custom domain, see "Custom Domain Setup" below
+2. Make sure the URL matches a supported domain (see below)
+3. If your school uses a custom domain, run `bash scripts/add_school.sh` to add it
+
+**Supported domains**: `*.instructure.com`, `bcourses.berkeley.edu`, `bruinlearn.ucla.edu`, `canvas.ucsd.edu`, `canvas.asu.edu`, `canvas.mit.edu`
 
 ### Extension icon is grayed out
 
@@ -49,12 +51,12 @@ Common issues and how to fix them.
 
 ### Scan completes but finds 0 items
 
-**Cause**: You're on a Canvas page without module content.
+**Cause**: You may need to navigate to a course page first.
 
 **Solutions**:
-1. Navigate to a **course modules page** (not just the dashboard)
-2. Make sure modules are expanded (not collapsed)
-3. Try a course page with visible content links
+1. Navigate to a **specific course page** (not just the dashboard)
+2. Canvascope auto-syncs via background — wait a few seconds and check again
+3. Click **Re-scan** to force a manual refresh
 
 ### Scan is stuck or very slow
 
@@ -81,12 +83,14 @@ Common issues and how to fix them.
 
 ### Search results don't match what I typed
 
-**Cause**: Fuzzy search is designed to handle typos.
+**Cause**: Fuzzy search is designed to handle typos, and abbreviations auto-expand.
 
-**Note**: This is expected behavior! Fuse.js finds approximate matches.
+**Note**: Canvascope expands abbreviations automatically (e.g., `hw` → "homework", `lec` → "lecture"). This is expected behavior.
 
-**If you need exact matching**, use quotes in your search:
-- Typing `="exact term"` will require exact match
+**Tips for better results**:
+- Use **course-scoped search**: `chem 3a hw a` or `hw a chem 3a`
+- Single letters work as identifiers: `hw g` finds "Homework G"
+- Abbreviation cheat sheet: `hw`, `proj`, `lec`, `lab`, `assn`, `ch`, `disc`
 
 ### Clicking a result opens wrong page
 
@@ -186,6 +190,41 @@ function isCanvasDomain() {
 
 ---
 
+## 🔴 ⌘K Overlay Issues
+
+### ⌘K shortcut doesn't work
+
+**Cause**: Content script may not be loaded on the page.
+
+**Solutions**:
+1. Refresh the Canvas page (⌘R / Ctrl+R)
+2. Make sure you're on a supported Canvas domain
+3. Check if another extension is intercepting the shortcut
+
+### Overlay opens but shows no results
+
+**Cause**: Content hasn't been indexed yet.
+
+**Solution**: Wait for auto-sync to complete, or click Re-scan in the popup first.
+
+---
+
+## 🔴 Due Date Planner Issues
+
+### Due dates not showing
+
+**Cause**: Assignments without due dates in Canvas won't appear in the planner.
+
+**Solution**: Only assignments with due dates set by your instructor will appear.
+
+### Dismissed tasks reappearing
+
+**Cause**: Data cleared or extension reloaded.
+
+**Solution**: Dismissed state is stored locally. Clearing all data will reset dismissals.
+
+---
+
 ## 🔴 Error Messages
 
 ### "Receiving end does not exist"
@@ -196,9 +235,9 @@ function isCanvasDomain() {
 
 ### "Extension context invalidated"
 
-**Cause**: Extension was updated or reloaded.
+**Cause**: The `background-wrapper.js` file is missing or has a typo.
 
-**Solution**: Close and reopen the extension popup. Refresh Canvas pages.
+**Solution**: Verify `background-wrapper.js` exists in the extension folder. Refresh Canvas pages.
 
 ### Console errors in popup
 
@@ -225,7 +264,7 @@ function isCanvasDomain() {
 
 **Solutions**:
 1. Clear old data periodically
-2. Only scan courses you actively use
+2. Only sync courses you actively use
 3. Check for memory leaks in DevTools
 
 ### Popup takes long to open
@@ -233,7 +272,7 @@ function isCanvasDomain() {
 **Cause**: Large amount of indexed content.
 
 **Solutions**:
-1. This is normal with 1000+ items
+1. This is normal with 5000+ items
 2. Wait for it to load
 3. Consider clearing unused course data
 
@@ -258,6 +297,7 @@ All modules log to console with prefix `[Canvascope]`.
 [Canvascope] Popup initialized          // Popup loaded OK
 [Canvascope Content] Content script loaded  // Content script OK
 [Canvascope] Service worker started     // Background OK
+[Canvascope] Course-scoped search: "chem 3a" → "hw g"  // Course scope detected
 ```
 
 ---
@@ -267,7 +307,7 @@ All modules log to console with prefix `[Canvascope]`.
 If none of these solutions work:
 
 1. **Check Chrome version**: Update Chrome to latest
-2. **Try incognito mode**: Extensions work differently
+2. **Try incognito mode**: Enable "Allow in incognito" in `chrome://extensions`
 3. **Disable other extensions**: Remove conflicts
 4. **Reinstall fresh**: Remove extension and install again
 
@@ -275,7 +315,9 @@ If none of these solutions work:
 
 When reporting a bug, please include:
 - Chrome version (`chrome://version`)
-- Extension version (from `chrome://extensions`)
+- Extension version (2.1.0 — visible in `chrome://extensions`)
 - Steps to reproduce
 - Console error messages (if any)
 - Screenshot (if visual issue)
+
+You can also submit bugs via the [Google Form](https://forms.gle/f1f1JEmobmM1bapT6).

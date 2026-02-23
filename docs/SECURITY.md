@@ -44,14 +44,36 @@ Canvascope follows these core security principles:
 **Risk level**: Low - Data stays on device.
 
 ### `activeTab`
-**Why needed**: Access the current Canvas tab to scan content when user clicks "Re-scan".
+**Why needed**: Access the current Canvas tab to detect LMS domain and trigger content scripts.
 
 **Risk level**: Low - Only activates on user action.
 
-### Host Permission: `*://*.instructure.com/*`
-**Why needed**: Run content script on Canvas pages to extract course content.
+### `tabs`
+**Why needed**: Query active tab URL for course-context detection and auto-sync triggering.
 
-**Risk level**: Medium - We limit this strictly to Canvas domains only.
+**Risk level**: Low - Only reads tab URLs on supported LMS domains.
+
+### `alarms`
+**Why needed**: Schedule periodic background sync to keep indexed content fresh.
+
+**Risk level**: Low - No network requests, only triggers local re-indexing.
+
+### `scripting`
+**Why needed**: Inject the ⌘K search overlay into Canvas pages dynamically.
+
+**Risk level**: Low - Only injects on verified Canvas domains.
+
+### `identity`
+**Why needed**: Optional Google Sign-In for account features and bug report sync.
+
+**Risk level**: Low - Only used if user explicitly signs in.
+
+### Host Permissions
+**Domains**: `*.instructure.com`, `bcourses.berkeley.edu`, `bruinlearn.ucla.edu`, `canvas.ucsd.edu`, `canvas.asu.edu`, `canvas.mit.edu`
+
+**Why needed**: Run content script on Canvas pages to extract course content and inject overlay.
+
+**Risk level**: Medium - Strictly limited to verified LMS domains only.
 
 ---
 
@@ -61,10 +83,11 @@ Use this checklist to verify the extension's security:
 
 ### ✅ Manifest Security
 - [ ] `manifest_version` is 3 (latest, most secure)
-- [ ] No `<all_urls>` in host_permissions
+- [ ] Host permissions limited to verified LMS domains
 - [ ] No `declarativeNetRequest` or `webRequest` permissions
 - [ ] CSP disallows inline scripts and eval
 - [ ] No `remotely_hosted_code`
+- [ ] `identity` permission only used for optional Google Sign-In
 
 ### ✅ Content Script Security
 - [ ] Domain verification before any DOM access

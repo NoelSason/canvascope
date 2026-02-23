@@ -11,7 +11,7 @@
 
 ### Step 1: Download the Extension
 
-Make sure you have the `Canvascope` folder with all these files:
+Make sure you have the `Canvascope` folder with these core files:
 ```
 Canvascope/
 ├── manifest.json
@@ -19,11 +19,16 @@ Canvascope/
 ├── popup.js
 ├── content.js
 ├── background.js
+├── background-wrapper.js
 ├── styles.css
+├── oauth-callback.html
+├── oauth-callback.js
 ├── lib/
-│   └── fuse.min.js
+│   ├── fuse.min.js
+│   └── supabase.js
 └── icons/
     ├── icon16.png
+    ├── icon32.png
     ├── icon48.png
     └── icon128.png
 ```
@@ -33,8 +38,6 @@ Canvascope/
 1. Open Google Chrome
 2. Type `chrome://extensions` in the address bar
 3. Press **Enter**
-
-![Chrome Extensions URL](chrome://extensions)
 
 ### Step 3: Enable Developer Mode
 
@@ -49,13 +52,13 @@ Canvascope/
 ### Step 4: Load the Extension
 
 1. Click the **"Load unpacked"** button (appears after enabling Developer mode)
-2. Navigate to your `Canvascope` folder
+2. Navigate to the `extension-core` folder
 3. Select the folder and click **"Select"** or **"Open"**
 
 ### Step 5: Verify Installation
 
 You should see:
-- ✅ "Canvascope" appears in your extensions list
+- ✅ "Canvascope" appears in your extensions list with version 2.1.0
 - ✅ No error messages (red text)
 - ✅ The extension icon appears in your Chrome toolbar
 
@@ -70,22 +73,38 @@ You should see:
 
 Open your school's Canvas LMS in a new tab:
 - Usually something like `yourschool.instructure.com`
+- Supported custom domains: `bcourses.berkeley.edu`, `bruinlearn.ucla.edu`, `canvas.ucsd.edu`, `canvas.asu.edu`, `canvas.mit.edu`
 
-### 2. Open a Course
+### 2. Auto-Sync
 
-Click on any course to view its content.
+Canvascope will automatically detect the Canvas tab and begin indexing your courses in the background. You'll see a sync progress bar in the popup.
 
 ### 3. Click the Extension Icon
 
-Click the Canvascope icon in your toolbar.
+Click the Canvascope icon in your toolbar to open the search popup.
 
-### 4. Scan Your Content
+### 4. Start Searching!
 
-Click **"Re-scan Canvas"** to index the current page's content.
+Type anything in the search box. Try these:
+- `hw 4` — finds Homework 4
+- `chem 3a hw a` — finds Homework A in Chem 3A
+- `lab b lecture` — finds Lab B Lecture materials
 
-### 5. Start Searching!
+### 5. Use ⌘K Overlay (Optional)
 
-Type anything in the search box to find your content.
+Press **⌘K** (Mac) or **Ctrl+K** (Windows) on any Canvas page to open the Spotlight-style search overlay.
+
+---
+
+## Adding Your School
+
+If your school uses a custom Canvas domain not listed above:
+
+```bash
+bash scripts/add_school.sh https://yourschool.instructure.com
+```
+
+This automatically updates `manifest.json`, `content.js`, `background.js`, and `popup.js`.
 
 ---
 
@@ -93,11 +112,10 @@ Type anything in the search box to find your content.
 
 When you get a new version:
 
-1. Delete the old `Canvascope` folder
-2. Extract the new version
-3. Go to `chrome://extensions`
-4. Click the **refresh icon** (↻) on the Canvascope card
-5. Or remove and re-add the extension
+1. Pull the latest changes or extract the new version
+2. Go to `chrome://extensions`
+3. Click the **refresh icon** (↻) on the Canvascope card
+4. Your indexed content is preserved between updates
 
 ---
 
@@ -107,19 +125,19 @@ When you get a new version:
 
 **Cause**: You selected the wrong folder or files are missing.
 
-**Solution**: Make sure you're selecting the folder that contains `manifest.json`, not a parent folder.
+**Solution**: Make sure you're selecting the `extension-core` folder that contains `manifest.json`, not a parent folder.
 
 ### Error: "service_worker must be a valid file"
 
-**Cause**: The `background.js` file is missing or has a typo.
+**Cause**: The `background-wrapper.js` file is missing.
 
-**Solution**: Verify `background.js` exists in the extension folder.
+**Solution**: Verify `background-wrapper.js` exists in the extension folder.
 
 ### Extension icon is grayed out
 
 **Cause**: You're not on a Canvas page.
 
-**Solution**: Navigate to your Canvas LMS first. The extension only works on `*.instructure.com` domains.
+**Solution**: Navigate to your Canvas LMS first. The extension activates on supported LMS domains.
 
 ---
 
