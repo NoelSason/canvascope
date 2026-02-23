@@ -141,7 +141,7 @@ function computeNumericAlignment(queryNums, titleText) {
 // TOKEN COVERAGE
 // ============================================
 
-const STOP_TOKENS = new Set(['a', 'an', 'the', 'in', 'on', 'of', 'to', 'for', 'and', 'or', 'is']);
+const STOP_TOKENS = new Set(['the', 'in', 'on', 'of', 'to', 'for', 'and', 'or', 'is']);
 
 /**
  * Compute fraction of query tokens present in searchable text using boundaries.
@@ -149,7 +149,7 @@ const STOP_TOKENS = new Set(['a', 'an', 'the', 'in', 'on', 'of', 'to', 'for', 'a
  * Ignores stop words and single-char tokens.
  */
 function computeTokenCoverage(normalizedQuery, titleText, contextText) {
-  const qTokens = normalizedQuery.split(/\s+/).filter(t => t.length > 1 && !STOP_TOKENS.has(t));
+  const qTokens = normalizedQuery.split(/\s+/).filter(t => t.length > 0 && !STOP_TOKENS.has(t));
   if (qTokens.length === 0) return 1;
   const combined = ((titleText || '') + ' ' + (contextText || '')).toLowerCase();
   let found = 0;
@@ -197,12 +197,12 @@ function getClickBoost(item) {
   const key = getClickKey(item);
   if (!key || !clickFeedbackMap[key]) return 0;
   const { openCount, lastOpenedAt } = clickFeedbackMap[key];
-  // Frequency boost: log-scaled, max ~0.60
-  const freqBoost = Math.min(0.60, Math.log2(1 + openCount) * 0.20);
-  // Recency boost: decays over 30 days, max 0.40
+  // Frequency boost: log-scaled, max ~0.15
+  const freqBoost = Math.min(0.15, Math.log2(1 + openCount) * 0.05);
+  // Recency boost: decays over 14 days, max 0.10
   const daysSinceOpen = (Date.now() - lastOpenedAt) / (1000 * 60 * 60 * 24);
-  const recencyBoost = Math.max(0, 0.40 - daysSinceOpen * (0.40 / 30));
-  return Math.min(1.0, freqBoost + recencyBoost);
+  const recencyBoost = Math.max(0, 0.10 - daysSinceOpen * (0.10 / 14));
+  return Math.min(0.25, freqBoost + recencyBoost);
 }
 
 // ============================================
@@ -601,8 +601,9 @@ function buildSearchFields(item) {
 }
 
 /**
- * Detect if query starts with a course name, enabling course-scoped search.
+ * Detect if query starts or ends with a course name, enabling course-scoped search.
  * E.g., "chem 3b plws 10" → { coursePrefix: "chem 3b", remainingQuery: "plws 10" }
+ * E.g., "plws 10 chem 3b" → { coursePrefix: "chem 3b", remainingQuery: "plws 10" }
  */
 function detectCourseScope(query) {
   const normQuery = normalizeText(query);
@@ -635,9 +636,20 @@ function detectCourseScope(query) {
 
   const finalCandidates = state._courseCandidatesCache;
 
+  // Pass 1: Check if query STARTS with a course name (prefix)
   for (const { norm, original } of finalCandidates) {
     if (normQuery.startsWith(norm + ' ') && normQuery.length > norm.length + 1) {
       const remaining = normQuery.slice(norm.length + 1).trim();
+      if (remaining.length >= 1) {
+        return { coursePrefix: norm, courseName: original, remainingQuery: remaining };
+      }
+    }
+  }
+
+  // Pass 2: Check if query ENDS with a course name (suffix)
+  for (const { norm, original } of finalCandidates) {
+    if (normQuery.endsWith(' ' + norm) && normQuery.length > norm.length + 1) {
+      const remaining = normQuery.slice(0, normQuery.length - norm.length - 1).trim();
       if (remaining.length >= 1) {
         return { coursePrefix: norm, courseName: original, remainingQuery: remaining };
       }
@@ -1776,14 +1788,18 @@ function performSearch(query) {
   // helps with hard token boundaries.
   const lexicalResults = [];
   const lexScores = new Map();
-  const qTokens = normalizedQuery.toLowerCase().split(/\s+/).filter(t => t.length > 1);
+  const qTokens = normalizedQuery.toLowerCase().split(/\s+/).filter(t => t.length > 0 && (t.length > 1 || !STOP_TOKENS.has(t)));
   if (qTokens.length > 0) {
     for (const item of state.filteredContent) {
       if (prePassUrls.has(item.url)) continue;
       const searchableText = `${item.searchTitleNormalized} ${item.folderPath || ''} ${item.moduleName || ''}`.toLowerCase();
       let matchedTokens = 0;
       for (const t of qTokens) {
-        if (searchableText.includes(t)) matchedTokens++;
+        if (t.length === 1) {
+          if (new RegExp(`\\b${t}\\b`).test(searchableText)) matchedTokens++;
+        } else {
+          if (searchableText.includes(t)) matchedTokens++;
+        }
       }
       if (matchedTokens === qTokens.length) { // AND boolean query basically
         lexicalResults.push({ item, score: 0.2, prePass: false });
@@ -1826,12 +1842,13 @@ function performSearch(query) {
 
     // Secondary recall: scan target course items for query token matches
     // in title + folderPath + moduleName (catches folder-name matches)
-    const qTokens = normalizedQuery.toLowerCase().split(/\s+/).filter(t => t.length > 1);
+    const qTokens = normalizedQuery.toLowerCase().split(/\s+/).filter(t => t.length > 0 && (t.length > 1 || !STOP_TOKENS.has(t)));
     if (qTokens.length > 0) {
       for (const item of state.filteredContent) {
         if (seenUrls.has(item.url)) continue;
         const itemCourse = normalizeText(item.courseName || '');
-        if (!itemCourse.includes(prefix)) continue;
+        // Require word boundary after prefix to prevent "chem 3al" matching "chem 3a"
+        if (!new RegExp(`^${prefix}(\\s|$)`).test(itemCourse)) continue;
 
         // Check if enough query tokens appear across searchable text
         const searchableText = [
@@ -1842,7 +1859,11 @@ function performSearch(query) {
 
         let hits = 0;
         for (const t of qTokens) {
-          if (searchableText.includes(t)) hits++;
+          if (t.length === 1) {
+            if (new RegExp(`\\b${t}\\b`).test(searchableText)) hits++;
+          } else {
+            if (searchableText.includes(t)) hits++;
+          }
         }
         // Require at least half the tokens to match
         if (hits >= Math.ceil(qTokens.length / 2)) {
@@ -1855,7 +1876,7 @@ function performSearch(query) {
     // Now filter to only course-scoped results
     const scopedResults = results.filter(r => {
       const itemCourse = normalizeText(r.item.courseName || '');
-      return itemCourse.includes(prefix);
+      return new RegExp(`^${prefix}(\\s|$)`).test(itemCourse);
     });
     if (scopedResults.length > 0) {
       results = scopedResults;

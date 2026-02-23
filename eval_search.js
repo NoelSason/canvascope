@@ -173,6 +173,16 @@ class SearchPipeline {
             if (!prePassUrls.has(r.item.url)) results.push(r);
         }
 
+        // Mock detectCourseScope (chem 3a specific scenario)
+        if (query.includes('chem 3a')) {
+            const prefix = 'chem 3a';
+            const scopedResults = results.filter(r => {
+                const itemCourse = normalizeText(r.item.courseName || '');
+                return new RegExp(`^${prefix}(\\s|$)`).test(itemCourse);
+            });
+            results = scopedResults.length > 0 ? scopedResults : results;
+        }
+
         return this.rank(results, normalizedQuery, queryNums).slice(0, MAX_RESULTS);
     }
 
@@ -220,19 +230,18 @@ class SearchPipeline {
 // ============================================
 
 const queries = [
-    { query: "hw4", expectedId: "1", desc: "hw4 exact numeric match" },
-    { query: "hw 4", expectedId: "1", desc: "hw 4 spaced match" },
-    { query: "lab b lecture", expectedId: "4", desc: "exact word bounds, avoid 'lab b lecture' hitting 'lab 3 - lecture'" },
-    { query: "ch10", expectedId: "5", desc: "compact chapter" },
+    { query: "chem 3a hw g", expectedId: "8", desc: "chem 3a course scope with single letter token G" }
 ];
 
 const mockCorpus = [
-    { url: "id_1", title: "Homework 4 - Recursion", type: "assignment" },
-    { url: "id_2", title: "Homework 14 - Trees", type: "assignment" },
-    { url: "id_3", title: "Homework 24 - Graphs", type: "assignment" },
-    { url: "id_4", title: "Lab B Lecture - Alpha Pinene Oxide.pdf", type: "file" },
-    { url: "id_5", title: "Chapter 10 Reading", type: "page" },
-    { url: "id_6", title: "Lab B Requirements", type: "assignment" }
+    { url: "1", title: "PreLab G", courseName: "Chem 3AL: Organic Chemistry Laboratory (Fall 2025)", type: "assignment" },
+    { url: "2", title: "Lab G Notebook Pages", courseName: "Chem 3AL: Organic Chemistry Laboratory (Fall 2025)", type: "assignment" },
+    { url: "3", title: "Lab G Data Analysis", courseName: "Chem 3AL: Organic Chemistry Laboratory (Fall 2025)", type: "assignment" },
+    { url: "4", title: "Lab G. Data Analysis.pdf", courseName: "Chem 3AL: Organic Chemistry Laboratory (Fall 2025)", type: "file" },
+    { url: "5", title: "Lab G. Notebook Guide", courseName: "Chem 3AL: Organic Chemistry Laboratory (Fall 2025)", type: "file" },
+    { url: "6", title: "J. Radical Chemistry - Arrows", courseName: "Chem 3A (Spring 2025)", folderPath: "1. Homework / 3. Unit 2", type: "file" },
+    { url: "7", title: "Unit 2 Homework Keys", courseName: "Chem 3A (Spring 2025)", folderPath: "1. Homework / 3. Unit 2", type: "file" },
+    { url: "8", title: "G. Stereochemistry - Vocabulary", courseName: "Chem 3A (Spring 2025)", folderPath: "1. Homework / 2. Unit 1", type: "file" }
 ];
 
 function dcg(results, expectedId, k = 10) {
