@@ -601,6 +601,30 @@ function buildSearchFields(item) {
 }
 
 /**
+ * Build course-scope aliases from a course name.
+ * Example: "Chem 3AL: Organic Chemistry Laboratory" -> ["chem 3al"]
+ */
+function getCourseScopeAliases(courseName) {
+  const aliases = [];
+  const norm = normalizeText(courseName || '');
+  if (!norm) return aliases;
+
+  // "chem 3al ..." form
+  const spacedCode = norm.match(/^([a-z]{2,8})\s+(\d{1,4}[a-z]{0,4})(?:\s|$)/i);
+  if (spacedCode) {
+    aliases.push(`${spacedCode[1]} ${spacedCode[2]}`.toLowerCase());
+  }
+
+  // "chem3al ..." form
+  const compactCode = norm.match(/^([a-z]{2,8})(\d{1,4}[a-z]{0,4})(?:\s|$)/i);
+  if (compactCode) {
+    aliases.push(`${compactCode[1]} ${compactCode[2]}`.toLowerCase());
+  }
+
+  return aliases;
+}
+
+/**
  * Detect if query starts or ends with a course name, enabling course-scoped search.
  * E.g., "chem 3b plws 10" → { coursePrefix: "chem 3b", remainingQuery: "plws 10" }
  * E.g., "plws 10 chem 3b" → { coursePrefix: "chem 3b", remainingQuery: "plws 10" }
@@ -620,6 +644,9 @@ function detectCourseScope(query) {
     // Short form: strip parenthetical suffix like "(Fall 2025)"
     const short = normalizeText(original.replace(/\s*\(.*\)\s*$/, ''));
 
+    // Code aliases: "chem 3al", "math 1a", etc.
+    const codeAliases = getCourseScopeAliases(original);
+
     if (short && short.length >= 3 && !seen.has(short)) {
       seen.add(short);
       candidates.push({ norm: short, original });
@@ -627,6 +654,12 @@ function detectCourseScope(query) {
     if (full && !seen.has(full)) {
       seen.add(full);
       candidates.push({ norm: full, original });
+    }
+    for (const alias of codeAliases) {
+      if (alias.length >= 3 && !seen.has(alias)) {
+        seen.add(alias);
+        candidates.push({ norm: alias, original });
+      }
     }
   }
 
