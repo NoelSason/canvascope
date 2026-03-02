@@ -23,7 +23,8 @@
     "tabs",
     "alarms",
     "scripting",
-    "identity"
+    "identity",
+    "downloads"
   ],
   "oauth2": {
     "client_id": "961806200943-6deqch1r87uthbarmr7te483u4h7fn9m.apps.googleusercontent.com",
@@ -33,6 +34,7 @@
     ]
   },
   "host_permissions": [
+    "https://*.supabase.co/*",
     "*://*.instructure.com/*",
     "*://bcourses.berkeley.edu/*",
     "*://bruinlearn.ucla.edu/*",

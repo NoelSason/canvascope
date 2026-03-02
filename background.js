@@ -20,12 +20,759 @@ importScripts('lib/fuse.min.js');
 // Create a single supabase client for the extension
 const supabaseUrl = 'https://vcadcdgnwxjlgaoqktkd.supabase.co';
 const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZjYWRjZGdud3hqbGdhb3FrdGtkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE2MzU4NDQsImV4cCI6MjA4NzIxMTg0NH0.71j6kwkwwSeG9Jppu4IUyHORM033NFyXKemOd5kuDWk';
-const supabaseClient = typeof window !== 'undefined' && window.supabase
-    ? window.supabase.createClient(supabaseUrl, supabaseKey)
-    : typeof supabase !== 'undefined' ? supabase.createClient(supabaseUrl, supabaseKey) : null;
+const supabaseLib = typeof window !== 'undefined' && window.supabase
+    ? window.supabase
+    : typeof supabase !== 'undefined' ? supabase : null;
+
+const supabaseAuthStorage = {
+    async getItem(key) {
+        const data = await chrome.storage.local.get([key]);
+        return data?.[key] ?? null;
+    },
+    async setItem(key, value) {
+        await chrome.storage.local.set({ [key]: value });
+    },
+    async removeItem(key) {
+        await chrome.storage.local.remove([key]);
+    }
+};
+
+const supabaseClient = supabaseLib
+    ? supabaseLib.createClient(supabaseUrl, supabaseKey, {
+        auth: {
+            persistSession: true,
+            autoRefreshToken: true,
+            detectSessionInUrl: false,
+            storage: supabaseAuthStorage
+        }
+    })
+    : null;
 
 if (!supabaseClient) {
     console.error('[Canvascope] Supabase client failed to initialize (ensure lib/supabase.js is loaded)');
+}
+
+// --- DROPBRIDGE V2 (ACCOUNT-LINKED, ZERO-PAIRING) ---
+const DROPBRIDGE_V2_ENABLED = true;
+const DROPBRIDGE_V2_POLL_INTERVAL_MS = 20 * 1000; // 20s (required: 15-30s)
+const DROPBRIDGE_V2_REGISTER_REFRESH_MS = 5 * 60 * 1000;
+const DROPBRIDGE_V2_DOWNLOAD_WATCHDOG_INTERVAL_MS = 15 * 1000;
+const DROPBRIDGE_V2_DOWNLOAD_MAX_OBSERVE_MS = 30 * 60 * 1000;
+const DROPBRIDGE_V2_STORAGE_DEVICE_ID = 'dropBridgeV2DeviceId';
+const DROPBRIDGE_MODE_STORAGE_KEY = 'dropBridgeMode';
+const DROPBRIDGE_V2_MODE = 'v2';
+const DROPBRIDGE_V2_POLL_LIMIT = 5;
+const DROPBRIDGE_V2_DEBUG = true;
+
+let dropBridgeV2PollTimer = null;
+let dropBridgeV2RegisterTimer = null;
+let dropBridgeV2PollInFlight = false;
+const dropBridgeV2ActiveUploads = new Set();
+
+function isUuid(value) {
+    return typeof value === 'string'
+        && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
+function generateUuidV4() {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+        return crypto.randomUUID();
+    }
+    const bytes = new Uint8Array(16);
+    crypto.getRandomValues(bytes);
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    const hex = Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+function detectBrowserName() {
+    const ua = (navigator?.userAgent || '').toLowerCase();
+    if (ua.includes('edg/')) return 'Edge';
+    if (ua.includes('opr/') || ua.includes('opera')) return 'Opera';
+    if (ua.includes('brave')) return 'Brave';
+    if (ua.includes('arc/')) return 'Arc';
+    if (ua.includes('chrome/')) return 'Chrome';
+    if (ua.includes('firefox/')) return 'Firefox';
+    if (ua.includes('safari/')) return 'Safari';
+    return 'Browser';
+}
+
+function detectOsName() {
+    const ua = (navigator?.userAgent || '').toLowerCase();
+    if (ua.includes('mac os x')) return 'macOS';
+    if (ua.includes('windows nt')) return 'Windows';
+    if (ua.includes('android')) return 'Android';
+    if (ua.includes('iphone') || ua.includes('ipad') || ua.includes('ios')) return 'iOS';
+    if (ua.includes('cros')) return 'ChromeOS';
+    if (ua.includes('linux')) return 'Linux';
+    return 'UnknownOS';
+}
+
+function getDropBridgeV2DeviceName() {
+    return `${detectBrowserName()} + ${detectOsName()}`.slice(0, 64);
+}
+
+function sanitizeFilename(name) {
+    const raw = String(name || 'lectra-file');
+    const cleaned = raw.replace(/[\\/:*?"<>|]/g, '_').trim();
+    return cleaned || `lectra-file-${Date.now()}`;
+}
+
+function isDropBridgeUserCanceled(reason) {
+    const msg = String(reason || '').toUpperCase();
+    return msg.includes('USER_CANCELED') || msg.includes('USER_CANCELLED') || msg.includes('CANCELED') || msg.includes('CANCELLED');
+}
+
+function parseErrorMessage(error) {
+    if (!error) return 'Unknown error';
+    if (typeof error === 'string') return error;
+    if (typeof error.message === 'string' && error.message) return error.message;
+    return String(error);
+}
+
+function summarizeDownloadUrl(downloadUrl) {
+    if (!downloadUrl) return null;
+    try {
+        const url = new URL(downloadUrl);
+        return {
+            origin: url.origin,
+            pathname: url.pathname
+        };
+    } catch (_) {
+        return { raw: String(downloadUrl).slice(0, 200) };
+    }
+}
+
+function sanitizeDropBridgePayload(payload) {
+    if (!payload || typeof payload !== 'object') {
+        return payload;
+    }
+
+    const copy = { ...payload };
+    if (Array.isArray(copy.uploads)) {
+        copy.uploads = copy.uploads.map((upload) => ({
+            id: upload?.id || null,
+            uploadId: upload?.uploadId || null,
+            fileName: upload?.fileName || null,
+            mimeType: upload?.mimeType || null,
+            sizeBytes: upload?.sizeBytes ?? null,
+            createdAt: upload?.createdAt || null,
+            expiresAt: upload?.expiresAt || null,
+            downloadUrl: summarizeDownloadUrl(upload?.downloadUrl)
+        }));
+    }
+
+    return copy;
+}
+
+function dropBridgeDebug(message, details = undefined) {
+    if (!DROPBRIDGE_V2_DEBUG) return;
+    const timestamp = new Date().toISOString();
+    if (details === undefined) {
+        console.log(`[DropBridge v2][debug][${timestamp}] ${message}`);
+        return;
+    }
+    console.log(`[DropBridge v2][debug][${timestamp}] ${message}`, details);
+}
+
+function isSupabaseSessionExpired(session, skewSeconds = 30) {
+    const expiresAt = Number(session?.expires_at);
+    if (!Number.isFinite(expiresAt) || expiresAt <= 0) return false;
+    const now = Math.floor(Date.now() / 1000);
+    return expiresAt <= (now + skewSeconds);
+}
+
+async function hydrateDropBridgeV2SessionFromStorage() {
+    if (!supabaseClient) return null;
+    dropBridgeDebug('hydrate session from storage: begin');
+
+    const { data: { session }, error } = await supabaseClient.auth.getSession();
+    if (error) {
+        console.error('[DropBridge v2] Failed to load session from storage:', parseErrorMessage(error));
+        dropBridgeDebug('hydrate session from storage: getSession error', { error: parseErrorMessage(error) });
+        return null;
+    }
+
+    if (!session) {
+        console.log('[DropBridge v2] No stored Supabase session found at worker start');
+        dropBridgeDebug('hydrate session from storage: no session found');
+        return null;
+    }
+
+    dropBridgeDebug('hydrate session from storage: session found', {
+        userId: session?.user?.id || null,
+        expiresAtEpoch: session?.expires_at || null
+    });
+
+    if (isSupabaseSessionExpired(session) && session.refresh_token) {
+        console.log('[DropBridge v2] Stored session expired, attempting refresh');
+        dropBridgeDebug('hydrate session from storage: attempting refresh for expired session');
+        const { data, error: refreshError } = await supabaseClient.auth.refreshSession({
+            refresh_token: session.refresh_token
+        });
+
+        if (refreshError) {
+            console.error('[DropBridge v2] Session refresh failed:', parseErrorMessage(refreshError));
+            dropBridgeDebug('hydrate session from storage: refresh failed', { error: parseErrorMessage(refreshError) });
+            return session;
+        }
+
+        console.log('[DropBridge v2] Session refresh succeeded at worker start');
+        dropBridgeDebug('hydrate session from storage: refresh succeeded', {
+            userId: data?.session?.user?.id || null,
+            expiresAtEpoch: data?.session?.expires_at || null
+        });
+        return data?.session || null;
+    }
+
+    dropBridgeDebug('hydrate session from storage: session usable without refresh');
+    return session;
+}
+
+async function getDropBridgeV2AccessToken() {
+    if (!supabaseClient) return null;
+    dropBridgeDebug('get access token: begin');
+    const { data: { session }, error } = await supabaseClient.auth.getSession();
+    if (error) throw error;
+    if (!session) {
+        dropBridgeDebug('get access token: no session available');
+        return null;
+    }
+
+    dropBridgeDebug('get access token: session loaded', {
+        userId: session?.user?.id || null,
+        expiresAtEpoch: session?.expires_at || null,
+        hasRefreshToken: Boolean(session?.refresh_token)
+    });
+
+    if (isSupabaseSessionExpired(session)) {
+        dropBridgeDebug('get access token: session expired, attempting refresh');
+        if (!session.refresh_token) {
+            dropBridgeDebug('get access token: session expired but refresh token missing');
+            return null;
+        }
+
+        const { data, error: refreshError } = await supabaseClient.auth.refreshSession({
+            refresh_token: session.refresh_token
+        });
+
+        if (refreshError) {
+            console.error('[DropBridge v2] Session refresh failed during token fetch:', parseErrorMessage(refreshError));
+            dropBridgeDebug('get access token: refresh failed', { error: parseErrorMessage(refreshError) });
+            return null;
+        }
+
+        dropBridgeDebug('get access token: refresh succeeded', {
+            userId: data?.session?.user?.id || null,
+            expiresAtEpoch: data?.session?.expires_at || null
+        });
+        return data?.session?.access_token || null;
+    }
+
+    dropBridgeDebug('get access token: returning existing access token');
+    return session.access_token || null;
+}
+
+async function getOrCreateDropBridgeV2DeviceId() {
+    const stored = await chrome.storage.local.get([DROPBRIDGE_V2_STORAGE_DEVICE_ID, DROPBRIDGE_MODE_STORAGE_KEY]);
+    const existingId = stored[DROPBRIDGE_V2_STORAGE_DEVICE_ID];
+    if (isUuid(existingId)) {
+        dropBridgeDebug('device id: using existing id', {
+            deviceId: existingId,
+            mode: stored[DROPBRIDGE_MODE_STORAGE_KEY] || null
+        });
+        if (stored[DROPBRIDGE_MODE_STORAGE_KEY] !== DROPBRIDGE_V2_MODE) {
+            await chrome.storage.local.set({ [DROPBRIDGE_MODE_STORAGE_KEY]: DROPBRIDGE_V2_MODE });
+            dropBridgeDebug('device id: normalized mode to v2', { deviceId: existingId });
+        }
+        return existingId;
+    }
+
+    const nextId = generateUuidV4();
+    await chrome.storage.local.set({
+        [DROPBRIDGE_V2_STORAGE_DEVICE_ID]: nextId,
+        [DROPBRIDGE_MODE_STORAGE_KEY]: DROPBRIDGE_V2_MODE
+    });
+    console.log(`[DropBridge v2] Generated stable deviceId: ${nextId}`);
+    dropBridgeDebug('device id: generated new id', { deviceId: nextId });
+    return nextId;
+}
+
+async function callDropBridgeV2Function(functionName, body, accessToken) {
+    const endpoint = `${supabaseUrl.replace(/\/+$/, '')}/functions/v1/${functionName}`;
+    const startedAtMs = Date.now();
+    dropBridgeDebug(`function call -> ${functionName}: request`, {
+        endpoint,
+        hasAccessToken: Boolean(accessToken),
+        body: sanitizeDropBridgePayload(body)
+    });
+
+    const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            apikey: supabaseKey,
+            Authorization: `Bearer ${accessToken}`
+        },
+        body: JSON.stringify(body)
+    });
+
+    const payload = await response.json().catch(() => ({}));
+    dropBridgeDebug(`function call -> ${functionName}: response`, {
+        status: response.status,
+        ok: response.ok,
+        durationMs: Date.now() - startedAtMs,
+        payload: sanitizeDropBridgePayload(payload)
+    });
+
+    if (!response.ok || payload?.error) {
+        dropBridgeDebug(`function call -> ${functionName}: throwing error`, {
+            status: response.status,
+            error: payload?.error || null
+        });
+        throw new Error(payload?.error || `${functionName} failed (${response.status})`);
+    }
+
+    return payload;
+}
+
+async function updateDropBridgeV2UploadStatus({ accessToken, deviceId, uploadId, status }) {
+    try {
+        dropBridgeDebug('status ack: sending', { uploadId, deviceId, status });
+        await callDropBridgeV2Function('update-upload-status-v2', { deviceId, uploadId, status }, accessToken);
+        dropBridgeDebug('status ack: success', { uploadId, deviceId, status });
+        return true;
+    } catch (error) {
+        console.error(`[DropBridge v2] Status update failure for ${uploadId} -> ${status}:`, parseErrorMessage(error));
+        dropBridgeDebug('status ack: failure', {
+            uploadId,
+            deviceId,
+            status,
+            error: parseErrorMessage(error)
+        });
+        return false;
+    }
+}
+
+function resolveDropBridgeUploadId(upload) {
+    return upload?.uploadId || upload?.id || null;
+}
+
+function getDownloadItemById(downloadId) {
+    return new Promise((resolve) => {
+        chrome.downloads.search({ id: downloadId }, (results) => {
+            resolve(Array.isArray(results) && results.length > 0 ? results[0] : null);
+        });
+    });
+}
+
+async function triggerDropBridgeDownload(upload) {
+    const uploadId = resolveDropBridgeUploadId(upload) || 'unknown-upload';
+    const downloadUrl = upload?.downloadUrl;
+    const fileName = sanitizeFilename(upload?.fileName);
+    dropBridgeDebug('download: begin', {
+        uploadId,
+        fileName,
+        sizeBytes: upload?.sizeBytes ?? null,
+        downloadUrl: summarizeDownloadUrl(downloadUrl)
+    });
+
+    if (!downloadUrl) {
+        dropBridgeDebug('download: missing downloadUrl -> queued', { uploadId });
+        return { status: 'queued', reason: 'Missing downloadUrl' };
+    }
+
+    return new Promise((resolve) => {
+        let done = false;
+        let downloadId = null;
+        let timeoutId = null;
+        const startedAt = Date.now();
+
+        const finalize = (result) => {
+            if (done) return;
+            done = true;
+            if (timeoutId) clearTimeout(timeoutId);
+            if (downloadId !== null) {
+                chrome.downloads.onChanged.removeListener(onChanged);
+                chrome.downloads.onErased.removeListener(onErased);
+            }
+            dropBridgeDebug('download: finalize', {
+                uploadId,
+                downloadId,
+                result,
+                elapsedMs: Date.now() - startedAt
+            });
+            resolve(result);
+        };
+
+        const onChanged = (delta) => {
+            if (delta.id !== downloadId) return;
+            dropBridgeDebug('download: onChanged', {
+                uploadId,
+                downloadId,
+                deltaState: delta?.state?.current || null,
+                deltaError: delta?.error?.current || null,
+                bytesReceived: delta?.bytesReceived?.current ?? null
+            });
+
+            if (delta.state?.current === 'complete') {
+                finalize({ status: 'downloaded' });
+                return;
+            }
+
+            if (delta.state?.current === 'interrupted') {
+                const reason = delta.error?.current || 'DOWNLOAD_INTERRUPTED';
+                if (isDropBridgeUserCanceled(reason)) {
+                    finalize({ status: 'canceled', reason });
+                } else {
+                    finalize({ status: 'queued', reason });
+                }
+            }
+        };
+
+        const onErased = (erasedId) => {
+            if (erasedId === downloadId) {
+                dropBridgeDebug('download: onErased -> canceled', { uploadId, downloadId });
+                finalize({ status: 'canceled', reason: 'USER_CANCELED' });
+            }
+        };
+
+        const scheduleWatchdogCheck = () => {
+            timeoutId = setTimeout(async () => {
+                const item = await getDownloadItemById(downloadId);
+                dropBridgeDebug('download: watchdog tick', {
+                    uploadId,
+                    downloadId,
+                    elapsedMs: Date.now() - startedAt,
+                    itemState: item?.state || null,
+                    paused: item?.paused ?? null,
+                    error: item?.error || null
+                });
+                if (!item) {
+                    finalize({ status: 'queued', reason: 'DOWNLOAD_ITEM_MISSING' });
+                    return;
+                }
+
+                if (item.state === 'complete') {
+                    finalize({ status: 'downloaded' });
+                    return;
+                }
+
+                if (item.state === 'interrupted') {
+                    const reason = item.error || 'DOWNLOAD_INTERRUPTED';
+                    if (isDropBridgeUserCanceled(reason)) {
+                        finalize({ status: 'canceled', reason });
+                    } else {
+                        finalize({ status: 'queued', reason });
+                    }
+                    return;
+                }
+
+                const isStillActive = item.state === 'in_progress' || item.paused === true;
+                const elapsedMs = Date.now() - startedAt;
+                if (isStillActive && elapsedMs < DROPBRIDGE_V2_DOWNLOAD_MAX_OBSERVE_MS) {
+                    scheduleWatchdogCheck();
+                    return;
+                }
+
+                if (isStillActive) {
+                    finalize({ status: 'queued', reason: 'DOWNLOAD_TIMEOUT' });
+                    return;
+                }
+
+                finalize({
+                    status: 'queued',
+                    reason: `DOWNLOAD_STATE_${String(item.state || 'UNKNOWN').toUpperCase()}`
+                });
+            }, DROPBRIDGE_V2_DOWNLOAD_WATCHDOG_INTERVAL_MS);
+        };
+
+        chrome.downloads.download(
+            {
+                url: downloadUrl,
+                filename: fileName,
+                saveAs: false,
+                conflictAction: 'uniquify'
+            },
+            (id) => {
+                const startError = chrome.runtime.lastError?.message;
+                dropBridgeDebug('download: chrome.downloads.download callback', {
+                    uploadId,
+                    returnedDownloadId: typeof id === 'number' ? id : null,
+                    startError: startError || null
+                });
+                if (startError || typeof id !== 'number') {
+                    if (isDropBridgeUserCanceled(startError)) {
+                        finalize({ status: 'canceled', reason: startError || 'USER_CANCELED' });
+                    } else {
+                        finalize({ status: 'queued', reason: startError || 'DOWNLOAD_START_FAILED' });
+                    }
+                    return;
+                }
+
+                downloadId = id;
+                chrome.downloads.onChanged.addListener(onChanged);
+                chrome.downloads.onErased.addListener(onErased);
+                dropBridgeDebug('download: listener attached', { uploadId, downloadId });
+                scheduleWatchdogCheck();
+            }
+        );
+    });
+}
+
+async function processDropBridgeV2Upload(upload, accessToken, deviceId) {
+    const uploadId = resolveDropBridgeUploadId(upload);
+    dropBridgeDebug('process upload: begin', {
+        uploadId,
+        deviceId,
+        hasAccessToken: Boolean(accessToken),
+        upload
+    });
+    if (!uploadId) {
+        console.warn('[DropBridge v2] Skipping upload with missing uploadId field');
+        dropBridgeDebug('process upload: skipped missing uploadId');
+        return;
+    }
+    if (dropBridgeV2ActiveUploads.has(uploadId)) {
+        dropBridgeDebug('process upload: skipped already active', { uploadId, deviceId });
+        return;
+    }
+
+    const startedAtMs = Date.now();
+    dropBridgeV2ActiveUploads.add(uploadId);
+    dropBridgeDebug('process upload: marked active', {
+        uploadId,
+        deviceId,
+        activeCount: dropBridgeV2ActiveUploads.size
+    });
+    try {
+        const result = await triggerDropBridgeDownload(upload);
+        if (result.status === 'downloaded') {
+            console.log(`[DropBridge v2] Download success for ${uploadId}`);
+        } else {
+            console.warn(`[DropBridge v2] Download ${result.status} for ${uploadId}: ${result.reason || 'no-reason'}`);
+        }
+
+        await updateDropBridgeV2UploadStatus({
+            accessToken,
+            deviceId,
+            uploadId,
+            status: result.status
+        });
+        dropBridgeDebug('process upload: ack attempted', {
+            uploadId,
+            deviceId,
+            status: result.status,
+            durationMs: Date.now() - startedAtMs
+        });
+    } catch (error) {
+        console.error(`[DropBridge v2] Download failure for ${uploadId}:`, parseErrorMessage(error));
+        await updateDropBridgeV2UploadStatus({
+            accessToken,
+            deviceId,
+            uploadId,
+            status: 'queued'
+        });
+        dropBridgeDebug('process upload: exception path acked queued', {
+            uploadId,
+            deviceId,
+            error: parseErrorMessage(error),
+            durationMs: Date.now() - startedAtMs
+        });
+    } finally {
+        dropBridgeV2ActiveUploads.delete(uploadId);
+        dropBridgeDebug('process upload: finished', {
+            uploadId,
+            deviceId,
+            activeCount: dropBridgeV2ActiveUploads.size
+        });
+    }
+}
+
+async function registerDropBridgeV2Device(reason = 'startup', accessToken = null) {
+    if (!DROPBRIDGE_V2_ENABLED || !supabaseClient) return false;
+    const token = accessToken || await getDropBridgeV2AccessToken();
+    console.log(`[DropBridge v2] Access token ${token ? 'present' : 'absent'} before register (${reason})`);
+    dropBridgeDebug('register device: token check', {
+        reason,
+        hasToken: Boolean(token)
+    });
+    if (!token) return false;
+
+    const deviceId = await getOrCreateDropBridgeV2DeviceId();
+    const deviceName = getDropBridgeV2DeviceName();
+    const endpoint = `${supabaseUrl.replace(/\/+$/, '')}/functions/v1/register-device-v2`;
+    dropBridgeDebug('register device: request', { reason, deviceId, deviceName, endpoint });
+    const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            apikey: supabaseKey,
+            Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ deviceId, deviceName })
+    });
+
+    const payload = await response.json().catch(() => ({}));
+    const errorPayload = payload?.error || payload?.message || null;
+    console.log(`[DropBridge v2] register-device-v2 status=${response.status} error=${errorPayload || 'none'}`);
+    dropBridgeDebug('register device: response', {
+        reason,
+        deviceId,
+        status: response.status,
+        ok: response.ok,
+        payload: sanitizeDropBridgePayload(payload)
+    });
+
+    if (!response.ok || payload?.error) {
+        throw new Error(payload?.error || `register-device-v2 failed (${response.status})`);
+    }
+
+    console.log(`[DropBridge v2] Registered device (${reason}) as "${deviceName}"`);
+    return true;
+}
+
+async function pollDropBridgeV2Once(reason = 'interval') {
+    if (!DROPBRIDGE_V2_ENABLED || !supabaseClient || dropBridgeV2PollInFlight) {
+        dropBridgeDebug('poll: skipped', {
+            reason,
+            enabled: DROPBRIDGE_V2_ENABLED,
+            hasSupabaseClient: Boolean(supabaseClient),
+            inFlight: dropBridgeV2PollInFlight
+        });
+        return;
+    }
+
+    const pollStartedAtMs = Date.now();
+    dropBridgeDebug('poll: begin', { reason });
+    dropBridgeV2PollInFlight = true;
+
+    try {
+        const accessToken = await getDropBridgeV2AccessToken();
+        if (!accessToken) {
+            dropBridgeDebug('poll: no access token, exiting', { reason });
+            return;
+        }
+
+        const deviceId = await getOrCreateDropBridgeV2DeviceId();
+        const payload = await callDropBridgeV2Function('list-pending-v2', {
+            deviceId,
+            limit: DROPBRIDGE_V2_POLL_LIMIT
+        }, accessToken);
+
+        const uploads = Array.isArray(payload?.uploads) ? payload.uploads : [];
+        console.log(`[DropBridge v2] Poll (${reason}) returned ${uploads.length} upload(s)`);
+        dropBridgeDebug('poll: uploads ready', {
+            reason,
+            deviceId,
+            uploadCount: uploads.length,
+            uploads
+        });
+
+        for (let index = 0; index < uploads.length; index += 1) {
+            const upload = uploads[index];
+            dropBridgeDebug('poll: processing upload', {
+                reason,
+                deviceId,
+                index,
+                total: uploads.length,
+                uploadId: resolveDropBridgeUploadId(upload)
+            });
+            await processDropBridgeV2Upload(upload, accessToken, deviceId);
+        }
+    } catch (error) {
+        console.error(`[DropBridge v2] Poll failure (${reason}):`, parseErrorMessage(error));
+        dropBridgeDebug('poll: failure', {
+            reason,
+            error: parseErrorMessage(error)
+        });
+    } finally {
+        dropBridgeV2PollInFlight = false;
+        dropBridgeDebug('poll: end', {
+            reason,
+            durationMs: Date.now() - pollStartedAtMs
+        });
+    }
+}
+
+function stopDropBridgeV2Loop() {
+    dropBridgeDebug('loop: stop requested', {
+        hadPollTimer: Boolean(dropBridgeV2PollTimer),
+        hadRegisterTimer: Boolean(dropBridgeV2RegisterTimer),
+        activeUploads: dropBridgeV2ActiveUploads.size
+    });
+    if (dropBridgeV2PollTimer) {
+        clearInterval(dropBridgeV2PollTimer);
+        dropBridgeV2PollTimer = null;
+    }
+    if (dropBridgeV2RegisterTimer) {
+        clearInterval(dropBridgeV2RegisterTimer);
+        dropBridgeV2RegisterTimer = null;
+    }
+    dropBridgeV2ActiveUploads.clear();
+    dropBridgeDebug('loop: stopped');
+}
+
+async function startDropBridgeV2Loop(reason = 'startup') {
+    if (!DROPBRIDGE_V2_ENABLED || !supabaseClient) {
+        dropBridgeDebug('loop: start skipped', {
+            reason,
+            enabled: DROPBRIDGE_V2_ENABLED,
+            hasSupabaseClient: Boolean(supabaseClient)
+        });
+        return;
+    }
+    dropBridgeDebug('loop: start begin', { reason });
+
+    try {
+        const accessToken = await getDropBridgeV2AccessToken();
+        if (!accessToken) {
+            dropBridgeDebug('loop: start no token, stopping existing timers', { reason });
+            stopDropBridgeV2Loop();
+            return;
+        }
+
+        const registered = await registerDropBridgeV2Device(reason, accessToken);
+        if (!registered) {
+            dropBridgeDebug('loop: start register returned false', { reason });
+            return;
+        }
+
+        if (!dropBridgeV2PollTimer) {
+            dropBridgeV2PollTimer = setInterval(() => {
+                pollDropBridgeV2Once('interval');
+            }, DROPBRIDGE_V2_POLL_INTERVAL_MS);
+            console.log(`[DropBridge v2] Poll loop started (${Math.round(DROPBRIDGE_V2_POLL_INTERVAL_MS / 1000)}s)`);
+            dropBridgeDebug('loop: poll timer started', {
+                intervalMs: DROPBRIDGE_V2_POLL_INTERVAL_MS
+            });
+        }
+
+        if (!dropBridgeV2RegisterTimer) {
+            dropBridgeV2RegisterTimer = setInterval(() => {
+                registerDropBridgeV2Device('refresh').catch((error) => {
+                    console.error('[DropBridge v2] Periodic register failure:', parseErrorMessage(error));
+                });
+            }, DROPBRIDGE_V2_REGISTER_REFRESH_MS);
+            dropBridgeDebug('loop: register refresh timer started', {
+                intervalMs: DROPBRIDGE_V2_REGISTER_REFRESH_MS
+            });
+        }
+
+        await pollDropBridgeV2Once(`${reason}-immediate`);
+        dropBridgeDebug('loop: start finished', { reason });
+    } catch (error) {
+        console.error(`[DropBridge v2] Startup failure (${reason}):`, parseErrorMessage(error));
+        dropBridgeDebug('loop: start failed', { reason, error: parseErrorMessage(error) });
+    }
+}
+
+async function bootstrapDropBridgeV2FromWorkerStart(reason = 'worker-start') {
+    dropBridgeDebug('bootstrap: begin', { reason });
+    await hydrateDropBridgeV2SessionFromStorage();
+    await startDropBridgeV2Loop(reason);
+    dropBridgeDebug('bootstrap: end', { reason });
 }
 
 /**
@@ -1413,9 +2160,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                                 }).then(({ error: sessionError }) => {
                                     if (sessionError) {
                                         console.error('[Canvascope Auth] Error setting session:', sessionError);
+                                        dropBridgeDebug('auth: setSession failed after OAuth', {
+                                            error: parseErrorMessage(sessionError)
+                                        });
                                         sendResponse({ success: false, error: sessionError.message });
                                     } else {
                                         console.log('[Canvascope Auth] Successfully authenticated!');
+                                        dropBridgeDebug('auth: OAuth success, starting DropBridge loop');
+                                        startDropBridgeV2Loop('post-login').catch((error) => {
+                                            console.error('[DropBridge v2] Post-login bootstrap failure:', parseErrorMessage(error));
+                                        });
                                         // Auto-sync indexed content to Supabase after login
                                         syncIndexedContentToSupabase().then(result => {
                                             console.log('[Canvascope Sync] Auto-sync after login:', result);
@@ -1502,11 +2256,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     } else if (message.type === 'signOut') {
         (async () => {
             try {
+                dropBridgeDebug('auth: signOut requested, stopping DropBridge loop');
                 const { error } = await supabaseClient.auth.signOut();
                 if (error) throw error;
+                stopDropBridgeV2Loop();
                 sendResponse({ success: true });
             } catch (err) {
                 console.error('[Canvascope Auth] Error signing out:', err);
+                dropBridgeDebug('auth: signOut failed', { error: parseErrorMessage(err) });
                 sendResponse({ success: false, error: err.message });
             }
         })();
@@ -1546,11 +2303,13 @@ async function syncIndexedContentToSupabase() {
 
     console.log(`[Canvascope Sync] Syncing ${items.length} indexed items to Supabase...`);
 
-    // First, delete existing synced_items for this user to do a full refresh
+    // First, delete extension-owned synced_items for this user to do a full refresh.
+    // Keep Lectra-origin rows (`pdf_document`) intact.
     const { error: deleteError } = await supabaseClient
         .from('synced_items')
         .delete()
-        .eq('user_id', userId);
+        .eq('user_id', userId)
+        .neq('item_type', 'pdf_document');
 
     if (deleteError) {
         console.error('[Canvascope Sync] Error clearing old items:', deleteError);
@@ -1593,12 +2352,13 @@ async function clearIndexedContentFromSupabase() {
     if (!session) return { success: false, error: 'Not signed in' };
 
     const userId = session.user.id;
-    console.log(`[Canvascope Sync] Clearing synced_items for user ${userId}...`);
+    console.log(`[Canvascope Sync] Clearing extension synced_items for user ${userId}...`);
 
     const { error: deleteError } = await supabaseClient
         .from('synced_items')
         .delete()
-        .eq('user_id', userId);
+        .eq('user_id', userId)
+        .neq('item_type', 'pdf_document');
 
     if (deleteError) {
         console.error('[Canvascope Sync] Error clearing items from Supabase:', deleteError);
@@ -1924,4 +2684,16 @@ chrome.tabs.query({}).then(tabs => {
             break;
         }
     }
+});
+
+chrome.runtime.onStartup.addListener(() => {
+    dropBridgeDebug('runtime.onStartup fired');
+    bootstrapDropBridgeV2FromWorkerStart('runtime-startup').catch((error) => {
+        console.error('[DropBridge v2] Runtime startup failure:', parseErrorMessage(error));
+    });
+});
+
+dropBridgeDebug('service worker immediate bootstrap call');
+bootstrapDropBridgeV2FromWorkerStart('service-worker-start').catch((error) => {
+    console.error('[DropBridge v2] Service worker bootstrap failure:', parseErrorMessage(error));
 });
