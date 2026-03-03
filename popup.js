@@ -1104,6 +1104,52 @@ function initializeElements() {
   elements.duePlanner = document.getElementById('due-planner');
 }
 
+function sanitizeAdminExport(data) {
+  // Deep clone first so we never mutate runtime state.
+  const cloned = JSON.parse(JSON.stringify(data || {}));
+
+  // Remove known top-level sensitive payloads.
+  delete cloned.canvascope_supabase_session;
+  delete cloned.supabase_session;
+  delete cloned.supabaseSession;
+  delete cloned.session;
+  delete cloned.auth;
+
+  // Recursively scrub token-like fields everywhere.
+  const sensitiveKeys = new Set([
+    'access_token',
+    'refresh_token',
+    'provider_token',
+    'provider_refresh_token',
+    'token',
+    'jwt',
+    'authorization',
+    'apikey',
+    'secret'
+  ]);
+
+  function scrub(node) {
+    if (!node || typeof node !== 'object') return;
+
+    if (Array.isArray(node)) {
+      for (const item of node) scrub(item);
+      return;
+    }
+
+    for (const key of Object.keys(node)) {
+      const lower = key.toLowerCase();
+      if (sensitiveKeys.has(lower) || lower.includes('token') || lower.includes('secret')) {
+        delete node[key];
+        continue;
+      }
+      scrub(node[key]);
+    }
+  }
+
+  scrub(cloned);
+  return cloned;
+}
+
 function setupEventListeners() {
   elements.searchInput.addEventListener('input', handleSearchInput);
   elements.searchInput.addEventListener('focus', showSearchHistory);
@@ -1233,16 +1279,18 @@ function setupEventListeners() {
       if (elements.searchInput.value.trim() === '[ADMIN]EXPORTALLDATA') {
         elements.searchInput.value = '';
         chrome.storage.local.get(null, (allData) => {
-          const dataStr = JSON.stringify(allData, null, 2);
+          const sanitized = sanitizeAdminExport(allData);
+          const dataStr = JSON.stringify(sanitized, null, 2);
           const blob = new Blob([dataStr], { type: 'application/json' });
           const url = URL.createObjectURL(blob);
           const a = document.createElement('a');
           a.href = url;
-          a.download = `canvascope_data_export_${new Date().toISOString().slice(0, 10)}.json`;
+          a.download = `canvascope_data_export_sanitized_${new Date().toISOString().slice(0, 10)}.json`;
           document.body.appendChild(a);
           a.click();
           document.body.removeChild(a);
           URL.revokeObjectURL(url);
+          console.log('[Canvascope] Admin export generated (sanitized)');
         });
         return;
       }
