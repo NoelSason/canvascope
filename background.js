@@ -62,7 +62,7 @@ const DROPBRIDGE_V2_STORAGE_DEVICE_ID = 'dropBridgeV2DeviceId';
 const DROPBRIDGE_MODE_STORAGE_KEY = 'dropBridgeMode';
 const DROPBRIDGE_V2_MODE = 'v2';
 const DROPBRIDGE_V2_POLL_LIMIT = 5;
-const DROPBRIDGE_V2_DEBUG = true;
+const DROPBRIDGE_V2_DEBUG = false; // enable only for local debugging
 
 let dropBridgeV2PollTimer = null;
 let dropBridgeV2RegisterTimer = null;
