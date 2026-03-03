@@ -2231,6 +2231,31 @@ function performSearch(query) {
     results = [...withDue.map(x => x.r), ...noDue];
   }
 
+  // General-query recency mode (no explicit assignment number/specifier):
+  // prefer the most recent assignment-like item first.
+  const generalTokens = (normalizedQuery || '').split(/\s+/).filter(t => t.length > 0 && !STOP_TOKENS.has(t));
+  const isGeneralQuery = !temporalIntent.kind && queryNums.length === 0 && generalTokens.length <= 3;
+
+  if (isGeneralQuery) {
+    const recencyCandidates = [];
+    const otherResults = [];
+
+    for (const r of results) {
+      const type = String(r.item?.type || '').toLowerCase();
+      const dueTs = parseDueTs(r.item);
+      const isTaskLike = type === 'assignment' || type === 'quiz' || type === 'discussion';
+      if (isTaskLike && dueTs > 0) {
+        recencyCandidates.push({ r, dueTs });
+      } else {
+        otherResults.push(r);
+      }
+    }
+
+    // Most recent due date first (newest assignment-like item at top)
+    recencyCandidates.sort((a, b) => b.dueTs - a.dueTs);
+    results = [...recencyCandidates.map(x => x.r), ...otherResults];
+  }
+
   results = results.slice(0, MAX_RESULTS);
 
   state.lastSearchTimeMs = searchTimeMs;
