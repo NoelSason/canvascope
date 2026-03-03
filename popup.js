@@ -2331,17 +2331,17 @@ function calculateScore(item, fuseScore, normalizedQuery, intent, queryNums, isP
     score -= 0.4;
   }
 
-  // ── Due-date-aware freshness ────────────────────
+  // ── Due-date-aware freshness (future > overdue) ────────────────────
   if (item.dueAt && (intent?.assignment > 0 || intent?.quiz > 0)) {
     const dueTs = new Date(item.dueAt).getTime();
     if (dueTs > 0) {
       const daysUntilDue = (dueTs - Date.now()) / (1000 * 60 * 60 * 24);
-      if (daysUntilDue >= 0 && daysUntilDue <= 14) {
-        // Upcoming: boost more the closer the due date
-        score += Math.max(0, 0.18 - daysUntilDue * 0.012);
+      if (daysUntilDue >= 0 && daysUntilDue <= 21) {
+        // Upcoming: strong boost, especially near-term
+        score += Math.max(0.08, 0.34 - daysUntilDue * 0.015);
       } else if (daysUntilDue < 0 && daysUntilDue > -30) {
-        // Recently past: mild decay
-        score += Math.max(0, 0.05 + daysUntilDue * 0.002);
+        // Overdue: explicit penalty so future tasks sort above overdue ones
+        score -= Math.min(0.55, 0.22 + Math.abs(daysUntilDue) * 0.03);
       }
     }
   }
