@@ -111,6 +111,120 @@ function detectQueryIntent(normalizedQuery) {
 }
 
 // ============================================
+// TEMPORAL QUERY INTENT (today / yesterday / this week / last week)
+// ============================================
+
+function levenshteinDistance(a, b) {
+  const s = String(a || '');
+  const t = String(b || '');
+  if (s === t) return 0;
+  if (!s.length) return t.length;
+  if (!t.length) return s.length;
+
+  const prev = new Array(t.length + 1);
+  const curr = new Array(t.length + 1);
+
+  for (let j = 0; j <= t.length; j++) prev[j] = j;
+
+  for (let i = 1; i <= s.length; i++) {
+    curr[0] = i;
+    for (let j = 1; j <= t.length; j++) {
+      const cost = s[i - 1] === t[j - 1] ? 0 : 1;
+      curr[j] = Math.min(
+        prev[j] + 1,
+        curr[j - 1] + 1,
+        prev[j - 1] + cost
+      );
+    }
+    for (let j = 0; j <= t.length; j++) prev[j] = curr[j];
+  }
+
+  return prev[t.length];
+}
+
+function tokenRoughlyMatches(token, target) {
+  if (!token || !target) return false;
+  const a = token.toLowerCase();
+  const b = target.toLowerCase();
+  if (a === b) return true;
+
+  // Allow common typos while keeping false positives low.
+  const maxDist = b.length >= 7 ? 2 : 1;
+  return levenshteinDistance(a, b) <= maxDist;
+}
+
+function detectTemporalIntent(normalizedQuery) {
+  const tokens = (normalizedQuery || '').split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return { kind: null, strippedQuery: normalizedQuery };
+
+  const weekIdx = tokens.findIndex(t => tokenRoughlyMatches(t, 'week'));
+  const thisIdx = tokens.findIndex(t => tokenRoughlyMatches(t, 'this'));
+  const lastIdx = tokens.findIndex(t => tokenRoughlyMatches(t, 'last'));
+  const todayIdx = tokens.findIndex(t => tokenRoughlyMatches(t, 'today'));
+  const yesterdayIdx = tokens.findIndex(t => tokenRoughlyMatches(t, 'yesterday'));
+
+  let kind = null;
+  const drop = new Set();
+
+  if (todayIdx !== -1) {
+    kind = 'today';
+    drop.add(todayIdx);
+  } else if (yesterdayIdx !== -1) {
+    kind = 'yesterday';
+    drop.add(yesterdayIdx);
+  } else if (weekIdx !== -1 && lastIdx !== -1) {
+    kind = 'last_week';
+    drop.add(weekIdx);
+    drop.add(lastIdx);
+  } else if (weekIdx !== -1 && thisIdx !== -1) {
+    kind = 'this_week';
+    drop.add(weekIdx);
+    drop.add(thisIdx);
+  } else if (weekIdx !== -1) {
+    // If user just says "week" (or typo), default to this_week behavior.
+    kind = 'this_week';
+    drop.add(weekIdx);
+  }
+
+  if (!kind) {
+    return { kind: null, strippedQuery: normalizedQuery };
+  }
+
+  const strippedTokens = tokens.filter((_, idx) => !drop.has(idx));
+  const strippedQuery = strippedTokens.join(' ').trim();
+
+  return { kind, strippedQuery };
+}
+
+function getTemporalWindow(kind) {
+  const now = Date.now();
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  if (kind === 'today') return { anchorTs: now, radiusMs: 2 * DAY_MS };
+  if (kind === 'yesterday') return { anchorTs: now - DAY_MS, radiusMs: 2 * DAY_MS };
+  if (kind === 'last_week') return { anchorTs: now - (7 * DAY_MS), radiusMs: 7 * DAY_MS };
+  // this_week (default)
+  return { anchorTs: now, radiusMs: 7 * DAY_MS };
+}
+
+function isTemporalTask(item) {
+  const t = String(item?.type || '').toLowerCase();
+  return t === 'assignment' || t === 'quiz' || t === 'discussion';
+}
+
+function applyTemporalFilter(results, temporalKind) {
+  if (!temporalKind) return results;
+  const { anchorTs, radiusMs } = getTemporalWindow(temporalKind);
+
+  return results.filter(r => {
+    const item = r?.item;
+    if (!item || !isTemporalTask(item) || !item.dueAt) return false;
+    const dueTs = new Date(item.dueAt).getTime();
+    if (!Number.isFinite(dueTs) || dueTs <= 0) return false;
+    return Math.abs(dueTs - anchorTs) <= radiusMs;
+  });
+}
+
+// ============================================
 // NUMERIC TOKEN HELPERS
 // ============================================
 
@@ -1737,6 +1851,17 @@ function performSearch(query) {
     normalizedQuery = expandAbbreviations(query);
   }
 
+  // Detect temporal intent (with typo tolerance), then strip the time phrase
+  // from the text query so lexical matching focuses on the actual subject tokens.
+  const temporalIntent = detectTemporalIntent(normalizedQuery);
+  if (temporalIntent.kind) {
+    const stripped = temporalIntent.strippedQuery;
+    if (stripped) {
+      effectiveQuery = stripped;
+      normalizedQuery = expandAbbreviations(stripped);
+    }
+  }
+
   // Derive search metadata once
   const intent = detectQueryIntent(normalizedQuery);
   const queryNums = extractNumericTokens(normalizedQuery);
@@ -1914,6 +2039,19 @@ function performSearch(query) {
     if (scopedResults.length > 0) {
       results = scopedResults;
     }
+  }
+
+  if (temporalIntent.kind) {
+    let temporalResults = applyTemporalFilter(results, temporalIntent.kind);
+
+    // If user queried only a time phrase (e.g., "this week"), search pipeline may
+    // have little/no lexical signal. Fall back to all indexed items, then filter by time.
+    if (temporalResults.length === 0 && (!normalizedQuery || normalizedQuery.length === 0)) {
+      const temporalSeed = state.filteredContent.map(item => ({ item, score: 0.5, prePass: false }));
+      temporalResults = applyTemporalFilter(temporalSeed, temporalIntent.kind);
+    }
+
+    results = temporalResults;
   }
 
   const searchTimeMs = Math.round(performance.now() - searchStart);
