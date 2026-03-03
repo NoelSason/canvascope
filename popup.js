@@ -2119,6 +2119,32 @@ function performSearch(query) {
   if (temporalIntent.kind) {
     let temporalResults = applyTemporalFilter(results, temporalIntent.kind);
 
+    // Ensure broad temporal queries (e.g. "lab this week") don't lose relevant items
+    // due to retrieval/ranking truncation.
+    const broadTokens = (normalizedQuery || '').split(/\s+/).filter(t => t.length > 0 && !STOP_TOKENS.has(t));
+    if (broadTokens.length <= 1) {
+      const recallSeed = [];
+      for (const item of searchCorpus) {
+        const searchable = [
+          item.searchTitleNormalized || normalizeText(item.title || ''),
+          normalizeText(item.folderPath || ''),
+          normalizeText(item.moduleName || '')
+        ].join(' ').toLowerCase();
+
+        const matchesBroadToken = broadTokens.length === 0 || broadTokens.every(t => searchable.includes(t));
+        if (matchesBroadToken) {
+          recallSeed.push({ item, score: 0.55, prePass: false, temporalRecall: true });
+        }
+      }
+
+      const merged = new Map();
+      for (const r of temporalResults) merged.set(r.item.url, r);
+      for (const r of recallSeed) {
+        if (!merged.has(r.item.url)) merged.set(r.item.url, r);
+      }
+      temporalResults = Array.from(merged.values());
+    }
+
     // If user queried only a time phrase (e.g., "this week"), search pipeline may
     // have little/no lexical signal. Fall back to all indexed items, then filter by time.
     if (temporalResults.length === 0 && (!normalizedQuery || normalizedQuery.length === 0)) {
