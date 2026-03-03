@@ -224,6 +224,17 @@ function applyTemporalFilter(results, temporalKind) {
   });
 }
 
+function filterItemsByTemporalWindow(items, temporalKind) {
+  if (!temporalKind) return items;
+  const { anchorTs, radiusMs } = getTemporalWindow(temporalKind);
+  return (items || []).filter(item => {
+    if (!isTemporalTask(item) || !item.dueAt) return false;
+    const dueTs = new Date(item.dueAt).getTime();
+    if (!Number.isFinite(dueTs) || dueTs <= 0) return false;
+    return Math.abs(dueTs - anchorTs) <= radiusMs;
+  });
+}
+
 // ============================================
 // NUMERIC TOKEN HELPERS
 // ============================================
@@ -1867,6 +1878,21 @@ function performSearch(query) {
   const intent = detectQueryIntent(normalizedQuery);
   const queryNums = extractNumericTokens(normalizedQuery);
 
+  // Temporal-first retrieval: when query has a time intent, scope the corpus
+  // before lexical ranking so relevant due items are never dropped by early truncation.
+  const searchCorpus = temporalIntent.kind
+    ? filterItemsByTemporalWindow(state.filteredContent, temporalIntent.kind)
+    : state.filteredContent;
+
+  if (searchCorpus.length === 0) {
+    showNoResults(`No results for "${query}"`);
+    updateOverlayFooter(0, 0);
+    return;
+  }
+
+  const activeFuse = temporalIntent.kind ? new Fuse(searchCorpus, FUSE_OPTIONS) : state.fuse;
+  const activeFuseRelaxed = temporalIntent.kind ? new Fuse(searchCorpus, FUSE_OPTIONS_RELAXED) : state.fuseRelaxed;
+
   const searchStart = performance.now();
 
   // ── Exact/prefix pre-pass ──────────────────────────
@@ -1877,7 +1903,7 @@ function performSearch(query) {
   const prePassHits = [];
   const prePassUrls = new Set();
 
-  for (const item of state.filteredContent) {
+  for (const item of searchCorpus) {
     const nt = (item.searchTitleNormalized || normalizeText(item.title || '')).toLowerCase();
 
     let bestBaseScore = null;
@@ -1912,11 +1938,11 @@ function performSearch(query) {
   }
 
   // ── Fuse pass A: strict ────────────────────────────
-  let fuseResults = state.fuse.search(normalizedQuery, { limit: MAX_RESULTS * 3 });
+  let fuseResults = activeFuse.search(normalizedQuery, { limit: MAX_RESULTS * 3 });
 
   // Also search with effective query and merge unique results
   if (normalizedQuery !== normalizeText(effectiveQuery)) {
-    const origResults = state.fuse.search(effectiveQuery, { limit: MAX_RESULTS * 3 });
+    const origResults = activeFuse.search(effectiveQuery, { limit: MAX_RESULTS * 3 });
     const seenUrls = new Set(fuseResults.map(r => r.item.url));
     for (const r of origResults) {
       if (!seenUrls.has(r.item.url)) {
@@ -1927,10 +1953,10 @@ function performSearch(query) {
   }
 
   // ── Fuse pass B: relaxed fallback ──────────────────
-  if (fuseResults.length === 0 && state.fuseRelaxed) {
-    fuseResults = state.fuseRelaxed.search(normalizedQuery, { limit: MAX_RESULTS * 3 });
+  if (fuseResults.length === 0 && activeFuseRelaxed) {
+    fuseResults = activeFuseRelaxed.search(normalizedQuery, { limit: MAX_RESULTS * 3 });
     if (fuseResults.length === 0) {
-      fuseResults = state.fuseRelaxed.search(effectiveQuery, { limit: MAX_RESULTS * 3 });
+      fuseResults = activeFuseRelaxed.search(effectiveQuery, { limit: MAX_RESULTS * 3 });
     }
   }
 
@@ -1949,7 +1975,7 @@ function performSearch(query) {
   const lexScores = new Map();
   const qTokens = normalizedQuery.toLowerCase().split(/\s+/).filter(t => t.length > 0 && (t.length > 1 || !STOP_TOKENS.has(t)));
   if (qTokens.length > 0) {
-    for (const item of state.filteredContent) {
+    for (const item of searchCorpus) {
       if (prePassUrls.has(item.url)) continue;
       const searchableText = `${item.searchTitleNormalized} ${item.folderPath || ''} ${item.moduleName || ''}`.toLowerCase();
       let matchedTokens = 0;
@@ -2003,7 +2029,7 @@ function performSearch(query) {
     // in title + folderPath + moduleName (catches folder-name matches)
     const qTokens = normalizedQuery.toLowerCase().split(/\s+/).filter(t => t.length > 0 && (t.length > 1 || !STOP_TOKENS.has(t)));
     if (qTokens.length > 0) {
-      for (const item of state.filteredContent) {
+      for (const item of searchCorpus) {
         if (seenUrls.has(item.url)) continue;
         const itemCourse = normalizeText(item.courseName || '');
         // Require word boundary after prefix to prevent "chem 3al" matching "chem 3a"
