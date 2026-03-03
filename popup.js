@@ -1002,6 +1002,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         elements.googleSignInBtn.querySelector('.btn-text').textContent = 'Signed in ✓';
         elements.googleSignInBtn.style.backgroundColor = 'var(--success-color, #4CAF50)';
         elements.googleSignInBtn.style.color = '#fff';
+        elements.googleSignInBtn.style.borderColor = 'rgba(76, 175, 80, 0.35)';
       }
     }
   });
@@ -1215,14 +1216,21 @@ function setupEventListeners() {
               elements.googleSignInBtn.querySelector('.btn-text').textContent = 'Signed in ✓';
               elements.googleSignInBtn.style.backgroundColor = 'var(--success-color, #4CAF50)';
               elements.googleSignInBtn.style.color = '#fff';
+              elements.googleSignInBtn.style.borderColor = 'rgba(76, 175, 80, 0.35)';
             }
           });
         } else {
           elements.googleSignInBtn.querySelector('.btn-text').textContent = 'Sign in error';
+          elements.googleSignInBtn.style.backgroundColor = '';
+          elements.googleSignInBtn.style.color = '';
+          elements.googleSignInBtn.style.borderColor = 'var(--glass-border)';
           console.error('Sign in failed:', response?.error);
           setTimeout(() => {
             if (elements.googleSignInBtn) {
               elements.googleSignInBtn.querySelector('.btn-text').textContent = 'Sign in';
+              elements.googleSignInBtn.style.backgroundColor = '';
+              elements.googleSignInBtn.style.color = '';
+              elements.googleSignInBtn.style.borderColor = 'var(--glass-border)';
             }
           }, 3000);
         }
@@ -1290,8 +1298,9 @@ function setupEventListeners() {
 
           // Reset Main Sign in Button
           elements.googleSignInBtn.querySelector('.btn-text').textContent = 'Sign in';
-          elements.googleSignInBtn.style.backgroundColor = 'var(--card-bg)';
-          elements.googleSignInBtn.style.color = 'var(--text-color)';
+          elements.googleSignInBtn.style.backgroundColor = '';
+          elements.googleSignInBtn.style.color = '';
+          elements.googleSignInBtn.style.borderColor = 'var(--glass-border)';
 
           // Hide account modal
           elements.accountModal.classList.add('hidden');
