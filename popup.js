@@ -968,6 +968,13 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Check if running in overlay mode
   checkOverlayMode();
+
+  // Top-right popup UX: disable wheel scrolling (overlay keeps its own behavior)
+  if (!state.isOverlayMode) {
+    window.addEventListener('wheel', (event) => {
+      event.preventDefault();
+    }, { passive: false });
+  }
 });
 
 function checkOverlayMode() {

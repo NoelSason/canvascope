@@ -61,6 +61,7 @@
 html {
   overflow: hidden;
   height: 100%;
+  background: var(--bg-gradient);
 }
 
 body {
@@ -69,6 +70,7 @@ body {
   color: var(--text-primary);
   width: var(--popup-width);
   min-height: 400px;
+  height: 100%;
   overflow: hidden;
   position: relative;
 }
@@ -175,6 +177,7 @@ body::after {
   flex-direction: column;
   gap: 14px;
   min-height: 400px;
+  height: 100%;
 }
 
 /* ============================================
@@ -443,6 +446,11 @@ body::after {
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-md);
   padding: 8px;
+}
+
+/* Top-right Chrome popup: lock scroll per user preference */
+body:not(.in-overlay) .results-container {
+  overflow-y: hidden;
 }
 
 /* ============================================
