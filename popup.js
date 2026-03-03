@@ -2202,6 +2202,35 @@ function performSearch(query) {
 
   // Apply full ranking pipeline (intent, numeric, coverage, click, due, diversity)
   results = rankResults(results, normalizedQuery, intent, queryNums);
+
+  // Hard ordering rule for temporal queries: upcoming/future items before overdue.
+  if (temporalIntent.kind) {
+    const nowTs = Date.now();
+    const withDue = [];
+    const noDue = [];
+
+    for (const r of results) {
+      const dueTs = parseDueTs(r.item);
+      if (dueTs > 0) withDue.push({ r, dueTs });
+      else noDue.push(r);
+    }
+
+    withDue.sort((a, b) => {
+      const aFuture = a.dueTs >= nowTs;
+      const bFuture = b.dueTs >= nowTs;
+
+      if (aFuture !== bFuture) return aFuture ? -1 : 1; // future first
+
+      // both future: sooner due first
+      if (aFuture && bFuture) return a.dueTs - b.dueTs;
+
+      // both overdue: less overdue first
+      return b.dueTs - a.dueTs;
+    });
+
+    results = [...withDue.map(x => x.r), ...noDue];
+  }
+
   results = results.slice(0, MAX_RESULTS);
 
   state.lastSearchTimeMs = searchTimeMs;
