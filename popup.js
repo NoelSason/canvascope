@@ -817,6 +817,38 @@ function detectCourseScope(query) {
   return null;
 }
 
+function getQueryCourseHintBoost(item, normalizedQuery) {
+  const q = normalizeText(normalizedQuery || '');
+  if (!q) return 0;
+
+  const qTokens = q.split(/\s+/).filter(Boolean);
+  const itemCourse = normalizeText(item.courseName || '');
+  if (!itemCourse) return 0;
+
+  const hasBioHint = qTokens.some(t => t === 'bio' || t === 'biol' || t === 'biology');
+  const hasChemHint = qTokens.some(t => t === 'chem' || t === 'chemistry');
+
+  let boost = 0;
+
+  if (hasBioHint) {
+    if (itemCourse.includes('biology') || itemCourse.includes('biol') || /\bbio\b/.test(itemCourse)) {
+      boost += 0.55;
+    } else {
+      boost -= 0.22;
+    }
+  }
+
+  if (hasChemHint) {
+    if (itemCourse.includes('chem') || itemCourse.includes('chemistry')) {
+      boost += 0.45;
+    } else {
+      boost -= 0.18;
+    }
+  }
+
+  return boost;
+}
+
 // ============================================
 // UI STATE MACHINE
 // ============================================
@@ -2269,6 +2301,9 @@ function calculateScore(item, fuseScore, normalizedQuery, intent, queryNums, isP
 
   // ── Starred-course boost ────────────────────────
   score += getStarredCourseBoost(item);
+
+  // ── Query course-hint boost (e.g., "bio lab this week") ──
+  score += getQueryCourseHintBoost(item, normalizedQuery);
 
   // ── Folder-context boost ────────────────────────
   // Boost items whose folder/module name matches query tokens
