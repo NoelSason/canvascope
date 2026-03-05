@@ -7,7 +7,7 @@
  * - Automatically scans LMS courses in the background
  * - Triggers when supported LMS tabs are detected
  * - Runs periodic updates to keep content fresh
- * - No user interaction required
+ * - Handles explicit user-triggered PDF handoff to Lectra
  * 
  * ============================================
  */
@@ -793,6 +793,17 @@ const KNOWN_BRIGHTSPACE_DOMAINS = [];
 
 const BRIGHTSPACE_DEFAULT_LP_VERSION = '1.49';
 const BRIGHTSPACE_DEFAULT_LE_VERSION = '1.82';
+const LECTRA_DOCUMENTS_BUCKET = 'lectra_documents';
+const PDF_HEADER_CHECK_BYTES = 1024;
+const PDF_SEND_MAX_BYTES = 25 * 1024 * 1024; // 25MB
+const PDF_CONTEXT_TIMEOUT_MS = 1800;
+
+const PDF_CONFIDENCE_RANK = {
+    none: 0,
+    weak: 1,
+    strong: 2,
+    definitive: 3
+};
 
 // Dynamically detected LMS domains (stored in chrome.storage)
 let customDomains = [];
@@ -809,6 +820,7 @@ const MAX_PAGES = 50;
 
 let isScanning = false;
 let lastScanTime = 0;
+const pdfSendInFlightKeys = new Set();
 
 // Load custom domains on startup
 chrome.storage.local.get(['customDomains']).then(data => {
@@ -2074,6 +2086,904 @@ function deduplicateCrossType(content) {
     return Array.from(groups.values());
 }
 
+function isHttpsUrl(rawUrl) {
+    try {
+        const parsed = new URL(rawUrl);
+        return parsed.protocol === 'https:';
+    } catch {
+        return false;
+    }
+}
+
+function isPdfSupportedFetchProtocol(protocol) {
+    return protocol === 'https:' || protocol === 'file:';
+}
+
+function decodePossiblyEncodedUrl(value) {
+    if (!value) return null;
+    let decoded = String(value);
+    for (let i = 0; i < 2; i += 1) {
+        try {
+            const next = decodeURIComponent(decoded);
+            if (next === decoded) break;
+            decoded = next;
+        } catch {
+            break;
+        }
+    }
+    return decoded;
+}
+
+function parsePdfViewerSrcFromTabUrl(tabUrl) {
+    if (!tabUrl) return null;
+    try {
+        const parsed = new URL(tabUrl);
+        const src = parsed.searchParams.get('src');
+        if (!src) return null;
+        const decoded = decodePossiblyEncodedUrl(src);
+        if (!decoded) return null;
+        return normalizePdfCandidateUrl(decoded);
+    } catch {
+        return null;
+    }
+}
+
+function normalizePdfCandidateUrl(url, baseUrl = null) {
+    if (!url) return null;
+    try {
+        const parsed = new URL(String(url), baseUrl || undefined);
+        if (!isPdfSupportedFetchProtocol(parsed.protocol)) return null;
+        parsed.hash = '';
+        return parsed.toString();
+    } catch {
+        return null;
+    }
+}
+
+function isKnownLmsOrCustomHost(hostname) {
+    const host = String(hostname || '').toLowerCase();
+    if (!host) return false;
+    return isCanvasHost(host) || isBrightspaceHost(host) || customDomains.includes(host);
+}
+
+function isLikelyCanvasFileUrl(rawUrl) {
+    try {
+        const parsed = new URL(rawUrl);
+        const path = parsed.pathname.toLowerCase();
+        if (path.includes('/courses/') && path.includes('/files/')) return true;
+        if (path.includes('/files/')) return true;
+        if (path.endsWith('/download')) return true;
+        if (parsed.searchParams.has('download')) return true;
+        return false;
+    } catch {
+        return false;
+    }
+}
+
+function isLikelyPdfHint(rawUrl) {
+    try {
+        const parsed = new URL(rawUrl);
+        const path = parsed.pathname.toLowerCase();
+        const query = parsed.search.toLowerCase();
+        return path.endsWith('.pdf')
+            || query.includes('content_type=application%2fpdf')
+            || query.includes('content-type=application%2fpdf')
+            || query.includes('mime=application%2fpdf');
+    } catch {
+        return false;
+    }
+}
+
+function deriveCanvasDownloadCandidates(rawUrl) {
+    try {
+        const parsed = new URL(rawUrl);
+        const path = parsed.pathname;
+        const courseMatch = path.match(/\/courses\/(\d+)\/files\//i);
+        const courseId = courseMatch?.[1] || null;
+
+        const candidates = [];
+        const seen = new Set();
+        const add = (fileId) => {
+            const id = String(fileId || '').trim();
+            if (!/^\d+$/.test(id)) return;
+            const variants = [];
+            if (courseId) {
+                variants.push(
+                    `${parsed.origin}/courses/${courseId}/files/${id}/download`,
+                    `${parsed.origin}/courses/${courseId}/files/${id}/download?download_frd=1`,
+                    `${parsed.origin}/courses/${courseId}/files/${id}/download?wrap=1`
+                );
+            }
+            variants.push(
+                `${parsed.origin}/files/${id}/download`,
+                `${parsed.origin}/files/${id}/download?download_frd=1`,
+                `${parsed.origin}/files/${id}/download?wrap=1`
+            );
+
+            for (const candidate of variants) {
+                if (seen.has(candidate)) continue;
+                seen.add(candidate);
+                candidates.push(candidate);
+            }
+        };
+
+        const previewId = parsed.searchParams.get('preview');
+        add(previewId);
+
+        const idMatch = path.match(/\/courses\/\d+\/files\/(\d+)(?:\/|$)/i);
+        if (idMatch?.[1]) add(idMatch[1]);
+
+        return candidates;
+    } catch {
+        return [];
+    }
+}
+
+function deriveDownloadUrlVariants(rawUrl) {
+    try {
+        const parsed = new URL(rawUrl);
+        const match = parsed.pathname.match(/\/(?:courses\/(\d+)\/)?files\/(\d+)\/download/i);
+        if (!match?.[2]) return [];
+
+        const courseId = match[1] || null;
+        const fileId = match[2];
+        const baseCandidates = [];
+        if (courseId) {
+            baseCandidates.push(`${parsed.origin}/courses/${courseId}/files/${fileId}/download`);
+        }
+        baseCandidates.push(`${parsed.origin}/files/${fileId}/download`);
+
+        const variants = [];
+        const seen = new Set();
+        for (const base of baseCandidates) {
+            for (const suffix of ['', '?download_frd=1', '?wrap=1']) {
+                const variant = `${base}${suffix}`;
+                if (seen.has(variant)) continue;
+                seen.add(variant);
+                variants.push(variant);
+            }
+        }
+        return variants;
+    } catch {
+        return [];
+    }
+}
+
+function hasPdfSignature(bytes) {
+    if (!bytes || bytes.length < 5) return false;
+    const max = Math.min(bytes.length, PDF_HEADER_CHECK_BYTES);
+    for (let i = 0; i <= max - 5; i += 1) {
+        if (
+            bytes[i] === 0x25 &&
+            bytes[i + 1] === 0x50 &&
+            bytes[i + 2] === 0x44 &&
+            bytes[i + 3] === 0x46 &&
+            bytes[i + 4] === 0x2d
+        ) {
+            return true;
+        }
+    }
+    return false;
+}
+
+function extractFilenameFromContentDisposition(header) {
+    if (!header) return null;
+    const utf8Match = header.match(/filename\*\s*=\s*UTF-8''([^;]+)/i);
+    if (utf8Match?.[1]) {
+        return decodePossiblyEncodedUrl(utf8Match[1]).replace(/^["']|["']$/g, '');
+    }
+
+    const plainMatch = header.match(/filename\s*=\s*("?)([^";]+)\1/i);
+    if (plainMatch?.[2]) {
+        return plainMatch[2].trim();
+    }
+
+    return null;
+}
+
+function filenameFromUrl(rawUrl) {
+    try {
+        const parsed = new URL(rawUrl);
+        const segments = parsed.pathname.split('/').filter(Boolean);
+        const name = segments.pop();
+        return name ? decodePossiblyEncodedUrl(name) : null;
+    } catch {
+        return null;
+    }
+}
+
+function parseCourseIdFromUrl(rawUrl) {
+    try {
+        const parsed = new URL(rawUrl);
+        const match = parsed.pathname.match(/\/courses\/(\d+)/i);
+        if (!match?.[1]) return null;
+        const id = Number.parseInt(match[1], 10);
+        return Number.isFinite(id) ? id : null;
+    } catch {
+        return null;
+    }
+}
+
+function prioritizePdfCandidates(candidates, pageUrl = null) {
+    let pageHost = '';
+    try {
+        pageHost = pageUrl ? new URL(pageUrl).hostname.toLowerCase() : '';
+    } catch {
+        pageHost = '';
+    }
+
+    return [...candidates].sort((a, b) => {
+        const score = (candidate) => {
+            let s = 0;
+            const confidence = String(candidate?.hintConfidence || 'weak').toLowerCase();
+            if (confidence === 'definitive') s += 300;
+            else if (confidence === 'strong') s += 200;
+            else s += 100;
+
+            try {
+                const host = new URL(candidate.url).hostname.toLowerCase();
+                if (host === pageHost) s += 70;
+                if (isKnownLmsOrCustomHost(host)) s += 40;
+            } catch {
+                // no-op
+            }
+
+            if (isLikelyCanvasFileUrl(candidate.url)) s += 20;
+            if (isLikelyPdfHint(candidate.url)) s += 15;
+            if (candidate?.source === 'viewer_src') s += 10;
+            return s;
+        };
+
+        return score(b) - score(a);
+    });
+}
+
+function withTimeout(promise, timeoutMs, fallbackValue) {
+    return new Promise((resolve) => {
+        let settled = false;
+        const timer = setTimeout(() => {
+            if (settled) return;
+            settled = true;
+            resolve(fallbackValue);
+        }, timeoutMs);
+
+        promise.then((result) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            resolve(result);
+        }).catch(() => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            resolve(fallbackValue);
+        });
+    });
+}
+
+function sendMessageToTab(tabId, message) {
+    return new Promise((resolve) => {
+        chrome.tabs.sendMessage(tabId, message, (response) => {
+            const err = chrome.runtime.lastError;
+            if (err) {
+                resolve({ success: false, error: err.message || 'No receiver' });
+                return;
+            }
+            resolve(response || { success: false, error: 'No response' });
+        });
+    });
+}
+
+async function collectPdfCandidatesFromTab(tabId) {
+    if (typeof tabId !== 'number') {
+        return { success: false, candidates: [], reason: 'invalid_tab' };
+    }
+
+    const fallback = { success: false, candidates: [], reason: 'timeout' };
+    const response = await withTimeout(
+        sendMessageToTab(tabId, { action: 'collectPdfCandidates' }),
+        PDF_CONTEXT_TIMEOUT_MS,
+        fallback
+    );
+
+    if (!response || response.success !== true || !Array.isArray(response.candidates)) {
+        return {
+            success: false,
+            candidates: [],
+            pageUrl: response?.pageUrl || null,
+            titleHint: response?.titleHint || null,
+            reason: response?.error || response?.reason || 'no_candidates'
+        };
+    }
+
+    return {
+        success: true,
+        candidates: response.candidates,
+        pageUrl: response.pageUrl || null,
+        titleHint: response.titleHint || null
+    };
+}
+
+async function resolveTargetTabForPdfMode(mode, sender) {
+    if (mode === 'sender_tab' && sender?.tab) {
+        return sender.tab;
+    }
+
+    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    return Array.isArray(tabs) && tabs.length > 0 ? tabs[0] : null;
+}
+
+async function probePdfCandidate(candidateUrl) {
+    const normalized = normalizePdfCandidateUrl(candidateUrl);
+    if (!normalized) {
+        return {
+            ok: false,
+            confidence: 'none',
+            reason: 'invalid_url',
+            contentType: null
+        };
+    }
+
+    let contentType = null;
+    let candidateProtocol = '';
+    try {
+        candidateProtocol = new URL(normalized).protocol;
+    } catch {
+        candidateProtocol = '';
+    }
+    const isFileCandidate = candidateProtocol === 'file:';
+
+    if (!isFileCandidate) {
+        try {
+            const headResp = await fetch(normalized, {
+                method: 'HEAD',
+                credentials: 'include',
+                redirect: 'follow'
+            });
+            if (headResp?.headers) {
+                contentType = headResp.headers.get('content-type') || null;
+            }
+        } catch {
+            // HEAD often fails on LMS file routes; GET range remains authoritative.
+        }
+    }
+
+    const sniffWithHeaders = async (headers = {}) => {
+        const options = {
+            method: 'GET',
+            redirect: 'follow',
+            headers
+        };
+        if (!isFileCandidate) {
+            options.credentials = 'include';
+        }
+        return fetch(normalized, options);
+    };
+
+    try {
+        let sniffResp;
+        try {
+            sniffResp = await sniffWithHeaders({
+                Range: `bytes=0-${PDF_HEADER_CHECK_BYTES - 1}`
+            });
+            if (sniffResp.status === 416) {
+                sniffResp = await sniffWithHeaders();
+            }
+        } catch {
+            sniffResp = await sniffWithHeaders();
+        }
+
+        if (!sniffResp.ok) {
+            if (sniffResp.status === 401 || sniffResp.status === 403) {
+                return {
+                    ok: false,
+                    confidence: 'none',
+                    reason: 'unauthorized',
+                    statusCode: sniffResp.status,
+                    contentType
+                };
+            }
+            return {
+                ok: false,
+                confidence: 'none',
+                reason: `http_${sniffResp.status}`,
+                statusCode: sniffResp.status,
+                contentType
+            };
+        }
+
+        const sniffContentType = sniffResp.headers.get('content-type');
+        if (!contentType && sniffContentType) {
+            contentType = sniffContentType;
+        }
+
+        const raw = new Uint8Array(await sniffResp.arrayBuffer());
+        const sniff = raw.subarray(0, Math.min(raw.length, PDF_HEADER_CHECK_BYTES));
+        const signatureMatch = hasPdfSignature(sniff);
+        const contentTypePdf = String(contentType || '').toLowerCase().includes('application/pdf');
+
+        if (signatureMatch) {
+            return {
+                ok: true,
+                confidence: 'definitive',
+                reason: 'pdf_header',
+                contentType
+            };
+        }
+
+        if (contentTypePdf) {
+            return {
+                ok: true,
+                confidence: 'strong',
+                reason: 'content_type_pdf',
+                contentType
+            };
+        }
+
+        if (isLikelyPdfHint(normalized)) {
+            return {
+                ok: true,
+                confidence: 'weak',
+                reason: 'url_hint_only',
+                contentType
+            };
+        }
+
+        return {
+            ok: false,
+            confidence: 'none',
+            reason: 'not_pdf',
+            contentType
+        };
+    } catch (error) {
+        return {
+            ok: false,
+            confidence: 'none',
+            reason: `network_error:${parseErrorMessage(error)}`,
+            contentType
+        };
+    }
+}
+
+async function buildPdfContextForTab(tab) {
+    if (!tab?.url) {
+        return {
+            hasPdf: false,
+            confidence: 'none',
+            candidateUrl: null,
+            sourcePageUrl: null,
+            titleHint: null,
+            reason: 'no_tab_url'
+        };
+    }
+
+    const viewerSrcUrl = parsePdfViewerSrcFromTabUrl(tab.url);
+    const candidates = [];
+    const seen = new Set();
+
+    const addCandidate = (url, source, hintConfidence = 'weak') => {
+        const normalized = normalizePdfCandidateUrl(url, tab.url);
+        if (!normalized || seen.has(normalized)) return;
+        seen.add(normalized);
+        candidates.push({
+            url: normalized,
+            source,
+            hintConfidence
+        });
+    };
+
+    if (viewerSrcUrl) {
+        addCandidate(viewerSrcUrl, 'viewer_src', 'strong');
+    }
+
+    const derivedCanvasDownloads = deriveCanvasDownloadCandidates(tab.url);
+    for (const candidate of derivedCanvasDownloads) {
+        addCandidate(candidate, 'canvas_preview_download', 'strong');
+    }
+
+    const tabCandidates = await collectPdfCandidatesFromTab(tab.id);
+    if (tabCandidates.success) {
+        for (const candidate of tabCandidates.candidates) {
+            addCandidate(candidate?.url, candidate?.source || 'content_script', candidate?.hintConfidence || 'weak');
+        }
+    }
+
+    const normalizedTabUrl = normalizePdfCandidateUrl(tab.url, tab.url);
+    if (normalizedTabUrl) {
+        const hasDirectPdfHint = isLikelyCanvasFileUrl(tab.url) || isLikelyPdfHint(tab.url);
+        addCandidate(normalizedTabUrl, 'active_tab_url', hasDirectPdfHint ? 'strong' : 'weak');
+    }
+
+    if (candidates.length === 0) {
+        return {
+            hasPdf: false,
+            confidence: 'none',
+            candidateUrl: null,
+            sourcePageUrl: normalizePdfCandidateUrl(tab.url, tab.url),
+            titleHint: tab.title || null,
+            reason: 'no_candidate_urls'
+        };
+    }
+
+    const sourcePageUrl = normalizePdfCandidateUrl(
+        tabCandidates.pageUrl || normalizedTabUrl || viewerSrcUrl,
+        tab.url
+    );
+
+    const prioritized = prioritizePdfCandidates(candidates, sourcePageUrl || tab.url);
+    let best = {
+        confidence: 'none',
+        candidateUrl: prioritized[0]?.url || null,
+        reason: 'candidate_not_verified'
+    };
+
+    for (const candidate of prioritized.slice(0, 6)) {
+        const probe = await probePdfCandidate(candidate.url);
+        if (!probe.ok && PDF_CONFIDENCE_RANK[probe.confidence] === 0) {
+            continue;
+        }
+
+        const probeRank = PDF_CONFIDENCE_RANK[probe.confidence] ?? 0;
+        const bestRank = PDF_CONFIDENCE_RANK[best.confidence] ?? 0;
+        if (probeRank > bestRank) {
+            best = {
+                confidence: probe.confidence,
+                candidateUrl: candidate.url,
+                reason: probe.reason || 'probe_success'
+            };
+        }
+
+        if (probe.confidence === 'definitive') {
+            break;
+        }
+    }
+
+    if (best.confidence === 'none') {
+        const localFileHint = prioritized.find((candidate) => {
+            if (!String(candidate?.url || '').startsWith('file:')) return false;
+            return isLikelyPdfHint(candidate.url);
+        });
+        if (localFileHint) {
+            best = {
+                confidence: 'strong',
+                candidateUrl: localFileHint.url,
+                reason: 'file_url_hint'
+            };
+        }
+    }
+
+    if (best.confidence === 'none' && prioritized.length > 0) {
+        const hintedFallback = prioritized[0];
+        const hintedConfidence = String(hintedFallback?.hintConfidence || 'weak').toLowerCase();
+        const fallbackConfidence = PDF_CONFIDENCE_RANK[hintedConfidence] > 0 ? hintedConfidence : 'weak';
+        best = {
+            confidence: fallbackConfidence,
+            candidateUrl: hintedFallback.url,
+            reason: 'hint_only'
+        };
+    }
+
+    return {
+        hasPdf: PDF_CONFIDENCE_RANK[best.confidence] >= PDF_CONFIDENCE_RANK.strong,
+        confidence: best.confidence,
+        candidateUrl: best.candidateUrl,
+        sourcePageUrl,
+        titleHint: tabCandidates.titleHint || tab.title || null,
+        reason: best.reason
+    };
+}
+
+async function downloadAndVerifyPdf(candidateUrl) {
+    const normalized = normalizePdfCandidateUrl(candidateUrl);
+    if (!normalized) {
+        return { ok: false, code: 'invalid_url', message: 'Invalid PDF URL.' };
+    }
+
+    let candidateProtocol = '';
+    try {
+        candidateProtocol = new URL(normalized).protocol;
+    } catch {
+        candidateProtocol = '';
+    }
+    const isFileCandidate = candidateProtocol === 'file:';
+
+    try {
+        const fetchOptions = {
+            method: 'GET',
+            redirect: 'follow'
+        };
+        if (!isFileCandidate) {
+            fetchOptions.credentials = 'include';
+        }
+
+        const response = await fetch(normalized, fetchOptions);
+
+        if (!response.ok) {
+            if (response.status === 401 || response.status === 403) {
+                return { ok: false, code: 'pdf_access_denied', message: 'Can’t access this PDF from this tab. Open it directly and try again.' };
+            }
+            if (response.status === 404) {
+                return { ok: false, code: 'pdf_not_found', message: 'No PDF detected on this page.' };
+            }
+            return {
+                ok: false,
+                code: 'pdf_download_failed',
+                message: `PDF download failed (${response.status}).`
+            };
+        }
+
+        const contentDisposition = response.headers.get('content-disposition') || '';
+        const filename = extractFilenameFromContentDisposition(contentDisposition) || filenameFromUrl(normalized);
+        const bytes = new Uint8Array(await response.arrayBuffer());
+        if (bytes.length === 0) {
+            return { ok: false, code: 'pdf_empty', message: 'Downloaded file is empty.' };
+        }
+        if (bytes.length > PDF_SEND_MAX_BYTES) {
+            return { ok: false, code: 'pdf_too_large', message: 'PDF is too large (25 MB max).' };
+        }
+
+        const headerSlice = bytes.subarray(0, Math.min(bytes.length, 2048));
+        if (!hasPdfSignature(headerSlice)) {
+            return { ok: false, code: 'pdf_invalid_header', message: 'This file is not a valid PDF.' };
+        }
+
+        return {
+            ok: true,
+            bytes,
+            filename,
+            contentType: response.headers.get('content-type') || null
+        };
+    } catch (error) {
+        if (isFileCandidate) {
+            return {
+                ok: false,
+                code: 'file_url_access_required',
+                message: 'Enable "Allow access to file URLs" for Canvascope in Extensions settings, then try again.'
+            };
+        }
+        return {
+            ok: false,
+            code: 'pdf_network_error',
+            message: `Network error: ${parseErrorMessage(error)}`
+        };
+    }
+}
+
+function buildPdfStoragePath(userId, rowId, date = new Date()) {
+    const year = String(date.getUTCFullYear());
+    const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+    return `${userId}/lectra_documents/imported_from_canvascope/${year}/${month}/${rowId}.pdf`;
+}
+
+function cleanTitle(title) {
+    const text = String(title || '').trim();
+    if (!text) return '';
+    return text.replace(/\s+/g, ' ').trim();
+}
+
+function derivePdfTitle({ titleHint, fallbackFilename, sourcePageTitle }) {
+    const preferred = cleanTitle(titleHint) || cleanTitle(fallbackFilename) || cleanTitle(sourcePageTitle);
+    if (!preferred) {
+        return `Imported PDF ${new Date().toISOString().slice(0, 10)}`;
+    }
+
+    return preferred.replace(/\.pdf$/i, '').trim() || preferred;
+}
+
+async function resolvePdfContextFromMessage({ mode, sender }) {
+    const tab = await resolveTargetTabForPdfMode(mode, sender);
+    if (!tab) {
+        return {
+            success: true,
+            hasPdf: false,
+            confidence: 'none',
+            candidateUrl: null,
+            sourcePageUrl: null,
+            titleHint: null,
+            reason: 'no_active_tab'
+        };
+    }
+
+    const context = await buildPdfContextForTab(tab);
+    return {
+        success: true,
+        hasPdf: context.hasPdf,
+        confidence: context.confidence,
+        candidateUrl: context.candidateUrl,
+        sourcePageUrl: context.sourcePageUrl,
+        titleHint: context.titleHint,
+        reason: context.reason
+    };
+}
+
+async function sendPdfToLectraFromMessage({ trigger, candidateUrl, sourcePageUrl, titleHint, sender }) {
+    if (!supabaseClient) {
+        return {
+            success: false,
+            code: 'supabase_unavailable',
+            message: 'Sync unavailable right now.'
+        };
+    }
+
+    const activeMode = sender?.tab ? 'sender_tab' : 'active_tab';
+    const context = await resolvePdfContextFromMessage({ mode: activeMode, sender });
+    const resolvedCandidateUrl = normalizePdfCandidateUrl(candidateUrl || context.candidateUrl, sourcePageUrl || context.sourcePageUrl);
+    const resolvedSourceUrl = normalizePdfCandidateUrl(sourcePageUrl || context.sourcePageUrl || resolvedCandidateUrl, context.sourcePageUrl || undefined);
+
+    if (!resolvedCandidateUrl || (!context.hasPdf && !candidateUrl)) {
+        return {
+            success: false,
+            code: 'no_pdf_detected',
+            message: 'No PDF detected on this page.'
+        };
+    }
+
+    const inFlightKey = `${sender?.tab?.id || 'active'}:${resolvedCandidateUrl}`;
+    if (pdfSendInFlightKeys.has(inFlightKey)) {
+        return {
+            success: false,
+            code: 'send_in_progress',
+            message: 'A send is already in progress for this PDF.'
+        };
+    }
+    pdfSendInFlightKeys.add(inFlightKey);
+
+    try {
+        const { data: { session }, error: sessionError } = await supabaseClient.auth.getSession();
+        if (sessionError) {
+            return {
+                success: false,
+                code: 'auth_error',
+                message: sessionError.message || 'Sign in to Canvascope to send PDFs to Lectra.'
+            };
+        }
+
+        if (!session?.user?.id) {
+            return {
+                success: false,
+                code: 'not_signed_in',
+                message: 'Sign in to Canvascope to send PDFs to Lectra.'
+            };
+        }
+
+        const attemptUrls = [];
+        const seenAttemptUrls = new Set();
+        const queueAttempt = (url) => {
+            const normalized = normalizePdfCandidateUrl(url, resolvedSourceUrl || resolvedCandidateUrl);
+            if (!normalized || seenAttemptUrls.has(normalized)) return;
+            seenAttemptUrls.add(normalized);
+            attemptUrls.push(normalized);
+        };
+
+        queueAttempt(resolvedCandidateUrl);
+        for (const variant of deriveDownloadUrlVariants(resolvedCandidateUrl || '')) {
+            queueAttempt(variant);
+        }
+        for (const variant of deriveCanvasDownloadCandidates(resolvedSourceUrl || '')) {
+            queueAttempt(variant);
+        }
+
+        let downloaded = null;
+        let selectedCandidateUrl = resolvedCandidateUrl;
+        for (const attemptUrl of attemptUrls) {
+            const attempt = await downloadAndVerifyPdf(attemptUrl);
+            if (attempt.ok) {
+                downloaded = attempt;
+                selectedCandidateUrl = attemptUrl;
+                break;
+            }
+            downloaded = attempt;
+        }
+
+        if (!downloaded?.ok) {
+            return {
+                success: false,
+                code: downloaded?.code || 'pdf_download_failed',
+                message: downloaded?.message || 'Failed to download PDF.'
+            };
+        }
+
+        const rowId = generateUuidV4();
+        const storagePath = buildPdfStoragePath(session.user.id, rowId);
+        const uploadData = downloaded.bytes.buffer.slice(
+            downloaded.bytes.byteOffset,
+            downloaded.bytes.byteOffset + downloaded.bytes.byteLength
+        );
+
+        const { error: uploadError } = await supabaseClient.storage
+            .from(LECTRA_DOCUMENTS_BUCKET)
+            .upload(storagePath, uploadData, {
+                contentType: 'application/pdf',
+                upsert: false
+            });
+
+        if (uploadError) {
+            const uploadMessage = String(uploadError.message || '');
+            const bucketMissing = /bucket\s+not\s+found/i.test(uploadMessage);
+            console.warn('[Canvascope PDF Sync] Upload failed', {
+                candidateUrl: selectedCandidateUrl,
+                storagePath,
+                error: uploadError
+            });
+            return {
+                success: false,
+                code: bucketMissing ? 'storage_bucket_missing' : 'upload_failed',
+                message: bucketMissing
+                    ? `Upload failed: bucket "${LECTRA_DOCUMENTS_BUCKET}" does not exist yet. Run the storage migration for Lectra PDF sync.`
+                    : (uploadError.message ? `Upload failed: ${uploadError.message}` : 'Upload failed. Please retry.')
+            };
+        }
+
+        const sourceForCourse = resolvedSourceUrl || selectedCandidateUrl;
+        const courseId = parseCourseIdFromUrl(sourceForCourse);
+        const resolvedTitle = derivePdfTitle({
+            titleHint: titleHint || context.titleHint,
+            fallbackFilename: downloaded.filename,
+            sourcePageTitle: context.titleHint
+        });
+
+        const rowPayload = {
+            id: rowId,
+            user_id: session.user.id,
+            item_type: 'pdf_document',
+            item_data: {
+                title: resolvedTitle,
+                courseId: courseId ?? null,
+                sourceUrl: sourceForCourse || null,
+                storagePath,
+                annotatedStoragePath: null,
+                status: 'pending_annotation',
+                sourcePlatform: 'canvascope_extension',
+                sourceKind: 'canvas_pdf_import'
+            },
+            sync_status: 'synced'
+        };
+
+        const { error: insertError } = await supabaseClient
+            .from('synced_items')
+            .insert(rowPayload);
+
+        if (insertError) {
+            console.warn('[Canvascope PDF Sync] Row insert failed', {
+                candidateUrl: selectedCandidateUrl,
+                storagePath,
+                error: insertError
+            });
+            await supabaseClient.storage
+                .from(LECTRA_DOCUMENTS_BUCKET)
+                .remove([storagePath])
+                .catch(() => {
+                    // Best effort cleanup only.
+                });
+
+            return {
+                success: false,
+                code: 'row_insert_failed',
+                message: insertError.message ? `Uploaded, but failed to register in Lectra: ${insertError.message}` : 'Uploaded, but failed to register in Lectra. Retry send.'
+            };
+        }
+
+        console.log('[Canvascope PDF Sync] Sent PDF to Lectra', {
+            trigger: trigger || 'unknown',
+            rowId,
+            storagePath,
+            bytes: downloaded.bytes.byteLength
+        });
+
+        return {
+            success: true,
+            code: 'ok',
+            message: 'Sent to Lectra ✓',
+            rowId,
+            storagePath,
+            bytesUploaded: downloaded.bytes.byteLength,
+            itemType: 'pdf_document'
+        };
+    } finally {
+        pdfSendInFlightKeys.delete(inFlightKey);
+    }
+}
+
 function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -2456,6 +3366,49 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             brightspaceSuffixes: BRIGHTSPACE_DOMAIN_SUFFIXES,
             brightspaceDomains: KNOWN_BRIGHTSPACE_DOMAINS
         });
+        return true;
+    }
+
+    if (message.action === 'resolvePdfContext') {
+        (async () => {
+            try {
+                const mode = message.mode === 'sender_tab' ? 'sender_tab' : 'active_tab';
+                const payload = await resolvePdfContextFromMessage({ mode, sender });
+                sendResponse(payload);
+            } catch (error) {
+                sendResponse({
+                    success: false,
+                    hasPdf: false,
+                    confidence: 'none',
+                    candidateUrl: null,
+                    sourcePageUrl: null,
+                    titleHint: null,
+                    reason: parseErrorMessage(error)
+                });
+            }
+        })();
+        return true;
+    }
+
+    if (message.action === 'sendPdfToLectra') {
+        (async () => {
+            try {
+                const result = await sendPdfToLectraFromMessage({
+                    trigger: message.trigger || 'unknown',
+                    candidateUrl: message.candidateUrl || null,
+                    sourcePageUrl: message.sourcePageUrl || null,
+                    titleHint: message.titleHint || null,
+                    sender
+                });
+                sendResponse(result);
+            } catch (error) {
+                sendResponse({
+                    success: false,
+                    code: 'unexpected_error',
+                    message: parseErrorMessage(error)
+                });
+            }
+        })();
         return true;
     }
 

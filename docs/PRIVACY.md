@@ -1,153 +1,118 @@
 # Canvascope - Privacy Policy
 
-**Last Updated**: February 2026 · **Version**: 2.1.0
+**Last Updated**: March 4, 2026  
+**Version**: 2.2.0
 
 ---
 
 ## Summary
 
-Canvascope is a privacy-first Chrome extension built by **Canvascope Inc.** Here's what you need to know:
+Canvascope is local-first for search indexing. Most course metadata used for search stays on your device.
 
-✅ **All data stays on your computer**
-✅ **No academic data is sent to any server**
-✅ **No tracking or analytics**
-✅ **You can delete all data anytime**
+Canvascope also includes optional cloud-connected features:
+- Google sign-in
+- Lectra PDF handoff (`Send to Lectra`)
+- Bug-report sync workflows (project-maintainer tooling)
 
----
-
-## What Data We Collect
-
-When Canvascope auto-syncs or you trigger a manual scan, we index:
-
-| Data Type | Example | Purpose |
-|-----------|---------|---------|
-| Link titles | "Week 3 Lecture Slides" | Search indexing |
-| Link URLs | `https://school.instructure.com/...` | Opening results |
-| Module names | "Module 2: Cell Biology" | Search context |
-| Folder paths | "1. Homework / 2. Unit 1" | Search context & folder-aware ranking |
-| File names | "lecture_notes.pdf" | Search indexing |
-| Content types | "pdf", "video", "assignment" | Filtering & intent detection |
-| Due dates | "2026-03-15T23:59:00Z" | Due date planner |
-| Course names | "Chem 3A (Spring 2025)" | Course-scoped search |
-
-### Click Feedback (Local Only)
-We store which search results you open (URL and timestamp) locally to provide a subtle relevance boost for frequently accessed items. This data never leaves your device.
-
-### Optional: Google Sign-In
-If you choose to sign in with Google, your email and display name are stored locally for the account profile display. This is used only within the extension and is not sent to any external analytics service.
+No analytics SDKs or ad trackers are used.
 
 ---
 
-## What We DON'T Collect
+## Data We Process
 
-❌ **Passwords** — Never accessed or stored
-❌ **Grades** — Not collected
-❌ **Assignment content** — Only titles and metadata, not actual content
-❌ **Messages** — Private messages and discussions are never accessed
-❌ **Browsing history** — Only Canvas/Brightspace pages you sync
-❌ **Location data** — Not collected
-❌ **Cookies** — Never accessed
+### Local Search Index (default behavior)
+When you scan LMS content, Canvascope stores local metadata such as:
+
+| Data Type | Example | Purpose | Storage |
+|---|---|---|---|
+| Link titles | "Week 3 Lecture Slides" | Search indexing | `chrome.storage.local` |
+| Link URLs | `https://school.instructure.com/...` | Open results | `chrome.storage.local` |
+| Course/module labels | "Module 2" | Context + ranking | `chrome.storage.local` |
+| Content types | `assignment`, `pdf`, `video` | Filters + ranking | `chrome.storage.local` |
+| Due dates | ISO timestamp | Due planner | `chrome.storage.local` |
+| Click feedback | URL + timestamp | Ranking tiebreaks | `chrome.storage.local` |
+
+### Optional Account Data
+If you sign in, Canvascope may read/store:
+
+| Data Type | Purpose | Storage |
+|---|---|---|
+| Email + display name | Account profile display | Local extension storage + Supabase auth session |
+| OAuth session tokens | Authenticated features | Local extension storage via Supabase auth adapter |
+
+### Optional Lectra PDF Handoff
+If you explicitly choose **Send to Lectra**:
+
+| Data Type | Purpose | Destination |
+|---|---|---|
+| Selected PDF file (max 25 MB) | iPad annotation workflow | Supabase Storage bucket `lectra_documents` |
+| PDF metadata (`title`, `courseId`, `sourceUrl`, `storagePath`, status) | Lectra sync coordination | Supabase table `synced_items` |
+
+This upload is user-initiated and tied to your authenticated account.
 
 ---
 
-## Where Data Is Stored
+## What We Do Not Do
 
-All data is stored **locally on your computer** using Chrome's Storage API.
-
-| Storage Type | Location | Access |
-|--------------|----------|--------|
-| `chrome.storage.local` | Your computer only | This extension only |
-
-**No cloud storage. No external databases for academic data.**
-
----
-
-## How Data Is Used
-
-Your data is used for **one purpose only**:
-
-> To let you search your Canvas/Brightspace course content quickly.
-
-We do NOT:
-- Sell your data
-- Share your data
-- Analyze your data
-- Use your data for advertising
-- Send your academic data anywhere
+- No ad targeting
+- No third-party analytics trackers
+- No selling academic data
+- No scraping of passwords or LMS credentials
 
 ---
 
 ## Third-Party Services
 
-| Service | Used? | Notes |
-|---------|-------|-------|
-| Analytics | ❌ No | No tracking whatsoever |
-| Advertising | ❌ No | No ads |
-| Cloud storage (academic data) | ❌ No | All local |
-| Supabase (bug reports only) | ✅ Optional | Only if user submits a bug report via Google Form sync |
-| Google OAuth | ✅ Optional | Only if user chooses to sign in |
+| Service | Used | Why |
+|---|---|---|
+| LMS endpoints (Canvas/Brightspace) | Yes | Fetch course metadata for indexing/sync |
+| Supabase Auth | Optional | Sign-in/session for account-linked features |
+| Supabase Database/Storage | Optional | Lectra PDF handoff + sync records |
+| Google OAuth | Optional | User sign-in flow |
 
 ---
 
-## Data Retention
+## Retention and Deletion
 
-**Automatic**: Data is stored until you delete it.
+### Local data
+- Stored until cleared by user.
+- Use **Clear All Data** in popup to remove local index data.
+- Uninstalling the extension removes extension-local storage.
 
-**Manual deletion**: Click "Clear All Data" in the extension popup.
-
-**On uninstall**: Chrome removes all extension data automatically.
-
----
-
-## Your Rights
-
-You have full control over your data:
-
-1. **View**: Search results show your indexed data
-2. **Delete**: Click "Clear All Data" anytime
-3. **Export**: Data is stored locally in standard JSON format
-4. **Dismiss**: Hide tasks from the due planner
+### Cloud data (if you use Send to Lectra)
+- PDF and metadata persist in Supabase project storage/database until deleted through backend workflows.
+- Removal is governed by project database/storage policies.
 
 ---
 
-## Security
+## Security Controls (High Level)
 
-See [SECURITY.md](./SECURITY.md) for detailed security information.
+- Manifest V3 + strict extension CSP
+- Restricted host permissions for supported LMS domains and Supabase
+- RLS-backed Supabase storage policies for user-owned Lectra files
 
-Key points:
-- Strict Content Security Policy
-- No inline code execution
-- Domain verification before any action
-- Input sanitization throughout
-
----
-
-## Children's Privacy
-
-This extension is designed for educational use and does not knowingly collect personal information from children under 13.
+See [SECURITY.md](./SECURITY.md) for full details.
 
 ---
 
 ## Changes to This Policy
 
-If we update this privacy policy, we will:
-1. Update the "Last Updated" date
-2. Provide a summary of changes
-3. Include the new policy in the extension update
+When this policy changes, we update:
+1. `Last Updated` date
+2. Version reference
+3. Documentation bundled with the extension
 
 ---
 
 ## Contact
 
-For privacy-related questions or concerns:
-1. Review the source code (it's open for inspection)
-2. Check the [SECURITY.md](./SECURITY.md) documentation
-3. Open an issue on the [GitHub repository](https://github.com/NoelSason/canvascope)
+For privacy questions:
+1. Review this repository source
+2. Open a repository issue
+3. Include extension version and reproducible steps
 
 ---
 
 ## Consent
 
-By using Canvascope, you agree to this privacy policy.
-
-**Remember**: You can uninstall the extension and delete all data at any time.
+By using Canvascope, you consent to this policy, including optional cloud processing when you explicitly use sign-in or Lectra handoff features.

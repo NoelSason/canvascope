@@ -945,6 +945,7 @@ let state = {
   recentlyOpened: [],
   isSignedIn: false,
   user: null,
+  activePdfContext: null,
   _courseCandidatesCache: null,
   _courseCandidatesVersion: 0,
   dismissedTasks: []
@@ -1009,6 +1010,10 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Check if current tab is a supported LMS and auto-detect domain
   checkCurrentTab();
+
+  if (!state.isOverlayMode) {
+    await refreshPdfFallbackAvailability();
+  }
 
   // Check if running in overlay mode
   checkOverlayMode();
@@ -1092,6 +1097,7 @@ function initializeElements() {
   elements.resultsContainer = document.getElementById('results-container');
   elements.emptyState = document.getElementById('empty-state');
   elements.refreshBtn = document.getElementById('refresh-btn');
+  elements.sendPdfBtn = document.getElementById('send-pdf-btn');
   elements.clearDataBtn = document.getElementById('clear-data-btn');
   elements.statusText = document.getElementById('status-text');
   elements.statsText = document.getElementById('stats-text');
@@ -1388,6 +1394,7 @@ function setupEventListeners() {
 
   elements.clearSearchBtn.addEventListener('click', clearSearch);
   elements.refreshBtn.addEventListener('click', handleRefresh);
+  if (elements.sendPdfBtn) elements.sendPdfBtn.addEventListener('click', handleSendPdfFallback);
   if (elements.clearDataBtn) elements.clearDataBtn.addEventListener('click', handleClearData);
   if (elements.statsBtn) elements.statsBtn.addEventListener('click', openBrowseModal);
   if (elements.closeBrowse) elements.closeBrowse.addEventListener('click', closeBrowseModal);
@@ -1674,6 +1681,143 @@ async function checkCurrentTab() {
     }
   } catch (e) {
     // Silently ignore - this is expected when not on a supported LMS page
+  }
+}
+
+function resetSendPdfButtonState() {
+  if (!elements.sendPdfBtn) return;
+  elements.sendPdfBtn.disabled = false;
+  elements.sendPdfBtn.querySelector('.btn-text').textContent = 'Send PDF to Lectra';
+  elements.sendPdfBtn.style.backgroundColor = '';
+  elements.sendPdfBtn.style.color = '';
+  elements.sendPdfBtn.style.borderColor = '';
+}
+
+function setSendPdfButtonStatus(text, status = 'idle') {
+  if (!elements.sendPdfBtn) return;
+
+  elements.sendPdfBtn.querySelector('.btn-text').textContent = text;
+
+  if (status === 'sending') {
+    elements.sendPdfBtn.disabled = true;
+    elements.sendPdfBtn.style.backgroundColor = 'rgba(33, 150, 243, 0.14)';
+    elements.sendPdfBtn.style.borderColor = 'rgba(33, 150, 243, 0.35)';
+    elements.sendPdfBtn.style.color = '#90CAF9';
+    return;
+  }
+
+  if (status === 'success') {
+    elements.sendPdfBtn.disabled = false;
+    elements.sendPdfBtn.style.backgroundColor = 'rgba(76, 175, 80, 0.14)';
+    elements.sendPdfBtn.style.borderColor = 'rgba(76, 175, 80, 0.35)';
+    elements.sendPdfBtn.style.color = '#81C784';
+    return;
+  }
+
+  if (status === 'error') {
+    elements.sendPdfBtn.disabled = false;
+    elements.sendPdfBtn.style.backgroundColor = 'rgba(244, 67, 54, 0.14)';
+    elements.sendPdfBtn.style.borderColor = 'rgba(244, 67, 54, 0.35)';
+    elements.sendPdfBtn.style.color = '#EF9A9A';
+    return;
+  }
+
+  resetSendPdfButtonState();
+}
+
+async function refreshPdfFallbackAvailability() {
+  if (!elements.sendPdfBtn) return;
+  if (state.isOverlayMode) {
+    elements.sendPdfBtn.classList.add('hidden');
+    return;
+  }
+  elements.sendPdfBtn.classList.remove('hidden');
+
+  try {
+    const response = await chrome.runtime.sendMessage({
+      action: 'resolvePdfContext',
+      mode: 'active_tab'
+    });
+
+    state.activePdfContext = response || null;
+    const confidence = String(response?.confidence || 'none').toLowerCase();
+    const hasPdf = Boolean(response?.hasPdf) && (confidence === 'definitive' || confidence === 'strong');
+    if (hasPdf) {
+      resetSendPdfButtonState();
+      elements.sendPdfBtn.title = '';
+    } else {
+      resetSendPdfButtonState();
+      elements.sendPdfBtn.title = 'Open a PDF tab to send.';
+    }
+  } catch (e) {
+    state.activePdfContext = null;
+    elements.sendPdfBtn.classList.remove('hidden');
+    resetSendPdfButtonState();
+    elements.sendPdfBtn.title = 'Open a PDF tab to send.';
+  }
+}
+
+async function handleSendPdfFallback() {
+  if (!elements.sendPdfBtn) return;
+
+  let context = state.activePdfContext;
+  const confidence = String(context?.confidence || 'none').toLowerCase();
+  const hasPdfContext = Boolean(context?.hasPdf) && (confidence === 'definitive' || confidence === 'strong');
+
+  if (!hasPdfContext) {
+    await refreshPdfFallbackAvailability();
+    context = state.activePdfContext;
+  }
+
+  const refreshedConfidence = String(context?.confidence || 'none').toLowerCase();
+  const hasPdf = Boolean(context?.hasPdf) && (refreshedConfidence === 'definitive' || refreshedConfidence === 'strong');
+  if (!hasPdf) {
+    setSendPdfButtonStatus('No PDF detected', 'error');
+    setTimeout(() => resetSendPdfButtonState(), 1600);
+    return;
+  }
+
+  const confirmed = confirm('Send this PDF to Lectra?');
+  if (!confirmed) return;
+
+  setSendPdfButtonStatus('Sending...', 'sending');
+
+  try {
+    const response = await chrome.runtime.sendMessage({
+      action: 'sendPdfToLectra',
+      trigger: 'popup_fallback',
+      candidateUrl: context?.candidateUrl || null,
+      sourcePageUrl: context?.sourcePageUrl || null,
+      titleHint: context?.titleHint || null
+    });
+
+    if (response?.success) {
+      setSendPdfButtonStatus('Sent to Lectra ✓', 'success');
+      showSyncedStatus('PDF sent to Lectra');
+      setTimeout(() => resetSendPdfButtonState(), 1800);
+      return;
+    }
+
+    const failureMessage = String(response?.message || 'Send failed');
+    console.warn('[Canvascope PDF Send] Failed', {
+      code: response?.code || 'unknown',
+      message: failureMessage
+    });
+    showErrorStatus(failureMessage);
+    setSendPdfButtonStatus('Send failed', 'error');
+    setTimeout(() => {
+      resetSendPdfButtonState();
+      refreshSyncStatus();
+    }, 2600);
+  } catch (e) {
+    const failureMessage = e?.message ? String(e.message) : 'Send failed';
+    console.warn('[Canvascope PDF Send] Unexpected failure', failureMessage);
+    showErrorStatus(failureMessage);
+    setSendPdfButtonStatus('Send failed', 'error');
+    setTimeout(() => {
+      resetSendPdfButtonState();
+      refreshSyncStatus();
+    }, 2600);
   }
 }
 

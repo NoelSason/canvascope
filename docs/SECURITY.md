@@ -1,125 +1,98 @@
 # Canvascope - Security Documentation
 
-This document explains the security measures implemented in Canvascope and provides a checklist for auditing the extension.
+This document summarizes the security model for Canvascope v2.2.0, including optional Lectra sync flows.
 
 ---
 
 ## Security Principles
 
-Canvascope follows these core security principles:
-
-1. **Privacy by Default** - All data stays on your computer
-2. **Least Privilege** - Only requests minimal permissions
-3. **No External Connections** - No data sent to any server
-4. **Defense in Depth** - Multiple layers of protection
+1. Local-first indexing by default
+2. Least-privilege extension permissions
+3. Explicit user action for cloud sync (`Send to Lectra`)
+4. Defense-in-depth with CSP + domain checks + backend RLS
 
 ---
 
 ## Threat Model
 
-### What We Protect Against
+### Primary risks and mitigations
 
-| Threat | Risk Level | Mitigation |
-|--------|------------|------------|
-| **XSS (Cross-Site Scripting)** | High | Use `textContent` instead of `innerHTML`; sanitize all inputs |
-| **Data Exfiltration** | High | No network requests; all data local |
-| **Privilege Escalation** | Medium | Minimal permissions; no `<all_urls>` |
-| **Malicious Site Injection** | Medium | Strict Canvas domain verification |
-| **Storage Tampering** | Low | Validate data structure on read |
-| **Code Injection** | High | Strict CSP; no `eval()`; no inline scripts |
+| Threat | Risk | Mitigation |
+|---|---|---|
+| XSS in extension UI | High | No inline scripts, strict CSP, avoid unsafe DOM insertion |
+| Unauthorized data access | High | Host permission scoping + domain validation + Supabase RLS |
+| Credential/session misuse | Medium | Supabase auth session isolation in extension storage adapter |
+| PDF abuse (wrong file/type/size) | Medium | Signature checks + 25 MB size cap + MIME constraints in storage policy |
+| Malicious extension interference | Medium | Out of scope; user browser hardening recommended |
 
-### What We DON'T Protect Against
+### Out of scope
 
-- **Malicious browser extensions** - Other extensions could access Chrome Storage
-- **Physical access** - Someone with your computer can access stored data
-- **Compromised browser** - If Chrome itself is compromised
+- Compromised local machine/browser profile
+- Other installed extensions with broad permissions
+- Account compromise outside this extension
 
 ---
 
-## Permissions Explained
+## Permission Review
 
 ### `storage`
-**Why needed**: Store indexed Canvas content locally between browser sessions.
-
-**Risk level**: Low - Data stays on device.
+Stores search index, preferences, and auth session artifacts.
 
 ### `activeTab`
-**Why needed**: Access the current Canvas tab to detect LMS domain and trigger content scripts.
-
-**Risk level**: Low - Only activates on user action.
+Used for tab-scoped actions and LMS/PDF context resolution.
 
 ### `tabs`
-**Why needed**: Query active tab URL for course-context detection and auto-sync triggering.
-
-**Risk level**: Low - Only reads tab URLs on supported LMS domains.
+Reads active tab context for scan triggers and routing.
 
 ### `alarms`
-**Why needed**: Schedule periodic background sync to keep indexed content fresh.
-
-**Risk level**: Low - No network requests, only triggers local re-indexing.
+Schedules background sync timers.
 
 ### `scripting`
-**Why needed**: Inject the ⌘K search overlay into Canvas pages dynamically.
-
-**Risk level**: Low - Only injects on verified Canvas domains.
+Used for frame scanning and extension script execution paths.
 
 ### `identity`
-**Why needed**: Optional Google Sign-In for account features and bug report sync.
+Enables Google OAuth sign-in flow.
 
-**Risk level**: Low - Only used if user explicitly signs in.
+### `downloads`
+Used by DropBridge file-transfer workflow in background service worker.
 
-### Host Permissions
-**Domains**: `*.instructure.com`, `bcourses.berkeley.edu`, `bruinlearn.ucla.edu`, `canvas.ucsd.edu`, `canvas.asu.edu`, `canvas.mit.edu`
+### Host permissions
+- LMS: `*.instructure.com`, `*.brightspace.com`, `*.d2l.com`, plus known school domains
+- Backend: `https://*.supabase.co/*`
 
-**Why needed**: Run content script on Canvas pages to extract course content and inject overlay.
-
-**Risk level**: Medium - Strictly limited to verified LMS domains only.
-
----
-
-## Security Audit Checklist
-
-Use this checklist to verify the extension's security:
-
-### ✅ Manifest Security
-- [ ] `manifest_version` is 3 (latest, most secure)
-- [ ] Host permissions limited to verified LMS domains
-- [ ] No `declarativeNetRequest` or `webRequest` permissions
-- [ ] CSP disallows inline scripts and eval
-- [ ] No `remotely_hosted_code`
-- [ ] `identity` permission only used for optional Google Sign-In
-
-### ✅ Content Script Security
-- [ ] Domain verification before any DOM access
-- [ ] No `eval()` or `new Function()`
-- [ ] No `document.write()`
-- [ ] No access to cookies or localStorage
-- [ ] No authentication bypass attempts
-
-### ✅ Popup Security
-- [ ] No `innerHTML` with user data
-- [ ] All user input sanitized before display
-- [ ] No inline event handlers
-- [ ] No external scripts loaded
-- [ ] URLs validated before opening
-
-### ✅ Data Security
-- [ ] No external network requests
-- [ ] All data stored locally only
-- [ ] Data deletion option provided
-- [ ] No sensitive data logged to console
-
-### ✅ Code Quality
-- [ ] All variables properly scoped
-- [ ] No global namespace pollution
-- [ ] Error handling prevents crashes
-- [ ] No dependencies on external CDNs
+Purpose: LMS data fetch + optional Lectra PDF upload/metadata sync.
 
 ---
 
-## Content Security Policy
+## Network Data Flows
 
-Our CSP settings in `manifest.json`:
+Canvascope performs network operations for:
+- LMS content retrieval (Canvas/Brightspace)
+- Optional auth/session handling with Supabase/Google OAuth
+- Optional `Send to Lectra` PDF upload + `synced_items` row insert
+
+Canvascope does not include ad/analytics SDK calls.
+
+---
+
+## Lectra Sync Controls
+
+`Send to Lectra` enforces:
+- User confirmation prompt
+- Authenticated session requirement
+- PDF signature validation
+- 25 MB upper bound
+- Storage path scoped by `auth.uid()`
+- RLS-restricted bucket (`lectra_documents`)
+
+Required migration:
+- `supabase/migrations/20260304211400_add_lectra_documents_storage.sql`
+
+---
+
+## CSP
+
+From `manifest.json`:
 
 ```json
 "content_security_policy": {
@@ -127,108 +100,25 @@ Our CSP settings in `manifest.json`:
 }
 ```
 
-### What This Means
-
-| Directive | Value | Effect |
-|-----------|-------|--------|
-| `script-src 'self'` | Only our own scripts | Blocks inline scripts and external scripts |
-| `object-src 'none'` | No plugins | Blocks Flash, Java, etc. |
-| `base-uri 'none'` | No base URL | Prevents base tag injection |
+This blocks inline/external script execution in extension pages.
 
 ---
 
-## Safe Coding Practices Used
+## Security Checklist
 
-### 1. Safe DOM Manipulation
-
-**Instead of:**
-```javascript
-// DANGEROUS - allows XSS
-element.innerHTML = userInput;
-```
-
-**We use:**
-```javascript
-// SAFE - escapes HTML automatically
-element.textContent = userInput;
-```
-
-### 2. URL Validation
-
-**Before opening any URL:**
-```javascript
-function isValidCanvasUrl(url) {
-  try {
-    const parsed = new URL(url);
-    if (parsed.protocol !== 'https:') return false;
-    return parsed.hostname.endsWith('.instructure.com');
-  } catch (e) {
-    return false;
-  }
-}
-```
-
-### 3. Domain Verification
-
-**Before running any content script logic:**
-```javascript
-function isCanvasDomain() {
-  const hostname = window.location.hostname.toLowerCase();
-  return hostname.endsWith('.instructure.com');
-}
-
-if (!isCanvasDomain()) {
-  // Don't run - not on Canvas
-  return;
-}
-```
+- [ ] `manifest_version` is 3
+- [ ] Host permissions remain limited to required domains
+- [ ] No remote script execution or `eval`
+- [ ] `Send to Lectra` requires explicit user action + auth
+- [ ] Supabase storage/database policies enforce per-user access
+- [ ] Console logs avoid sensitive secrets/content
 
 ---
 
-## Data Handling
+## Incident Response
 
-### What We Collect
-
-| Data | Purpose | Storage |
-|------|---------|---------|
-| Link titles | Search indexing | Local Chrome Storage |
-| Link URLs | Navigation | Local Chrome Storage |
-| Module names | Search context | Local Chrome Storage |
-| File names | Search indexing | Local Chrome Storage |
-
-### What We DON'T Collect
-
-- ❌ Passwords or authentication tokens
-- ❌ Personal information
-- ❌ Assignment content or grades
-- ❌ Discussion posts or messages
-- ❌ Any data from non-Canvas sites
-
-### Data Lifecycle
-
-1. **Collection**: Only when user clicks "Re-scan Canvas"
-2. **Storage**: Local Chrome Storage only
-3. **Access**: Only by this extension
-4. **Deletion**: User can click "Clear All Data" anytime
-
----
-
-## Reporting Security Issues
-
-If you find a security vulnerability:
-
-1. **Do not** post publicly
-2. Document the issue with steps to reproduce
-3. Contact the maintainer privately
-4. Allow time for a fix before disclosure
-
----
-
-## Security Updates
-
-When updating the extension:
-
-1. Review all code changes
-2. Run through Security Audit Checklist
-3. Test on a non-production Canvas account first
-4. Keep backups of previous working versions
+If you discover a vulnerability:
+1. Do not publish exploit details publicly first.
+2. Share reproduction steps privately with maintainers.
+3. Include version, environment, and logs.
+4. Coordinate patch and disclosure timeline.

@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Canvascope",
-  "version": "2.1.0",
-  "description": "Instantly search all your Canvas course content using natural language. Privacy-first, all data stays with you.",
+  "version": "3.0.0",
+  "description": "Instantly search Canvas and Brightspace content, then optionally send PDFs to Lectra for iPad annotation.",
   "icons": {
     "16": "icons/icon16.png",
     "32": "icons/icon32.png",
@@ -36,6 +36,8 @@
   "host_permissions": [
     "https://*.supabase.co/*",
     "*://*.instructure.com/*",
+    "*://*.brightspace.com/*",
+    "*://*.d2l.com/*",
     "*://bcourses.berkeley.edu/*",
     "*://bruinlearn.ucla.edu/*",
     "*://canvas.ucsd.edu/*",
@@ -46,6 +48,8 @@
     {
       "matches": [
         "*://*.instructure.com/*",
+        "*://*.brightspace.com/*",
+        "*://*.d2l.com/*",
         "*://bcourses.berkeley.edu/*",
         "*://bruinlearn.ucla.edu/*",
         "*://canvas.ucsd.edu/*",

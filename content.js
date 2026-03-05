@@ -4,20 +4,20 @@
  * ============================================
  * 
  * PURPOSE:
- * This script runs on Canvas pages and extracts content
+ * This script runs on supported LMS pages and extracts Canvas content
  * (links, titles, file names, module names) for indexing.
  * 
  * HOW IT WORKS:
- * 1. Script is injected into Canvas pages (*.instructure.com)
+ * 1. Script is injected on supported LMS domains from manifest rules
  * 2. Waits for message from popup to start scanning
  * 3. Reads the visible DOM content (NOT hidden APIs)
  * 4. Sends extracted content back to popup
  * 
  * SECURITY PRINCIPLES:
- * - Only runs on verified Canvas domains
+ * - Privileged indexing operations run only on verified Canvas domains
  * - Only reads visible content (no API bypass)
  * - Never accesses authentication tokens
- * - Never sends data to external servers
+ * - Does not directly post collected content to third-party analytics endpoints
  * - Respects user privacy
  * 
  * ============================================
@@ -191,6 +191,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return true;
     }
 
+    if (message.action === 'collectPdfCandidates') {
+        sendResponse(collectPdfCandidates());
+        return true;
+    }
+
     // SECURITY: Verify we're on Canvas before doing anything else
     if (!isCanvasDomain()) {
         sendResponse({ error: 'Not on a Canvas page' });
@@ -274,6 +279,287 @@ function detectBrightspacePage() {
     }
 
     return false;
+}
+
+// ============================================
+// LECTRA PDF SEND UI + CANDIDATE DISCOVERY
+// ============================================
+
+let lectraPdfContext = null;
+let lectraSendButton = null;
+let lectraSendButtonBusy = false;
+let lectraPdfRefreshTimer = null;
+let lectraHooksInstalled = false;
+
+function normalizePdfCandidateUrl(rawUrl, baseUrl = window.location.href) {
+    if (!rawUrl) return null;
+    try {
+        const parsed = new URL(rawUrl, baseUrl);
+        if (parsed.protocol !== 'https:') return null;
+        parsed.hash = '';
+        return parsed.toString();
+    } catch {
+        return null;
+    }
+}
+
+function isCanvasFilePath(pathname) {
+    const path = String(pathname || '').toLowerCase();
+    return path.includes('/courses/') && path.includes('/files/');
+}
+
+function collectPdfCandidates() {
+    const candidates = [];
+    const seen = new Set();
+    const addCandidate = (url, source, hintConfidence = 'weak') => {
+        const normalized = normalizePdfCandidateUrl(url);
+        if (!normalized || seen.has(normalized)) return;
+        seen.add(normalized);
+        candidates.push({ url: normalized, source, hintConfidence });
+    };
+
+    if (isCanvasFilePath(window.location.pathname)) {
+        addCandidate(window.location.href, 'page_url', 'weak');
+    }
+
+    const pdfLikeEmbeds = document.querySelectorAll('embed[src], object[data], iframe[src]');
+    pdfLikeEmbeds.forEach((element) => {
+        const typeAttr = String(element.getAttribute('type') || '').toLowerCase();
+        const rawUrl = element.getAttribute('src') || element.getAttribute('data');
+        const url = normalizePdfCandidateUrl(rawUrl);
+        if (!url) return;
+
+        const isPdfTyped = typeAttr.includes('pdf');
+        const looksLikeFileRoute = url.includes('/files/') || url.includes('/download');
+        const hint = isPdfTyped ? 'definitive' : (looksLikeFileRoute ? 'strong' : 'weak');
+        addCandidate(url, `${element.tagName.toLowerCase()}_embed`, hint);
+    });
+
+    const includeBroaderFileRoutes = isCanvasFilePath(window.location.pathname)
+        || window.location.pathname.toLowerCase().includes('/files');
+    const linkSelector = includeBroaderFileRoutes
+        ? 'a.file_download_btn[href], a.instructure_file_link[href], a[href*="/files/"][data-api-endpoint], a[href*="/download"][data-api-endpoint]'
+        : 'a.file_download_btn[href], a.instructure_file_link[href]';
+    const fileLinks = document.querySelectorAll(linkSelector);
+    fileLinks.forEach((link) => {
+        const linkText = `${link.textContent || ''} ${link.getAttribute('title') || ''}`.toLowerCase();
+        const classText = String(link.className || '').toLowerCase();
+        const hasPdfHint = linkText.includes('pdf') || classText.includes('pdf');
+        addCandidate(link.href, 'file_link', hasPdfHint ? 'strong' : 'weak');
+    });
+
+    if (String(document.contentType || '').toLowerCase().includes('application/pdf')) {
+        addCandidate(window.location.href, 'document_content_type', 'strong');
+    }
+
+    const heading = document.querySelector('h1, .ef-header h1, .file-header h1, .title');
+    const titleHint = (heading?.textContent || document.title || '').trim();
+
+    return {
+        success: true,
+        pageUrl: window.location.href,
+        titleHint,
+        candidates
+    };
+}
+
+function ensureLectraSendButton() {
+    if (lectraSendButton && lectraSendButton.isConnected) {
+        return lectraSendButton;
+    }
+
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.id = 'canvascope-send-to-lectra-btn';
+    button.textContent = 'Send to Lectra';
+    button.style.cssText = `
+        position: fixed;
+        right: 20px;
+        bottom: 96px;
+        z-index: 2147483000;
+        padding: 10px 14px;
+        border-radius: 12px;
+        border: 1px solid rgba(255, 255, 255, 0.24);
+        background: linear-gradient(135deg, #d43c3c 0%, #b72c2c 100%);
+        color: #fff;
+        font-size: 13px;
+        font-weight: 600;
+        box-shadow: 0 10px 24px rgba(0, 0, 0, 0.32);
+        cursor: pointer;
+        transition: transform 0.15s ease, opacity 0.2s ease;
+    `;
+    button.addEventListener('mouseenter', () => {
+        if (!lectraSendButtonBusy) {
+            button.style.transform = 'translateY(-1px)';
+        }
+    });
+    button.addEventListener('mouseleave', () => {
+        button.style.transform = 'translateY(0)';
+    });
+    button.addEventListener('click', handleLectraSendButtonClick);
+
+    document.body.appendChild(button);
+    lectraSendButton = button;
+    return button;
+}
+
+function removeLectraSendButton() {
+    if (lectraSendButton && lectraSendButton.parentNode) {
+        lectraSendButton.parentNode.removeChild(lectraSendButton);
+    }
+    lectraSendButton = null;
+    lectraSendButtonBusy = false;
+}
+
+function setLectraSendButtonState(text, state = 'idle') {
+    const button = ensureLectraSendButton();
+    button.textContent = text;
+
+    if (state === 'sending') {
+        lectraSendButtonBusy = true;
+        button.disabled = true;
+        button.style.opacity = '0.8';
+        button.style.cursor = 'default';
+    } else if (state === 'success') {
+        lectraSendButtonBusy = false;
+        button.disabled = false;
+        button.style.opacity = '1';
+        button.style.cursor = 'pointer';
+        button.style.background = 'linear-gradient(135deg, #1f9f5a 0%, #187a45 100%)';
+    } else if (state === 'error') {
+        lectraSendButtonBusy = false;
+        button.disabled = false;
+        button.style.opacity = '1';
+        button.style.cursor = 'pointer';
+        button.style.background = 'linear-gradient(135deg, #a43b3b 0%, #7f2a2a 100%)';
+    } else {
+        lectraSendButtonBusy = false;
+        button.disabled = false;
+        button.style.opacity = '1';
+        button.style.cursor = 'pointer';
+        button.style.background = 'linear-gradient(135deg, #d43c3c 0%, #b72c2c 100%)';
+    }
+}
+
+function scheduleLectraPdfContextRefresh(delayMs = 0) {
+    if (lectraPdfRefreshTimer) {
+        clearTimeout(lectraPdfRefreshTimer);
+    }
+    lectraPdfRefreshTimer = setTimeout(refreshLectraPdfContext, delayMs);
+}
+
+function refreshLectraPdfContext() {
+    if (!isCanvasDomain()) {
+        removeLectraSendButton();
+        return;
+    }
+
+    chrome.runtime.sendMessage({ action: 'resolvePdfContext', mode: 'sender_tab' }, (response) => {
+        if (chrome.runtime.lastError) {
+            removeLectraSendButton();
+            return;
+        }
+
+        lectraPdfContext = response || null;
+        const confidence = String(response?.confidence || 'none').toLowerCase();
+        const shouldShow = Boolean(response?.hasPdf) && (confidence === 'definitive' || confidence === 'strong');
+
+        if (!shouldShow) {
+            removeLectraSendButton();
+            return;
+        }
+
+        setLectraSendButtonState('Send to Lectra', 'idle');
+    });
+}
+
+function handleLectraSendButtonClick() {
+    if (lectraSendButtonBusy) return;
+
+    const candidateUrl = lectraPdfContext?.candidateUrl || null;
+    if (!candidateUrl) {
+        scheduleLectraPdfContextRefresh(0);
+        return;
+    }
+
+    const confirmed = window.confirm('Send this PDF to Lectra?');
+    if (!confirmed) return;
+
+    setLectraSendButtonState('Sending…', 'sending');
+
+    chrome.runtime.sendMessage({
+        action: 'sendPdfToLectra',
+        trigger: 'floating_button',
+        candidateUrl,
+        sourcePageUrl: lectraPdfContext?.sourcePageUrl || window.location.href,
+        titleHint: lectraPdfContext?.titleHint || document.title || ''
+    }, (response) => {
+        if (chrome.runtime.lastError) {
+            setLectraSendButtonState('Failed', 'error');
+            const runtimeMessage = chrome.runtime.lastError.message || 'Send failed.';
+            if (runtimeMessage) {
+                window.alert(runtimeMessage);
+            }
+            setTimeout(() => {
+                if (lectraSendButton) {
+                    setLectraSendButtonState('Send to Lectra', 'idle');
+                }
+            }, 1800);
+            return;
+        }
+
+        if (response?.success) {
+            setLectraSendButtonState('Sent ✓', 'success');
+            setTimeout(() => {
+                if (lectraSendButton) {
+                    setLectraSendButtonState('Send to Lectra', 'idle');
+                }
+            }, 1800);
+            return;
+        }
+
+        setLectraSendButtonState('Failed', 'error');
+        if (response?.message) {
+            window.alert(String(response.message));
+        }
+        setTimeout(() => {
+            if (lectraSendButton) {
+                setLectraSendButtonState('Send to Lectra', 'idle');
+            }
+        }, 2200);
+    });
+}
+
+function installLectraNavigationHooks() {
+    if (lectraHooksInstalled) return;
+    lectraHooksInstalled = true;
+
+    const schedule = () => scheduleLectraPdfContextRefresh(250);
+    window.addEventListener('popstate', schedule);
+    window.addEventListener('hashchange', schedule);
+
+    ['pushState', 'replaceState'].forEach((method) => {
+        const original = history[method];
+        if (typeof original !== 'function') return;
+        history[method] = function wrappedHistoryState(...args) {
+            const result = original.apply(this, args);
+            schedule();
+            return result;
+        };
+    });
+
+    const observer = new MutationObserver(() => {
+        if (!document.body || !lectraSendButton || !lectraSendButton.isConnected) {
+            scheduleLectraPdfContextRefresh(150);
+        }
+    });
+    observer.observe(document.documentElement || document.body, { childList: true, subtree: true });
+}
+
+function initializeLectraPdfSendUi() {
+    if (!isCanvasDomain()) return;
+    installLectraNavigationHooks();
+    scheduleLectraPdfContextRefresh(400);
 }
 
 // ============================================
@@ -876,6 +1162,7 @@ function sendProgress(percent, status) {
  */
 if (isSupportedLmsDomain() || detectCanvasPage() || detectBrightspacePage()) {
     console.log('[Canvascope Content] Content script loaded on supported LMS page');
+    initializeLectraPdfSendUi();
 } else {
     console.log('[Canvascope Content] Not a supported LMS page, staying dormant');
 }

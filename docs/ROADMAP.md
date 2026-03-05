@@ -1,115 +1,61 @@
 # Canvascope - Development Roadmap
 
-## Current State (v2.1.0)
-- Local fuzzy + hybrid search with Fuse.js and lexical retrieval
-- Auto-sync when Canvas or Brightspace tabs detected
-- Course-scoped search (prefix and suffix)
-- Abbreviation expansion, single-letter/numeric token matching
-- ⌘K overlay for in-page search
-- Due date planner with dismissable tasks
-- Click-feedback and diversity re-ranking
-- Google Sign-In integration
-- Multi-school support (Berkeley, UCLA, UCSD, ASU, MIT + custom domains)
+## Current State (v2.2.0)
+
+- Hybrid local search (Fuse + lexical fusion)
+- Course-scoped queries + abbreviation expansion
+- Due planner + keyboard overlay
+- Optional Google sign-in
+- Lectra PDF handoff (`Send to Lectra`)
+- Supabase-backed `pdf_document` sync contract for iPad pickup
 
 ---
 
-## ~~Phase 1: Search Quality (Completed)~~
+## Completed
 
-### ~~1.1 Better Ranking~~
-- ~~Boost recent content in results~~
-- ~~Weight by content type (assignments > files)~~
-- ~~Add recency decay factor~~
+### Phase 1: Search Quality
+- Fuzzy search foundation
+- Type/course filtering
+- Search history and ranking weights
 
-### ~~1.2 Search Filters~~
-- ~~Filter by course~~
-- ~~Filter by content type~~
+### Phase 1.5: Query Relevance (v2.0)
+- Abbreviation and compact token expansion
+- Suffix/phrase-position boosts
+- Two-pass strict/relaxed query strategy
 
-### ~~1.3 Search History~~
-- ~~Save recent searches~~
-- ~~Quick access to frequent searches~~
+### Phase 2: Advanced Ranking and UX (v2.1)
+- Course-scope detection (prefix/suffix)
+- RRF hybrid retrieval and diversity balancing
+- Due planner and overlay UX
 
----
-
-## ~~Phase 1.5: Search Relevance (Completed — v2.0)~~
-
-### ~~1.4 Query Normalization~~
-- ~~Abbreviation expansion (hw → homework, proj → project, etc.)~~
-- ~~Compact token splitting (hw4 → homework 4)~~
-- ~~Number variant generation (4 ↔ 04)~~
-
-### ~~1.5 Advanced Ranking~~
-- ~~Suffix/phrase-position boosting~~
-- ~~Two-pass strict/relaxed search pipeline~~
-- ~~Smarter deduplication across Canvas API endpoints~~
+### Phase 2.5: Lectra Bridge (v2.2)
+- Canvas PDF detection pipeline
+- Floating and popup send actions
+- PDF validation + upload flow (25 MB)
+- `synced_items` registration as `pdf_document`
+- `lectra_documents` storage bucket migration
 
 ---
 
-## ~~Phase 2: Advanced Ranking & UX (Completed — v2.1.0)~~
+## Next Up
 
-### ~~2.1 Course-Scoped Search~~
-- ~~Detect course names at start or end of query~~
-- ~~Filter results to target course with word-boundary matching~~
-- ~~Secondary recall pass for course items~~
+### Phase 3: Content Extraction
+- [ ] PDF text extraction and indexing
+- [ ] Slide/deck parsing improvements
+- [ ] Richer metadata (size, timestamps, points)
 
-### ~~2.2 Hybrid Retrieval~~
-- ~~Lexical fallback with AND-boolean token matching~~
-- ~~Reciprocal Rank Fusion (RRF) merging Fuse + lexical~~
-- ~~Single-letter token matching with word boundaries~~
-
-### ~~2.3 UX Improvements~~
-- ~~⌘K overlay injected into Canvas pages~~
-- ~~Due date planner (overdue, today, next 7 days)~~
-- ~~Dismissable tasks with persistent state~~
-- ~~Recently opened items in overlay~~
-- ~~Click-feedback boost (balanced, max 0.25)~~
-- ~~Diversity re-ranking for result variety~~
-
-### ~~2.4 Infrastructure~~
-- ~~Google Sign-In with OAuth2~~
-- ~~Supabase integration for bug report sync~~
-- ~~Automated school domain addition script~~
-- ~~Offline search relevance evaluation harness~~
-
----
-
-## Phase 3: Content Extraction *(Up Next)*
-
-### 3.1 PDF Text Extraction
-- [ ] Extract text from PDF files via pdf.js
-- [ ] Index PDF content for full-text search
-- [ ] Show matched page/section in results
-
-### 3.2 Lecture Content
-- [ ] Parse lecture slides (PPTX)
-- [ ] Extract video transcripts if available
-- [ ] Index module descriptions and page content
-
-### 3.3 Better Metadata
-- [ ] Display file sizes in results
-- [ ] Show last modified dates
-- [ ] Assignment point values
-
----
-
-## Phase 4: AI Enhancement
-
-### 4.1 Semantic Search
-- [ ] Embed content with local model (all-MiniLM-L6-v2)
-- [ ] Vector similarity search via FAISS/hnswlib
-- [ ] Hybrid ranking (AI + Fuse.js + lexical)
-
-### 4.2 Smart Suggestions
-- [ ] Auto-complete queries
-- [ ] "You might be looking for..." recommendations
-- [ ] Related content discovery
+### Phase 4: Intelligent Retrieval
+- [ ] Semantic embeddings (local or managed)
+- [ ] Hybrid semantic + lexical ranking
+- [ ] Query suggestions and related content
 
 ---
 
 ## Success Metrics
 
-| Metric | Target | Current |
-|--------|--------|---------|
-| Search latency | < 50ms | ✅ ~40ms avg |
-| Sync time (full) | < 30s | ✅ ~15s |
-| Result accuracy | > 80% first-page | ✅ ~90% |
-| Daily active users | 50+ (beta) | 🔄 In progress |
+| Metric | Target |
+|---|---|
+| Search latency | < 50 ms |
+| Full sync time | < 30 s |
+| First-page relevance | > 80% |
+| Lectra send success | > 95% on valid PDFs |

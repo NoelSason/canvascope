@@ -792,6 +792,14 @@ body::after {
   color: var(--accent-light);
 }
 
+#send-pdf-btn {
+  border-color: rgba(239, 68, 68, 0.34);
+}
+
+#send-pdf-btn:hover {
+  background: rgba(239, 68, 68, 0.18);
+}
+
 .danger-btn {
   color: var(--text-secondary);
 }
