@@ -1286,6 +1286,11 @@ body.in-overlay .overlay-result-course {
   text-overflow: ellipsis;
 }
 
+body.in-overlay .overlay-result-due {
+  margin-top: 3px;
+  line-height: 1;
+}
+
 /* ---- Overlay Recents Section ---- */
 .overlay-recents {
   padding: 4px 16px 12px;

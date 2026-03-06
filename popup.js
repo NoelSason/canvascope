@@ -2386,10 +2386,13 @@ function performSearch(query) {
 
   // General-query recency mode (no explicit assignment number/specifier):
   // prefer the most recent assignment-like item first.
+  // BUT: skip if the top result is an exact/prefix match (pre-pass hit)
+  // so that exact matches like "PreLab E" don't get overridden by "PreLab F".
   const generalTokens = (normalizedQuery || '').split(/\s+/).filter(t => t.length > 0 && !STOP_TOKENS.has(t));
   const isGeneralQuery = !temporalIntent.kind && queryNums.length === 0 && generalTokens.length <= 3;
+  const topIsExactMatch = results.length > 0 && results[0].prePass;
 
-  if (isGeneralQuery) {
+  if (isGeneralQuery && !topIsExactMatch) {
     const recencyCandidates = [];
     const otherResults = [];
 
@@ -2696,16 +2699,18 @@ function displayResults(results) {
         const courseEl = document.createElement('div');
         courseEl.className = 'overlay-result-course';
         courseEl.textContent = item.courseName;
-        // Append color-coded due label
-        if (item.dueAt && isTaskType(item)) {
-          const sep = document.createTextNode('  ·  ');
-          courseEl.appendChild(sep);
-          const dueSpan = document.createElement('span');
-          dueSpan.className = `due-chip-search ${dueUrgencyClass(item)}`;
-          dueSpan.textContent = formatDueLabel(item);
-          courseEl.appendChild(dueSpan);
-        }
         textCol.appendChild(courseEl);
+      }
+
+      // Due date on its own row so it's always visible
+      if (item.dueAt && isTaskType(item)) {
+        const dueRow = document.createElement('div');
+        dueRow.className = 'overlay-result-due';
+        const dueSpan = document.createElement('span');
+        dueSpan.className = `due-chip-search ${dueUrgencyClass(item)}`;
+        dueSpan.textContent = formatDueLabel(item);
+        dueRow.appendChild(dueSpan);
+        textCol.appendChild(dueRow);
       }
 
       resultElement.appendChild(textCol);
