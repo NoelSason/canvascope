@@ -2150,10 +2150,13 @@ function isLikelyCanvasFileUrl(rawUrl) {
     try {
         const parsed = new URL(rawUrl);
         const path = parsed.pathname.toLowerCase();
-        if (path.includes('/courses/') && path.includes('/files/')) return true;
-        if (path.includes('/files/')) return true;
+        if (path.includes('/files/folder/')) return false;
+        if (/\/courses\/\d+\/files\/\d+(?:\/|$)/i.test(path)) return true;
+        if (/\/files\/\d+(?:\/|$)/i.test(path)) return true;
         if (path.endsWith('/download')) return true;
-        if (parsed.searchParams.has('download')) return true;
+        const preview = parsed.searchParams.get('preview');
+        if (preview && /^\d+$/.test(preview)) return true;
+        if (parsed.searchParams.has('download') && !path.includes('/files/folder/')) return true;
         return false;
     } catch {
         return false;
@@ -2289,6 +2292,46 @@ function filenameFromUrl(rawUrl) {
         return name ? decodePossiblyEncodedUrl(name) : null;
     } catch {
         return null;
+    }
+}
+
+function cleanFilenameHint(name) {
+    const raw = cleanTitle(name);
+    if (!raw) return '';
+    const strippedQuery = raw.split('?')[0].split('#')[0];
+    const leaf = strippedQuery.split('/').filter(Boolean).pop() || strippedQuery;
+    return cleanTitle(decodePossiblyEncodedUrl(leaf) || leaf);
+}
+
+function isGenericPdfFilenameHint(name) {
+    const cleaned = cleanFilenameHint(name);
+    if (!cleaned) return true;
+    const lowered = cleaned.toLowerCase().replace(/\.pdf$/i, '');
+    return lowered === 'download'
+        || lowered === 'file'
+        || lowered === 'files'
+        || lowered === 'preview'
+        || lowered === 'document'
+        || lowered === 'pdf'
+        || lowered === 'index';
+}
+
+function extractFilenameHintFromUrl(rawUrl) {
+    try {
+        const parsed = new URL(rawUrl);
+        const queryKeys = ['filename', 'file_name', 'file', 'name', 'title'];
+        for (const key of queryKeys) {
+            const value = parsed.searchParams.get(key);
+            if (!value) continue;
+            const cleaned = cleanFilenameHint(value);
+            if (!isGenericPdfFilenameHint(cleaned)) return cleaned;
+        }
+
+        const fromPath = cleanFilenameHint(filenameFromUrl(parsed.toString()));
+        if (!isGenericPdfFilenameHint(fromPath)) return fromPath;
+        return '';
+    } catch {
+        return '';
     }
 }
 
@@ -2713,7 +2756,10 @@ async function downloadAndVerifyPdf(candidateUrl) {
         }
 
         const contentDisposition = response.headers.get('content-disposition') || '';
-        const filename = extractFilenameFromContentDisposition(contentDisposition) || filenameFromUrl(normalized);
+        const responseUrl = response.url || normalized;
+        const filename = extractFilenameFromContentDisposition(contentDisposition)
+            || filenameFromUrl(responseUrl)
+            || filenameFromUrl(normalized);
         const bytes = new Uint8Array(await response.arrayBuffer());
         if (bytes.length === 0) {
             return { ok: false, code: 'pdf_empty', message: 'Downloaded file is empty.' };
@@ -2731,6 +2777,7 @@ async function downloadAndVerifyPdf(candidateUrl) {
             ok: true,
             bytes,
             filename,
+            responseUrl,
             contentType: response.headers.get('content-type') || null
         };
     } catch (error) {
@@ -2761,8 +2808,34 @@ function cleanTitle(title) {
     return text.replace(/\s+/g, ' ').trim();
 }
 
-function derivePdfTitle({ titleHint, fallbackFilename, sourcePageTitle }) {
-    const preferred = cleanTitle(titleHint) || cleanTitle(fallbackFilename) || cleanTitle(sourcePageTitle);
+function isGenericPdfTitleHint(title) {
+    const cleaned = cleanTitle(title);
+    if (!cleaned) return true;
+
+    const lowered = cleaned.toLowerCase().replace(/\s+/g, ' ');
+    if (lowered === 'file' || lowered === 'files') return true;
+    if (lowered === 'file preview' || lowered === 'preview') return true;
+    if (lowered === 'document' || lowered === 'pdf') return true;
+    if (lowered === 'download' || lowered === 'open file') return true;
+    if (lowered === 'canvas') return true;
+    return false;
+}
+
+function derivePdfTitle({ titleHint, fallbackFilename, sourcePageTitle, candidateUrl, sourceUrl, responseUrl }) {
+    const cleanedTitleHint = cleanTitle(titleHint);
+    const cleanedFallbackFilename = cleanTitle(fallbackFilename);
+    const cleanedSourcePageTitle = cleanTitle(sourcePageTitle);
+    const urlFilenameHint = extractFilenameHintFromUrl(responseUrl)
+        || extractFilenameHintFromUrl(candidateUrl)
+        || extractFilenameHintFromUrl(sourceUrl);
+
+    const preferredFilename = !isGenericPdfFilenameHint(cleanedFallbackFilename)
+        ? cleanedFallbackFilename
+        : (!isGenericPdfFilenameHint(urlFilenameHint) ? urlFilenameHint : '');
+
+    const preferred = (!isGenericPdfTitleHint(cleanedTitleHint) ? cleanedTitleHint : '')
+        || preferredFilename
+        || (!isGenericPdfTitleHint(cleanedSourcePageTitle) ? cleanedSourcePageTitle : '');
     if (!preferred) {
         return `Imported PDF ${new Date().toISOString().slice(0, 10)}`;
     }
@@ -2919,7 +2992,10 @@ async function sendPdfToLectraFromMessage({ trigger, candidateUrl, sourcePageUrl
         const resolvedTitle = derivePdfTitle({
             titleHint: titleHint || context.titleHint,
             fallbackFilename: downloaded.filename,
-            sourcePageTitle: context.titleHint
+            sourcePageTitle: context.titleHint,
+            candidateUrl: selectedCandidateUrl,
+            sourceUrl: sourceForCourse,
+            responseUrl: downloaded.responseUrl
         });
 
         const rowPayload = {

@@ -308,6 +308,67 @@ function isCanvasFilePath(pathname) {
     return path.includes('/courses/') && path.includes('/files/');
 }
 
+function cleanTitleHint(title) {
+    return String(title || '').replace(/\s+/g, ' ').trim();
+}
+
+function isGenericPdfTitleHint(title) {
+    const cleaned = cleanTitleHint(title);
+    if (!cleaned) return true;
+
+    const lowered = cleaned.toLowerCase();
+    if (lowered === 'file' || lowered === 'files') return true;
+    if (lowered === 'file preview' || lowered === 'preview') return true;
+    if (lowered === 'document' || lowered === 'pdf') return true;
+    if (lowered === 'download' || lowered === 'open file') return true;
+    if (lowered === 'canvas') return true;
+    return false;
+}
+
+function normalizeDocumentTitleForPdf(rawTitle) {
+    const cleaned = cleanTitleHint(rawTitle);
+    if (!cleaned) return '';
+
+    const explicitPdf = cleaned.match(/([^|]+?\.pdf)\b/i);
+    if (explicitPdf?.[1]) {
+        return cleanTitleHint(explicitPdf[1]);
+    }
+
+    return cleanTitleHint(
+        cleaned
+            .replace(/\s+[|:-]\s*(instructure|canvas)(?:\s+files?)?.*$/i, '')
+            .replace(/\s+-\s+files?$/i, '')
+    );
+}
+
+function resolvePdfTitleHint() {
+    const selectors = [
+        '.ef-name-col__text',
+        '.ef-name-col .ellipsible',
+        '.file-header h1',
+        '.ef-header h1',
+        '[data-testid="file-name"]',
+        'h1'
+    ];
+
+    for (const selector of selectors) {
+        const nodes = document.querySelectorAll(selector);
+        for (const node of nodes) {
+            const candidate = normalizeDocumentTitleForPdf(node?.textContent || '');
+            if (!isGenericPdfTitleHint(candidate)) {
+                return candidate;
+            }
+        }
+    }
+
+    const docTitle = normalizeDocumentTitleForPdf(document.title || '');
+    if (!isGenericPdfTitleHint(docTitle)) {
+        return docTitle;
+    }
+
+    return '';
+}
+
 function collectPdfCandidates() {
     const candidates = [];
     const seen = new Set();
@@ -335,12 +396,14 @@ function collectPdfCandidates() {
         addCandidate(url, `${element.tagName.toLowerCase()}_embed`, hint);
     });
 
+    const lowerPath = window.location.pathname.toLowerCase();
+    const isFolderListingView = lowerPath.includes('/files/folder/');
     const includeBroaderFileRoutes = isCanvasFilePath(window.location.pathname)
-        || window.location.pathname.toLowerCase().includes('/files');
+        || lowerPath.includes('/files');
     const linkSelector = includeBroaderFileRoutes
         ? 'a.file_download_btn[href], a.instructure_file_link[href], a[href*="/files/"][data-api-endpoint], a[href*="/download"][data-api-endpoint]'
         : 'a.file_download_btn[href], a.instructure_file_link[href]';
-    const fileLinks = document.querySelectorAll(linkSelector);
+    const fileLinks = isFolderListingView ? [] : document.querySelectorAll(linkSelector);
     fileLinks.forEach((link) => {
         const linkText = `${link.textContent || ''} ${link.getAttribute('title') || ''}`.toLowerCase();
         const classText = String(link.className || '').toLowerCase();
@@ -352,8 +415,7 @@ function collectPdfCandidates() {
         addCandidate(window.location.href, 'document_content_type', 'strong');
     }
 
-    const heading = document.querySelector('h1, .ef-header h1, .file-header h1, .title');
-    const titleHint = (heading?.textContent || document.title || '').trim();
+    const titleHint = resolvePdfTitleHint();
 
     return {
         success: true,
@@ -534,7 +596,7 @@ function installLectraNavigationHooks() {
     if (lectraHooksInstalled) return;
     lectraHooksInstalled = true;
 
-    const schedule = () => scheduleLectraPdfContextRefresh(250);
+    const schedule = () => scheduleLectraPdfContextRefresh(40);
     window.addEventListener('popstate', schedule);
     window.addEventListener('hashchange', schedule);
 
@@ -550,7 +612,7 @@ function installLectraNavigationHooks() {
 
     const observer = new MutationObserver(() => {
         if (!document.body || !lectraSendButton || !lectraSendButton.isConnected) {
-            scheduleLectraPdfContextRefresh(150);
+            scheduleLectraPdfContextRefresh(40);
         }
     });
     observer.observe(document.documentElement || document.body, { childList: true, subtree: true });
@@ -559,7 +621,8 @@ function installLectraNavigationHooks() {
 function initializeLectraPdfSendUi() {
     if (!isCanvasDomain()) return;
     installLectraNavigationHooks();
-    scheduleLectraPdfContextRefresh(400);
+    scheduleLectraPdfContextRefresh(0);
+    setTimeout(() => scheduleLectraPdfContextRefresh(120), 120);
 }
 
 // ============================================
