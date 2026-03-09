@@ -3269,16 +3269,8 @@ async function collectPdfCandidatesFromTab(tabId) {
 }
 
 async function resolveTargetTabForPdfMode(mode, sender) {
-    if (mode === 'sender_tab' && sender?.tab?.id) {
-        try {
-            return await chrome.tabs.get(sender.tab.id);
-        } catch {
-            return sender.tab || null;
-        }
-    }
-
     if (mode === 'sender_tab' && sender?.tab) {
-        return sender.tab || null;
+        return sender.tab;
     }
 
     const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -3709,24 +3701,8 @@ async function sendPdfToLectraFromMessage({ trigger, candidateUrl, sourcePageUrl
 
     const activeMode = sender?.tab ? 'sender_tab' : 'active_tab';
     const context = await resolvePdfContextFromMessage({ mode: activeMode, sender });
-    const preferCurrentContext = Boolean(context?.hasPdf && context?.candidateUrl);
-    const preferredCandidateUrl = preferCurrentContext
-        ? context.candidateUrl
-        : (candidateUrl || context.candidateUrl);
-    const preferredSourcePageUrl = preferCurrentContext
-        ? (context.sourcePageUrl || sourcePageUrl || preferredCandidateUrl)
-        : (sourcePageUrl || context.sourcePageUrl || preferredCandidateUrl);
-    const resolvedCandidateUrl = normalizePdfCandidateUrl(
-        preferredCandidateUrl,
-        preferredSourcePageUrl || context.sourcePageUrl || undefined
-    );
-    const resolvedSourceUrl = normalizePdfCandidateUrl(
-        preferredSourcePageUrl || resolvedCandidateUrl,
-        context.sourcePageUrl || sourcePageUrl || resolvedCandidateUrl || undefined
-    );
-    const resolvedTitleHint = preferCurrentContext
-        ? (context.titleHint || titleHint || null)
-        : (titleHint || context.titleHint || null);
+    const resolvedCandidateUrl = normalizePdfCandidateUrl(candidateUrl || context.candidateUrl, sourcePageUrl || context.sourcePageUrl);
+    const resolvedSourceUrl = normalizePdfCandidateUrl(sourcePageUrl || context.sourcePageUrl || resolvedCandidateUrl, context.sourcePageUrl || undefined);
 
     if (!resolvedCandidateUrl || (!context.hasPdf && !candidateUrl)) {
         return {
@@ -3835,7 +3811,7 @@ async function sendPdfToLectraFromMessage({ trigger, candidateUrl, sourcePageUrl
         const sourceForCourse = resolvedSourceUrl || selectedCandidateUrl;
         const courseId = parseCourseIdFromUrl(sourceForCourse);
         const resolvedTitle = derivePdfTitle({
-            titleHint: resolvedTitleHint,
+            titleHint: titleHint || context.titleHint,
             fallbackFilename: downloaded.filename,
             sourcePageTitle: context.titleHint,
             candidateUrl: selectedCandidateUrl,
