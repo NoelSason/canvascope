@@ -29,8 +29,8 @@ Canvascope is a local-first Chrome extension for Canvas and Brightspace. It inde
 - `Send to Lectra` button appears on supported Canvas PDF pages
 - Popup fallback button: `Send PDF to Lectra`
 - Validates PDF signatures and enforces 25 MB size limit
-- Uploads selected PDF to Supabase Storage bucket `lectra_documents`
-- Registers `pdf_document` rows in `synced_items` for Lectra pickup
+- Uploads selected PDFs to DropBridge v2 via `upload-file-v2`
+- Preserves PDF handoff metadata in `uploads.metadata` for Lectra pickup
 - Builds `courseCatalog` + bounded `courseSnapshots` for Lectra Course Brain
 - Dual-writes enriched course rows plus namespaced snapshot rows to `synced_items` when signed in
 
@@ -60,7 +60,7 @@ Canvascope is a local-first Chrome extension for Canvas and Brightspace. It inde
 1. Open a Canvas page that contains a PDF.
 2. Click **Send to Lectra** (floating button) or **Send PDF to Lectra** in popup.
 3. Confirm the send action.
-4. The extension uploads the file and writes a `pdf_document` row for Lectra.
+4. The extension uploads the file through DropBridge v2 for Lectra.
 
 > Detailed setup docs: [docs/INSTALL.md](docs/INSTALL.md)
 
@@ -105,25 +105,23 @@ Canvascope/
 
 ## Lectra Data Contract
 
-When `Send to Lectra` succeeds, Canvascope inserts a `synced_items` row with:
+When `Send to Lectra` succeeds, Canvascope uploads the PDF through DropBridge v2 with metadata:
 
 ```json
 {
-  "item_type": "pdf_document",
-  "item_data": {
+  "receiverKind": "lectra_ipad",
+  "senderKind": "canvascope_extension",
+  "metadata": {
     "title": "...",
     "courseId": 123456,
     "sourceUrl": "https://...",
-    "storagePath": "<user-id>/lectra_documents/imported_from_canvascope/<yyyy>/<mm>/<row-id>.pdf",
-    "annotatedStoragePath": null,
-    "status": "pending_annotation",
     "sourcePlatform": "canvascope_extension",
     "sourceKind": "canvas_pdf_import"
   }
 }
 ```
 
-This contract aligns with the Lectra workspace specs in `../..` (`lectra [IN PROGRESS]`).
+The backend persists this metadata in `uploads.metadata` and wakes the target receiver via private realtime hints.
 
 Canvas course scans now also persist:
 
@@ -141,7 +139,7 @@ Each course snapshot stores bounded plain-text course context for Lectra, includ
 - Search quality and relevance upgrades (v2.0-v2.1)
 - Planner + overlay UX
 - Optional Google auth
-- Lectra PDF push bridge (v2.2)
+- Lectra PDF handoff on DropBridge v2
 
 ### Next
 - PDF text extraction for in-extension full text search

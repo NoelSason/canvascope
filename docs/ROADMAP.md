@@ -7,7 +7,7 @@
 - Due planner + keyboard overlay
 - Optional Google sign-in
 - Lectra PDF handoff (`Send to Lectra`)
-- Supabase-backed `pdf_document` sync contract for iPad pickup
+- DropBridge v2 PDF transport for iPad pickup
 - Canvas `courseCatalog` + `courseSnapshots` sync for Lectra Course Brain
 
 ---
@@ -32,9 +32,8 @@
 ### Phase 2.5: Lectra Bridge (v2.2)
 - Canvas PDF detection pipeline
 - Floating and popup send actions
-- PDF validation + upload flow (25 MB)
-- `synced_items` registration as `pdf_document`
-- `lectra_documents` storage bucket migration
+- PDF validation + DropBridge v2 upload flow (25 MB)
+- Realtime wake subscription + 60s fallback polling
 - Namespaced Course Brain sync rows: `canvascope_course_catalog_v1` and `canvascope_course_snapshot_v1`
 - Bounded Canvas syllabus / assignment / page / discussion text sync for Lectra
 

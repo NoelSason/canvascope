@@ -52,9 +52,29 @@ if (!supabaseClient) {
     console.error('[Canvascope] Supabase client failed to initialize (ensure lib/supabase.js is loaded)');
 }
 
+if (supabaseClient) {
+    supabaseClient.auth.onAuthStateChange((event, session) => {
+        dropBridgeDebug('auth state change', {
+            event,
+            userId: session?.user?.id || null
+        });
+
+        if (event === 'SIGNED_OUT') {
+            stopDropBridgeV2Loop();
+            return;
+        }
+
+        if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
+            startDropBridgeV2Loop(`auth-${event.toLowerCase()}`).catch((error) => {
+                console.error(`[DropBridge v2] Auth bootstrap failure (${event}):`, parseErrorMessage(error));
+            });
+        }
+    });
+}
+
 // --- DROPBRIDGE V2 (ACCOUNT-LINKED, ZERO-PAIRING) ---
 const DROPBRIDGE_V2_ENABLED = true;
-const DROPBRIDGE_V2_POLL_INTERVAL_MS = 20 * 1000; // 20s (required: 15-30s)
+const DROPBRIDGE_V2_POLL_INTERVAL_MS = 60 * 1000; // 60s steady-state fallback poll
 const DROPBRIDGE_V2_REGISTER_REFRESH_MS = 5 * 60 * 1000;
 const DROPBRIDGE_V2_DOWNLOAD_WATCHDOG_INTERVAL_MS = 15 * 1000;
 const DROPBRIDGE_V2_DOWNLOAD_MAX_OBSERVE_MS = 30 * 60 * 1000;
@@ -62,11 +82,18 @@ const DROPBRIDGE_V2_STORAGE_DEVICE_ID = 'dropBridgeV2DeviceId';
 const DROPBRIDGE_MODE_STORAGE_KEY = 'dropBridgeMode';
 const DROPBRIDGE_V2_MODE = 'v2';
 const DROPBRIDGE_V2_POLL_LIMIT = 5;
+const DROPBRIDGE_V2_WAKE_EVENT = 'upload_queued';
+const DROPBRIDGE_V2_WAKE_POLL_DEBOUNCE_MS = 1000;
 const DROPBRIDGE_V2_DEBUG = false; // enable only for local debugging
 
 let dropBridgeV2PollTimer = null;
 let dropBridgeV2RegisterTimer = null;
 let dropBridgeV2PollInFlight = false;
+let dropBridgeV2WakeChannel = null;
+let dropBridgeV2WakeTopic = null;
+let dropBridgeV2QueuedPollReason = null;
+let dropBridgeV2QueuedPollTimer = null;
+let dropBridgeV2LastPollStartedAt = 0;
 const dropBridgeV2ActiveUploads = new Set();
 
 function isUuid(value) {
@@ -340,7 +367,12 @@ async function callDropBridgeV2Function(functionName, body, accessToken) {
 async function updateDropBridgeV2UploadStatus({ accessToken, deviceId, uploadId, status }) {
     try {
         dropBridgeDebug('status ack: sending', { uploadId, deviceId, status });
-        await callDropBridgeV2Function('update-upload-status-v2', { deviceId, uploadId, status }, accessToken);
+        await callDropBridgeV2Function('update-upload-status-v2', {
+            deviceId,
+            uploadId,
+            status,
+            clientKind: 'canvascope_extension'
+        }, accessToken);
         dropBridgeDebug('status ack: success', { uploadId, deviceId, status });
         return true;
     } catch (error) {
@@ -590,6 +622,162 @@ async function processDropBridgeV2Upload(upload, accessToken, deviceId) {
     }
 }
 
+function buildDropBridgeV2WakeTopic(userId, deviceId) {
+    return `dropbridge:user:${userId}:device:${deviceId}`;
+}
+
+function clearDropBridgeV2QueuedPoll() {
+    if (dropBridgeV2QueuedPollTimer) {
+        clearTimeout(dropBridgeV2QueuedPollTimer);
+        dropBridgeV2QueuedPollTimer = null;
+    }
+    dropBridgeV2QueuedPollReason = null;
+}
+
+async function stopDropBridgeV2RealtimeSubscription(reason = 'stop') {
+    if (!supabaseClient || !dropBridgeV2WakeChannel) {
+        dropBridgeDebug('realtime: stop skipped', {
+            reason,
+            hasSupabaseClient: Boolean(supabaseClient),
+            hasChannel: Boolean(dropBridgeV2WakeChannel)
+        });
+        dropBridgeV2WakeTopic = null;
+        return;
+    }
+
+    const channel = dropBridgeV2WakeChannel;
+    const topic = dropBridgeV2WakeTopic;
+    dropBridgeV2WakeChannel = null;
+    dropBridgeV2WakeTopic = null;
+
+    try {
+        await supabaseClient.removeChannel(channel);
+        dropBridgeDebug('realtime: channel removed', { reason, topic });
+    } catch (error) {
+        console.warn(`[DropBridge v2] Realtime unsubscribe failure (${reason}):`, parseErrorMessage(error));
+    }
+}
+
+async function ensureDropBridgeV2RealtimeSubscription(reason = 'startup', accessToken = null) {
+    if (!DROPBRIDGE_V2_ENABLED || !supabaseClient) return false;
+
+    const token = accessToken || await getDropBridgeV2AccessToken();
+    if (!token) {
+        await stopDropBridgeV2RealtimeSubscription(`${reason}-no-token`);
+        return false;
+    }
+
+    const { data: { session }, error: sessionError } = await supabaseClient.auth.getSession();
+    if (sessionError) {
+        throw sessionError;
+    }
+
+    if (!session?.user?.id) {
+        await stopDropBridgeV2RealtimeSubscription(`${reason}-no-session`);
+        return false;
+    }
+
+    await supabaseClient.realtime.setAuth(token);
+
+    const deviceId = await getOrCreateDropBridgeV2DeviceId();
+    const topic = buildDropBridgeV2WakeTopic(session.user.id, deviceId);
+
+    if (dropBridgeV2WakeChannel && dropBridgeV2WakeTopic === topic) {
+        dropBridgeDebug('realtime: existing channel reused', { reason, topic });
+        return true;
+    }
+
+    await stopDropBridgeV2RealtimeSubscription(`${reason}-replace`);
+
+    const channel = supabaseClient.channel(topic, {
+        config: {
+            private: true
+        }
+    });
+
+    channel.on('broadcast', { event: DROPBRIDGE_V2_WAKE_EVENT }, (payload) => {
+        dropBridgeDebug('realtime: wake event', { topic, payload });
+        console.log(`[DropBridge v2] Wake event received on ${topic}`);
+        requestDropBridgeV2Poll(`wake-${DROPBRIDGE_V2_WAKE_EVENT}`).catch((error) => {
+            console.error('[DropBridge v2] Wake-triggered poll failure:', parseErrorMessage(error));
+        });
+    });
+
+    dropBridgeV2WakeChannel = channel;
+    dropBridgeV2WakeTopic = topic;
+
+    channel.subscribe((status, error) => {
+        if (channel !== dropBridgeV2WakeChannel) {
+            return;
+        }
+
+        dropBridgeDebug('realtime: subscribe status', {
+            reason,
+            topic,
+            status,
+            error: error ? parseErrorMessage(error) : null
+        });
+
+        if (status === 'SUBSCRIBED') {
+            console.log(`[DropBridge v2] Wake subscription active (${topic})`);
+            requestDropBridgeV2Poll(`realtime-${reason}`).catch((pollError) => {
+                console.error('[DropBridge v2] Realtime subscribe poll failure:', parseErrorMessage(pollError));
+            });
+            return;
+        }
+
+        if (status === 'CHANNEL_ERROR') {
+            console.error(`[DropBridge v2] Realtime channel error (${topic}):`, error ? parseErrorMessage(error) : 'unknown error');
+            return;
+        }
+
+        if (status === 'TIMED_OUT') {
+            console.warn(`[DropBridge v2] Realtime subscribe timed out (${topic})`);
+            return;
+        }
+
+        if (status === 'CLOSED') {
+            console.log(`[DropBridge v2] Realtime channel closed (${topic})`);
+        }
+    });
+
+    dropBridgeDebug('realtime: subscribe requested', { reason, topic });
+    return true;
+}
+
+async function requestDropBridgeV2Poll(reason = 'manual') {
+    if (!DROPBRIDGE_V2_ENABLED || !supabaseClient) {
+        return;
+    }
+
+    if (dropBridgeV2PollInFlight) {
+        dropBridgeV2QueuedPollReason = reason;
+        dropBridgeDebug('poll request: queued behind in-flight poll', { reason });
+        return;
+    }
+
+    const isWakeDriven = reason !== 'interval';
+    const sinceLastPollStartMs = Date.now() - dropBridgeV2LastPollStartedAt;
+    if (isWakeDriven && sinceLastPollStartMs < DROPBRIDGE_V2_WAKE_POLL_DEBOUNCE_MS) {
+        dropBridgeV2QueuedPollReason = reason;
+        if (!dropBridgeV2QueuedPollTimer) {
+            const delayMs = DROPBRIDGE_V2_WAKE_POLL_DEBOUNCE_MS - sinceLastPollStartMs;
+            dropBridgeV2QueuedPollTimer = setTimeout(() => {
+                const nextReason = dropBridgeV2QueuedPollReason || `${reason}-delayed`;
+                dropBridgeV2QueuedPollTimer = null;
+                dropBridgeV2QueuedPollReason = null;
+                requestDropBridgeV2Poll(nextReason).catch((error) => {
+                    console.error('[DropBridge v2] Delayed poll failure:', parseErrorMessage(error));
+                });
+            }, delayMs);
+            dropBridgeDebug('poll request: debounced wake poll', { reason, delayMs });
+        }
+        return;
+    }
+
+    await pollDropBridgeV2Once(reason);
+}
+
 async function registerDropBridgeV2Device(reason = 'startup', accessToken = null) {
     if (!DROPBRIDGE_V2_ENABLED || !supabaseClient) return false;
     const token = accessToken || await getDropBridgeV2AccessToken();
@@ -611,7 +799,11 @@ async function registerDropBridgeV2Device(reason = 'startup', accessToken = null
             apikey: supabaseKey,
             Authorization: `Bearer ${token}`
         },
-        body: JSON.stringify({ deviceId, deviceName })
+        body: JSON.stringify({
+            deviceId,
+            deviceName,
+            clientKind: 'canvascope_extension'
+        })
     });
 
     const payload = await response.json().catch(() => ({}));
@@ -634,7 +826,7 @@ async function registerDropBridgeV2Device(reason = 'startup', accessToken = null
 }
 
 async function pollDropBridgeV2Once(reason = 'interval') {
-    if (!DROPBRIDGE_V2_ENABLED || !supabaseClient || dropBridgeV2PollInFlight) {
+    if (!DROPBRIDGE_V2_ENABLED || !supabaseClient) {
         dropBridgeDebug('poll: skipped', {
             reason,
             enabled: DROPBRIDGE_V2_ENABLED,
@@ -644,7 +836,14 @@ async function pollDropBridgeV2Once(reason = 'interval') {
         return;
     }
 
+    if (dropBridgeV2PollInFlight) {
+        dropBridgeV2QueuedPollReason = reason;
+        dropBridgeDebug('poll: already in flight, queued follow-up', { reason });
+        return;
+    }
+
     const pollStartedAtMs = Date.now();
+    dropBridgeV2LastPollStartedAt = pollStartedAtMs;
     dropBridgeDebug('poll: begin', { reason });
     dropBridgeV2PollInFlight = true;
 
@@ -658,7 +857,8 @@ async function pollDropBridgeV2Once(reason = 'interval') {
         const deviceId = await getOrCreateDropBridgeV2DeviceId();
         const payload = await callDropBridgeV2Function('list-pending-v2', {
             deviceId,
-            limit: DROPBRIDGE_V2_POLL_LIMIT
+            limit: DROPBRIDGE_V2_POLL_LIMIT,
+            clientKind: 'canvascope_extension'
         }, accessToken);
 
         const uploads = Array.isArray(payload?.uploads) ? payload.uploads : [];
@@ -693,6 +893,14 @@ async function pollDropBridgeV2Once(reason = 'interval') {
             reason,
             durationMs: Date.now() - pollStartedAtMs
         });
+
+        if (dropBridgeV2QueuedPollReason && !dropBridgeV2QueuedPollTimer) {
+            const nextReason = dropBridgeV2QueuedPollReason;
+            dropBridgeV2QueuedPollReason = null;
+            requestDropBridgeV2Poll(`${nextReason}-followup`).catch((error) => {
+                console.error('[DropBridge v2] Follow-up poll failure:', parseErrorMessage(error));
+            });
+        }
     }
 }
 
@@ -710,6 +918,8 @@ function stopDropBridgeV2Loop() {
         clearInterval(dropBridgeV2RegisterTimer);
         dropBridgeV2RegisterTimer = null;
     }
+    clearDropBridgeV2QueuedPoll();
+    void stopDropBridgeV2RealtimeSubscription('loop-stop');
     dropBridgeV2ActiveUploads.clear();
     dropBridgeDebug('loop: stopped');
 }
@@ -739,9 +949,13 @@ async function startDropBridgeV2Loop(reason = 'startup') {
             return;
         }
 
+        await ensureDropBridgeV2RealtimeSubscription(reason, accessToken);
+
         if (!dropBridgeV2PollTimer) {
             dropBridgeV2PollTimer = setInterval(() => {
-                pollDropBridgeV2Once('interval');
+                requestDropBridgeV2Poll('interval').catch((error) => {
+                    console.error('[DropBridge v2] Interval poll failure:', parseErrorMessage(error));
+                });
             }, DROPBRIDGE_V2_POLL_INTERVAL_MS);
             console.log(`[DropBridge v2] Poll loop started (${Math.round(DROPBRIDGE_V2_POLL_INTERVAL_MS / 1000)}s)`);
             dropBridgeDebug('loop: poll timer started', {
@@ -760,7 +974,7 @@ async function startDropBridgeV2Loop(reason = 'startup') {
             });
         }
 
-        await pollDropBridgeV2Once(`${reason}-immediate`);
+        await requestDropBridgeV2Poll(`${reason}-immediate`);
         dropBridgeDebug('loop: start finished', { reason });
     } catch (error) {
         console.error(`[DropBridge v2] Startup failure (${reason}):`, parseErrorMessage(error));
@@ -793,7 +1007,6 @@ const KNOWN_BRIGHTSPACE_DOMAINS = [];
 
 const BRIGHTSPACE_DEFAULT_LP_VERSION = '1.49';
 const BRIGHTSPACE_DEFAULT_LE_VERSION = '1.82';
-const LECTRA_DOCUMENTS_BUCKET = 'lectra_documents';
 const PDF_HEADER_CHECK_BYTES = 1024;
 const PDF_SEND_MAX_BYTES = 25 * 1024 * 1024; // 25MB
 const PDF_CONTEXT_TIMEOUT_MS = 1800;
@@ -3617,12 +3830,6 @@ async function downloadAndVerifyPdf(candidateUrl) {
     }
 }
 
-function buildPdfStoragePath(userId, rowId, date = new Date()) {
-    const year = String(date.getUTCFullYear());
-    const month = String(date.getUTCMonth() + 1).padStart(2, '0');
-    return `${userId}/lectra_documents/imported_from_canvascope/${year}/${month}/${rowId}.pdf`;
-}
-
 function cleanTitle(title) {
     const text = String(title || '').trim();
     if (!text) return '';
@@ -3662,6 +3869,35 @@ function derivePdfTitle({ titleHint, fallbackFilename, sourcePageTitle, candidat
     }
 
     return preferred.replace(/\.pdf$/i, '').trim() || preferred;
+}
+
+async function uploadPdfToLectraViaDropBridgeV2({ accessToken, bytes, filename, metadata }) {
+    const deviceId = await getOrCreateDropBridgeV2DeviceId();
+    const endpoint = `${supabaseUrl.replace(/\/+$/, '')}/functions/v1/upload-file-v2`;
+    const sanitizedFilename = sanitizeFilename(filename || `canvascope-import-${Date.now()}.pdf`);
+    const finalFilename = /\.pdf$/i.test(sanitizedFilename) ? sanitizedFilename : `${sanitizedFilename}.pdf`;
+    const formData = new FormData();
+    formData.append('file', new Blob([bytes], { type: 'application/pdf' }), finalFilename);
+    formData.append('receiverKind', 'lectra_ipad');
+    formData.append('senderKind', 'canvascope_extension');
+    formData.append('senderDeviceId', deviceId);
+    formData.append('metadata', JSON.stringify(metadata || {}));
+
+    const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+            apikey: supabaseKey,
+            Authorization: `Bearer ${accessToken}`
+        },
+        body: formData
+    });
+
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || payload?.error) {
+        throw new Error(payload?.error || `upload-file-v2 failed (${response.status})`);
+    }
+
+    return payload;
 }
 
 async function resolvePdfContextFromMessage({ mode, sender }) {
@@ -3740,6 +3976,15 @@ async function sendPdfToLectraFromMessage({ trigger, candidateUrl, sourcePageUrl
             };
         }
 
+        const accessToken = await getDropBridgeV2AccessToken();
+        if (!accessToken) {
+            return {
+                success: false,
+                code: 'auth_error',
+                message: 'Sign in to Canvascope to send PDFs to Lectra.'
+            };
+        }
+
         const attemptUrls = [];
         const seenAttemptUrls = new Set();
         const queueAttempt = (url) => {
@@ -3777,36 +4022,10 @@ async function sendPdfToLectraFromMessage({ trigger, candidateUrl, sourcePageUrl
             };
         }
 
-        const rowId = generateUuidV4();
-        const storagePath = buildPdfStoragePath(session.user.id, rowId);
         const uploadData = downloaded.bytes.buffer.slice(
             downloaded.bytes.byteOffset,
             downloaded.bytes.byteOffset + downloaded.bytes.byteLength
         );
-
-        const { error: uploadError } = await supabaseClient.storage
-            .from(LECTRA_DOCUMENTS_BUCKET)
-            .upload(storagePath, uploadData, {
-                contentType: 'application/pdf',
-                upsert: false
-            });
-
-        if (uploadError) {
-            const uploadMessage = String(uploadError.message || '');
-            const bucketMissing = /bucket\s+not\s+found/i.test(uploadMessage);
-            console.warn('[Canvascope PDF Sync] Upload failed', {
-                candidateUrl: selectedCandidateUrl,
-                storagePath,
-                error: uploadError
-            });
-            return {
-                success: false,
-                code: bucketMissing ? 'storage_bucket_missing' : 'upload_failed',
-                message: bucketMissing
-                    ? `Upload failed: bucket "${LECTRA_DOCUMENTS_BUCKET}" does not exist yet. Run the storage migration for Lectra PDF sync.`
-                    : (uploadError.message ? `Upload failed: ${uploadError.message}` : 'Upload failed. Please retry.')
-            };
-        }
 
         const sourceForCourse = resolvedSourceUrl || selectedCandidateUrl;
         const courseId = parseCourseIdFromUrl(sourceForCourse);
@@ -3819,51 +4038,36 @@ async function sendPdfToLectraFromMessage({ trigger, candidateUrl, sourcePageUrl
             responseUrl: downloaded.responseUrl
         });
 
-        const rowPayload = {
-            id: rowId,
-            user_id: session.user.id,
-            item_type: 'pdf_document',
-            item_data: {
-                title: resolvedTitle,
-                courseId: courseId ?? null,
-                sourceUrl: sourceForCourse || null,
-                storagePath,
-                annotatedStoragePath: null,
-                status: 'pending_annotation',
-                sourcePlatform: 'canvascope_extension',
-                sourceKind: 'canvas_pdf_import'
-            },
-            sync_status: 'synced'
-        };
-
-        const { error: insertError } = await supabaseClient
-            .from('synced_items')
-            .insert(rowPayload);
-
-        if (insertError) {
-            console.warn('[Canvascope PDF Sync] Row insert failed', {
-                candidateUrl: selectedCandidateUrl,
-                storagePath,
-                error: insertError
+        let uploadReceipt;
+        try {
+            uploadReceipt = await uploadPdfToLectraViaDropBridgeV2({
+                accessToken,
+                bytes: uploadData,
+                filename: downloaded.filename || `${resolvedTitle}.pdf`,
+                metadata: {
+                    title: resolvedTitle,
+                    courseId: courseId ?? null,
+                    sourceUrl: sourceForCourse || null,
+                    sourcePlatform: 'canvascope_extension',
+                    sourceKind: 'canvas_pdf_import'
+                }
             });
-            await supabaseClient.storage
-                .from(LECTRA_DOCUMENTS_BUCKET)
-                .remove([storagePath])
-                .catch(() => {
-                    // Best effort cleanup only.
-                });
-
+        } catch (error) {
+            console.warn('[Canvascope PDF Sync] DropBridge v2 upload failed', {
+                candidateUrl: selectedCandidateUrl,
+                error: parseErrorMessage(error)
+            });
             return {
                 success: false,
-                code: 'row_insert_failed',
-                message: insertError.message ? `Uploaded, but failed to register in Lectra: ${insertError.message}` : 'Uploaded, but failed to register in Lectra. Retry send.'
+                code: 'dropbridge_upload_failed',
+                message: parseErrorMessage(error) || 'Failed to send PDF to Lectra.'
             };
         }
 
         console.log('[Canvascope PDF Sync] Sent PDF to Lectra', {
             trigger: trigger || 'unknown',
-            rowId,
-            storagePath,
+            uploadId: uploadReceipt?.uploadId || null,
+            receiverId: uploadReceipt?.receiverId || null,
             bytes: downloaded.bytes.byteLength
         });
 
@@ -3871,10 +4075,10 @@ async function sendPdfToLectraFromMessage({ trigger, candidateUrl, sourcePageUrl
             success: true,
             code: 'ok',
             message: 'Sent to Lectra ✓',
-            rowId,
-            storagePath,
+            uploadId: uploadReceipt?.uploadId || null,
+            receiverId: uploadReceipt?.receiverId || null,
             bytesUploaded: downloaded.bytes.byteLength,
-            itemType: 'pdf_document'
+            itemType: 'dropbridge_v2_pdf'
         };
     } finally {
         pdfSendInFlightKeys.delete(inFlightKey);
