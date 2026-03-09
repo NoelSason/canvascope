@@ -8,6 +8,7 @@
 - Optional Google sign-in
 - Lectra PDF handoff (`Send to Lectra`)
 - Supabase-backed `pdf_document` sync contract for iPad pickup
+- Canvas `courseCatalog` + `courseSnapshots` sync for Lectra Course Brain
 
 ---
 
@@ -34,6 +35,8 @@
 - PDF validation + upload flow (25 MB)
 - `synced_items` registration as `pdf_document`
 - `lectra_documents` storage bucket migration
+- Namespaced Course Brain sync rows: `canvascope_course_catalog_v1` and `canvascope_course_snapshot_v1`
+- Bounded Canvas syllabus / assignment / page / discussion text sync for Lectra
 
 ---
 
@@ -42,7 +45,7 @@
 ### Phase 3: Content Extraction
 - [ ] PDF text extraction and indexing
 - [ ] Slide/deck parsing improvements
-- [ ] Richer metadata (size, timestamps, points)
+- [ ] OCR / binary document text extraction beyond bounded Canvas API text
 
 ### Phase 4: Intelligent Retrieval
 - [ ] Semantic embeddings (local or managed)

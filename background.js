@@ -813,6 +813,32 @@ const MIN_SCAN_INTERVAL = 5 * 60 * 1000;
 
 // Safety limit for pagination to prevent infinite loops
 const MAX_PAGES = 50;
+const COURSE_CATALOG_STORAGE_KEY = 'courseCatalog';
+const COURSE_SNAPSHOTS_STORAGE_KEY = 'courseSnapshots';
+const COURSE_CATALOG_ITEM_TYPE = 'canvascope_course_catalog_v1';
+const COURSE_SNAPSHOT_ITEM_TYPE = 'canvascope_course_snapshot_v1';
+const COURSE_SNAPSHOT_SCHEMA_VERSION = 1;
+const SNAPSHOT_TEXT_CHAR_LIMIT = 2000;
+const SYLLABUS_TEXT_CHAR_LIMIT = 8000;
+const SNAPSHOT_PAGE_BODY_CONCURRENCY = 4;
+const EXTENSION_SYNC_BATCH_SIZE = 50;
+
+const LEGACY_EXTENSION_ITEM_TYPES = new Set([
+    'announcement',
+    'assignment',
+    'course',
+    'discussion',
+    'document',
+    'externaltool',
+    'externalurl',
+    'file',
+    'link',
+    'page',
+    'pdf',
+    'quiz',
+    'slides',
+    'video'
+]);
 
 // ============================================
 // STATE
@@ -838,6 +864,8 @@ chrome.runtime.onInstalled.addListener((details) => {
     if (details.reason === 'install') {
         chrome.storage.local.set({
             indexedContent: [],
+            [COURSE_CATALOG_STORAGE_KEY]: [],
+            [COURSE_SNAPSHOTS_STORAGE_KEY]: [],
             settings: {
                 version: chrome.runtime.getManifest().version,
                 installedAt: new Date().toISOString(),
@@ -998,8 +1026,66 @@ async function performBackgroundScan(baseUrl, platform = 'canvas') {
         const SCAN_COURSE_CONCURRENCY = 3;
         const allContent = [];
 
-        const existingData = await chrome.storage.local.get(['indexedContent', 'starredCourseIds', 'settings']);
+        const existingData = await chrome.storage.local.get([
+            'indexedContent',
+            'starredCourseIds',
+            'settings',
+            COURSE_CATALOG_STORAGE_KEY,
+            COURSE_SNAPSHOTS_STORAGE_KEY
+        ]);
         const existingContent = existingData.indexedContent || [];
+        const existingSnapshots = Array.isArray(existingData[COURSE_SNAPSHOTS_STORAGE_KEY])
+            ? existingData[COURSE_SNAPSHOTS_STORAGE_KEY]
+            : [];
+        const courseSnapshotMap = new Map();
+        const targetCourseKeys = new Set(
+            courses
+                .map((course) => getStructuredCourseKey(course, sourceMeta))
+                .filter(Boolean)
+        );
+
+        const ensureCourseSnapshot = (course) => {
+            const courseKey = getStructuredCourseKey(course, sourceMeta);
+            if (!courseKey) return null;
+            if (!courseSnapshotMap.has(courseKey)) {
+                courseSnapshotMap.set(courseKey, buildCourseSnapshotBase(course, sourceMeta, scanTimestamp));
+            }
+            return courseSnapshotMap.get(courseKey);
+        };
+
+        const persistCourseArtifacts = async () => {
+            const nextArtifacts = prepareCourseArtifactsForStorage(courseSnapshotMap);
+            const freshKeys = new Set(
+                nextArtifacts.courseSnapshots
+                    .map((snapshot) => snapshot?.courseKey)
+                    .filter(Boolean)
+            );
+
+            const preservedSnapshots = existingSnapshots.filter((snapshot) => {
+                const courseKey = snapshot?.courseKey || null;
+                return courseKey && !targetCourseKeys.has(courseKey) && !freshKeys.has(courseKey);
+            });
+
+            const mergedCourseSnapshots = [...preservedSnapshots, ...nextArtifacts.courseSnapshots]
+                .sort((lhs, rhs) => (lhs?.course?.courseName || '').localeCompare(rhs?.course?.courseName || ''));
+            const mergedCourseCatalog = mergedCourseSnapshots
+                .map(buildCourseCatalogEntryFromSnapshot)
+                .sort((lhs, rhs) => (lhs.courseName || '').localeCompare(rhs.courseName || ''));
+
+            try {
+                await chrome.storage.local.set({
+                    [COURSE_CATALOG_STORAGE_KEY]: mergedCourseCatalog,
+                    [COURSE_SNAPSHOTS_STORAGE_KEY]: mergedCourseSnapshots
+                });
+            } catch (error) {
+                console.warn('[Canvascope] Could not persist course snapshot artifacts:', error?.message || error);
+            }
+
+            return {
+                courseCatalog: mergedCourseCatalog,
+                courseSnapshots: mergedCourseSnapshots
+            };
+        };
 
         // Helper for progressive yield
         const incrementalSave = async (newContent) => {
@@ -1024,11 +1110,20 @@ async function performBackgroundScan(baseUrl, platform = 'canvas') {
         const fastStartMs = performance.now();
         const fastTasks = courses.map(course => async () => {
             try {
+                const snapshot = ensureCourseSnapshot(course);
                 let courseContent = [];
                 if (platform === 'brightspace') {
                     courseContent = await fetchBrightspaceCourseContent(baseUrl, course);
+                    if (snapshot) {
+                        for (const item of courseContent) {
+                            recordSnapshotItem(snapshot, buildSnapshotItemBase(course, sourceMeta, scanTimestamp, item));
+                        }
+                    }
                 } else {
-                    courseContent = await fetchFastEndpoints(baseUrl, course, sourceMeta, scanTimestamp);
+                    if (snapshot) {
+                        await hydrateCanvasCourseSnapshotBase(baseUrl, course, snapshot);
+                    }
+                    courseContent = await fetchFastEndpoints(baseUrl, course, sourceMeta, scanTimestamp, snapshot);
                 }
                 fastCount++;
                 const progress = 10 + Math.round((fastCount / courses.length) * 40); // 10% to 50%
@@ -1038,6 +1133,9 @@ async function performBackgroundScan(baseUrl, platform = 'canvas') {
                     status: `Fast indexing ${fastCount}/${courses.length} courses`
                 });
 
+                if (snapshot) {
+                    await persistCourseArtifacts();
+                }
                 await incrementalSave(courseContent);
             } catch (e) {
                 console.warn(`[Canvascope] Fast Phase Error on ${course.name}:`, e.message);
@@ -1054,7 +1152,8 @@ async function performBackgroundScan(baseUrl, platform = 'canvas') {
             let deepCount = 0;
             const deepTasks = courses.map(course => async () => {
                 try {
-                    const courseContent = await fetchHeavyEndpoints(baseUrl, course, sourceMeta, scanTimestamp);
+                    const snapshot = ensureCourseSnapshot(course);
+                    const courseContent = await fetchHeavyEndpoints(baseUrl, course, sourceMeta, scanTimestamp, snapshot);
                     deepCount++;
                     const progress = 50 + Math.round((deepCount / courses.length) * 40); // 50% to 90%
                     broadcastMessage({
@@ -1063,6 +1162,9 @@ async function performBackgroundScan(baseUrl, platform = 'canvas') {
                         status: `Deep indexing ${deepCount}/${courses.length} courses`
                     });
 
+                    if (snapshot) {
+                        await persistCourseArtifacts();
+                    }
                     await incrementalSave(courseContent);
                 } catch (e) {
                     console.warn(`[Canvascope] Deep Phase Error on ${course.name}:`, e.message);
@@ -1084,6 +1186,7 @@ async function performBackgroundScan(baseUrl, platform = 'canvas') {
 
         // Strict final deduplication match
         const finalDeduped = deduplicateCrossType(deduplicateContent([...preservedItems, ...allContent]));
+        const finalArtifacts = await persistCourseArtifacts();
 
         const starredCourseIds = [...new Set(
             finalDeduped
@@ -1091,20 +1194,43 @@ async function performBackgroundScan(baseUrl, platform = 'canvas') {
                 .map(item => item.courseId)
         )];
 
-        await chrome.storage.local.set({
-            indexedContent: finalDeduped,
-            starredCourseIds: starredCourseIds.length > 0 ? starredCourseIds : (existingData.starredCourseIds || []),
-            settings: {
-                ...(existingData.settings || {}),
-                lastScanTime: Date.now(),
-                version: chrome.runtime.getManifest().version,
-                scanMetrics: {
-                    lastScanDurationMs: Math.round(fullPassDurationMs),
-                    fastPassDurationMs: Math.round(fastPassDurationMs),
-                    courseCount: courses.length
+        try {
+            await chrome.storage.local.set({
+                indexedContent: finalDeduped,
+                [COURSE_CATALOG_STORAGE_KEY]: finalArtifacts.courseCatalog,
+                [COURSE_SNAPSHOTS_STORAGE_KEY]: finalArtifacts.courseSnapshots,
+                starredCourseIds: starredCourseIds.length > 0 ? starredCourseIds : (existingData.starredCourseIds || []),
+                settings: {
+                    ...(existingData.settings || {}),
+                    lastScanTime: Date.now(),
+                    version: chrome.runtime.getManifest().version,
+                    scanMetrics: {
+                        lastScanDurationMs: Math.round(fullPassDurationMs),
+                        fastPassDurationMs: Math.round(fastPassDurationMs),
+                        courseCount: courses.length
+                    }
                 }
-            }
-        });
+            });
+        } catch (storageError) {
+            console.warn('[Canvascope] Final snapshot persistence exceeded local storage budget, falling back to lightweight index only:', storageError?.message || storageError);
+            await chrome.storage.local.set({
+                indexedContent: finalDeduped,
+                [COURSE_CATALOG_STORAGE_KEY]: finalArtifacts.courseCatalog,
+                [COURSE_SNAPSHOTS_STORAGE_KEY]: [],
+                starredCourseIds: starredCourseIds.length > 0 ? starredCourseIds : (existingData.starredCourseIds || []),
+                settings: {
+                    ...(existingData.settings || {}),
+                    lastScanTime: Date.now(),
+                    version: chrome.runtime.getManifest().version,
+                    scanMetrics: {
+                        lastScanDurationMs: Math.round(fullPassDurationMs),
+                        fastPassDurationMs: Math.round(fastPassDurationMs),
+                        courseCount: courses.length,
+                        courseSnapshotFallback: true
+                    }
+                }
+            });
+        }
 
         const newItemsDelta = finalDeduped.length - deduplicateCrossType(existingContent).length;
         console.log(`[Canvascope] Scan complete! Total: ${finalDeduped.length}, Delta: ${newItemsDelta}`);
@@ -1259,7 +1385,14 @@ async function fetchCourseList(baseUrl) {
                 courses.push({
                     id: course.id,
                     name: course.name,
-                    code: course.course_code || ''
+                    code: course.course_code || '',
+                    defaultView: course.default_view || null,
+                    workflowState: course.workflow_state || null,
+                    enrollmentState: course.enrollment_state || null,
+                    startAt: course.start_at || null,
+                    endAt: course.end_at || null,
+                    termName: course.term?.name || null,
+                    imageUrl: course.image_download_url || course.image || null
                 });
             }
         }
@@ -1270,31 +1403,122 @@ async function fetchCourseList(baseUrl) {
     return courses;
 }
 
-async function fetchFastEndpoints(baseUrl, course, sourceMeta, scanTimestamp) {
+async function hydrateCanvasCourseSnapshotBase(baseUrl, course, snapshot) {
+    if (!snapshot || !course?.id) return;
+
+    try {
+        const resp = await fetchWithRetry(
+            `${baseUrl}/api/v1/courses/${course.id}?include[]=term&include[]=teachers&include[]=syllabus_body`,
+            { credentials: 'include' }
+        );
+
+        if (resp.ok) {
+            const detail = await resp.json();
+            const { text: syllabusText, truncated: syllabusTruncated } = normalizeRichText(detail?.syllabus_body, SYLLABUS_TEXT_CHAR_LIMIT);
+
+            snapshot.course = {
+                ...snapshot.course,
+                courseCode: detail?.course_code || snapshot.course.courseCode || '',
+                termName: detail?.term?.name || snapshot.course.termName || null,
+                startAt: detail?.start_at || snapshot.course.startAt || null,
+                endAt: detail?.end_at || snapshot.course.endAt || null,
+                defaultView: detail?.default_view || snapshot.course.defaultView || null,
+                workflowState: detail?.workflow_state || snapshot.course.workflowState || null,
+                enrollmentState: detail?.enrollment_state || snapshot.course.enrollmentState || null,
+                imageUrl: detail?.image_download_url || detail?.image || snapshot.course.imageUrl || null,
+                syllabusText: syllabusText || snapshot.course.syllabusText || null
+            };
+
+            snapshot.teacherSummaries = buildTeacherSummaries(detail?.teachers);
+            snapshot.scanStats.syllabusTruncated = snapshot.scanStats.syllabusTruncated || syllabusTruncated;
+        }
+    } catch (e) {
+        snapshot.scanStats.detailFetchFailures += 1;
+        console.warn(`[Canvascope] Could not fetch Canvas course details for ${course.id}:`, e.message);
+    }
+
+    try {
+        const groups = await fetchAllPages(`${baseUrl}/api/v1/courses/${course.id}/assignment_groups?per_page=100`);
+        mergeCourseAssignmentGroups(snapshot, groups);
+    } catch (e) {
+        snapshot.scanStats.detailFetchFailures += 1;
+        console.warn(`[Canvascope] Could not fetch assignment groups for ${course.id}:`, e.message);
+    }
+}
+
+async function fetchCanvasPageDetail(baseUrl, courseId, pageSlugOrId) {
+    const encoded = encodeURIComponent(pageSlugOrId);
+    const resp = await fetchWithRetry(`${baseUrl}/api/v1/courses/${courseId}/pages/${encoded}`, {
+        credentials: 'include'
+    });
+
+    if (!resp.ok) {
+        throw new Error(`Page detail failed (${resp.status})`);
+    }
+
+    return resp.json();
+}
+
+async function fetchFastEndpoints(baseUrl, course, sourceMeta, scanTimestamp, snapshot = null) {
     const content = [];
-    const promises = [
-        // Fetch assignments
-        fetchAllPages(`${baseUrl}/api/v1/courses/${course.id}/assignments?per_page=100`).then(items => {
-            for (const item of items) {
-                content.push({
-                    title: item.name || '',
-                    url: item.html_url || '',
-                    type: 'assignment',
-                    moduleName: 'Assignments',
-                    courseName: course.name,
-                    courseId: course.id,
-                    ...sourceMeta,
-                    scannedAt: scanTimestamp,
-                    dueAt: item.due_at || null,
-                    unlockAt: item.unlock_at || null,
-                    lockAt: item.lock_at || null
-                });
+    const submissionByAssignmentId = new Map();
+    const assignmentProcessingPromise = fetchAllPages(
+        `${baseUrl}/api/v1/courses/${course.id}/assignments?per_page=100&include[]=submission`
+    ).then((items) => {
+        for (const item of items) {
+            const submissionFields = buildAssignmentSubmissionFields({
+                assignmentId: item.id,
+                submission: item.submission,
+                hasSubmittedSubmissions: item.has_submitted_submissions ?? null
+            });
+
+            if (submissionFields.assignmentId) {
+                submissionByAssignmentId.set(
+                    submissionFields.assignmentId,
+                    copyAssignmentSubmissionFields(submissionFields)
+                );
             }
-        }),
+
+            const lightweight = {
+                title: item.name || '',
+                url: item.html_url || '',
+                type: 'assignment',
+                moduleName: 'Assignments',
+                courseName: course.name,
+                courseId: course.id,
+                ...sourceMeta,
+                scannedAt: scanTimestamp,
+                dueAt: item.due_at || null,
+                unlockAt: item.unlock_at || null,
+                lockAt: item.lock_at || null,
+                ...copyAssignmentSubmissionFields(submissionFields)
+            };
+
+            content.push(lightweight);
+
+            if (snapshot) {
+                const richItem = buildSnapshotItemBase(course, sourceMeta, scanTimestamp, {
+                    ...lightweight,
+                    assignmentGroupId: item.assignment_group_id ?? null,
+                    assignmentGroupName: getAssignmentGroupName(snapshot, item.assignment_group_id),
+                    pointsPossible: item.points_possible ?? null,
+                    submissionTypes: Array.isArray(item.submission_types) ? item.submission_types.slice() : [],
+                    allowedExtensions: Array.isArray(item.allowed_extensions) ? item.allowed_extensions.slice() : [],
+                    published: item.published ?? null,
+                    updatedAt: item.updated_at || null
+                });
+                addRichTextField(richItem, 'instructions', item.description, snapshot.scanStats);
+                recordSnapshotItem(snapshot, richItem);
+            }
+        }
+    });
+
+    const promises = [
+        assignmentProcessingPromise,
         // Fetch pages
         fetchAllPages(`${baseUrl}/api/v1/courses/${course.id}/pages?per_page=100`).then(items => {
             for (const item of items) {
-                content.push({
+                const lightweight = {
                     title: item.title || '',
                     url: item.html_url || '',
                     type: 'page',
@@ -1303,13 +1527,26 @@ async function fetchFastEndpoints(baseUrl, course, sourceMeta, scanTimestamp) {
                     courseId: course.id,
                     ...sourceMeta,
                     scannedAt: scanTimestamp
-                });
+                };
+
+                content.push(lightweight);
+
+                if (snapshot) {
+                    const richItem = buildSnapshotItemBase(course, sourceMeta, scanTimestamp, {
+                        ...lightweight,
+                        published: item.published ?? null,
+                        updatedAt: item.updated_at || null
+                    });
+                    recordSnapshotItem(snapshot, richItem);
+                }
             }
         }),
         // Fetch quizzes
-        fetchAllPages(`${baseUrl}/api/v1/courses/${course.id}/quizzes?per_page=100`).then(items => {
+        fetchAllPages(`${baseUrl}/api/v1/courses/${course.id}/quizzes?per_page=100`).then(async items => {
+            await assignmentProcessingPromise;
             for (const item of items) {
-                content.push({
+                const submissionFields = resolveAssignmentSubmissionFields(submissionByAssignmentId, item.assignment_id);
+                const lightweight = {
                     title: item.title || '',
                     url: item.html_url || '',
                     type: 'quiz',
@@ -1320,15 +1557,33 @@ async function fetchFastEndpoints(baseUrl, course, sourceMeta, scanTimestamp) {
                     scannedAt: scanTimestamp,
                     dueAt: item.due_at || null,
                     unlockAt: item.unlock_at || null,
-                    lockAt: item.lock_at || null
-                });
+                    lockAt: item.lock_at || null,
+                    ...submissionFields
+                };
+
+                content.push(lightweight);
+
+                if (snapshot) {
+                    const richItem = buildSnapshotItemBase(course, sourceMeta, scanTimestamp, {
+                        ...lightweight,
+                        assignmentGroupId: item.assignment_group_id ?? null,
+                        assignmentGroupName: getAssignmentGroupName(snapshot, item.assignment_group_id),
+                        pointsPossible: item.points_possible ?? null,
+                        published: item.published ?? null,
+                        updatedAt: item.updated_at || null
+                    });
+                    addRichTextField(richItem, 'instructions', item.description, snapshot.scanStats);
+                    recordSnapshotItem(snapshot, richItem);
+                }
             }
         }),
         // Fetch discussions
-        fetchAllPages(`${baseUrl}/api/v1/courses/${course.id}/discussion_topics?per_page=100`).then(items => {
+        fetchAllPages(`${baseUrl}/api/v1/courses/${course.id}/discussion_topics?per_page=100`).then(async items => {
+            await assignmentProcessingPromise;
             for (const item of items) {
                 const asgn = item.assignment || null;
-                content.push({
+                const submissionFields = resolveAssignmentSubmissionFields(submissionByAssignmentId, asgn?.id);
+                const lightweight = {
                     title: item.title || '',
                     url: item.html_url || '',
                     type: 'discussion',
@@ -1339,8 +1594,21 @@ async function fetchFastEndpoints(baseUrl, course, sourceMeta, scanTimestamp) {
                     scannedAt: scanTimestamp,
                     dueAt: asgn?.due_at || null,
                     unlockAt: asgn?.unlock_at || null,
-                    lockAt: asgn?.lock_at || null
-                });
+                    lockAt: asgn?.lock_at || null,
+                    ...submissionFields
+                };
+
+                content.push(lightweight);
+
+                if (snapshot) {
+                    const richItem = buildSnapshotItemBase(course, sourceMeta, scanTimestamp, {
+                        ...lightweight,
+                        published: item.published ?? null,
+                        updatedAt: item.updated_at || null
+                    });
+                    addRichTextField(richItem, 'body', item.message, snapshot.scanStats);
+                    recordSnapshotItem(snapshot, richItem);
+                }
             }
         })
     ];
@@ -1349,16 +1617,19 @@ async function fetchFastEndpoints(baseUrl, course, sourceMeta, scanTimestamp) {
     return content;
 }
 
-async function fetchHeavyEndpoints(baseUrl, course, sourceMeta, scanTimestamp) {
+async function fetchHeavyEndpoints(baseUrl, course, sourceMeta, scanTimestamp, snapshot = null) {
     const content = [];
 
     // Modules
-    const fetchModules = fetchAllPages(`${baseUrl}/api/v1/courses/${course.id}/modules?per_page=50&include[]=items`).then(modules => {
+    const fetchModules = fetchAllPages(`${baseUrl}/api/v1/courses/${course.id}/modules?per_page=50&include[]=items&include[]=content_details`).then(modules => {
+        if (snapshot) {
+            mergeCourseModules(snapshot, modules);
+        }
         for (const mod of modules) {
             if (mod.items) {
                 for (const item of mod.items) {
                     if (item.html_url) {
-                        content.push({
+                        const lightweight = {
                             title: item.title || '',
                             url: item.html_url,
                             type: item.type?.toLowerCase() || 'link',
@@ -1367,7 +1638,20 @@ async function fetchHeavyEndpoints(baseUrl, course, sourceMeta, scanTimestamp) {
                             courseId: course.id,
                             ...sourceMeta,
                             scannedAt: scanTimestamp
-                        });
+                        };
+                        content.push(lightweight);
+
+                        if (snapshot) {
+                            const richItem = buildSnapshotItemBase(course, sourceMeta, scanTimestamp, {
+                                ...lightweight,
+                                published: item.published ?? mod.published ?? null,
+                                dueAt: item.content_details?.due_at || lightweight.dueAt || null,
+                                unlockAt: item.content_details?.unlock_at || mod.unlock_at || lightweight.unlockAt || null,
+                                lockAt: item.content_details?.lock_at || lightweight.lockAt || null,
+                                pointsPossible: item.content_details?.points_possible ?? null
+                            });
+                            recordSnapshotItem(snapshot, richItem);
+                        }
                     }
                 }
             }
@@ -1380,7 +1664,7 @@ async function fetchHeavyEndpoints(baseUrl, course, sourceMeta, scanTimestamp) {
             const title = item.user_entered_title || item.title || 'Untitled Video';
             if (title.match(/^[a-z0-9-]{30,}/)) continue;
             const mediaUrl = `${baseUrl}/courses/${course.id}/media_download?entryId=${item.media_id}&redirect=1`;
-            content.push({
+            const lightweight = {
                 title: title,
                 url: mediaUrl,
                 type: 'video',
@@ -1389,7 +1673,13 @@ async function fetchHeavyEndpoints(baseUrl, course, sourceMeta, scanTimestamp) {
                 courseId: course.id,
                 ...sourceMeta,
                 scannedAt: scanTimestamp
-            });
+            };
+            content.push(lightweight);
+
+            if (snapshot) {
+                const richItem = buildSnapshotItemBase(course, sourceMeta, scanTimestamp, lightweight);
+                recordSnapshotItem(snapshot, richItem);
+            }
         }
     });
 
@@ -1420,7 +1710,7 @@ async function fetchHeavyEndpoints(baseUrl, course, sourceMeta, scanTimestamp) {
                 const folderName = folder?.name || 'Files';
                 const folderPath = folder?.fullName || '';
 
-                content.push({
+                const lightweight = {
                     title: item.display_name || '',
                     url: item.url || `${baseUrl}/courses/${course.id}/files/${item.id}`,
                     type,
@@ -1430,12 +1720,53 @@ async function fetchHeavyEndpoints(baseUrl, course, sourceMeta, scanTimestamp) {
                     courseId: course.id,
                     ...sourceMeta,
                     scannedAt: scanTimestamp
-                });
+                };
+                content.push(lightweight);
+
+                if (snapshot) {
+                    const richItem = buildSnapshotItemBase(course, sourceMeta, scanTimestamp, {
+                        ...lightweight,
+                        contentType: item['content-type'] || item.content_type || null,
+                        sizeBytes: item.size ?? null,
+                        updatedAt: item.updated_at || item.modified_at || null,
+                        lockedForUser: item.locked_for_user ?? null,
+                        hiddenForUser: item.hidden_for_user ?? null,
+                        published: item.published ?? null
+                    });
+                    recordSnapshotItem(snapshot, richItem);
+                }
             }
         } catch (e) { }
     })();
 
-    await Promise.allSettled([fetchModules, fetchMedia, fetchFiles]);
+    const fetchPageBodies = snapshot
+        ? fetchAllPages(`${baseUrl}/api/v1/courses/${course.id}/pages?per_page=100`).then(async (pages) => {
+            const tasks = pages.map((page) => async () => {
+                const slugOrId = page?.url || page?.page_id || page?.title;
+                if (!slugOrId) return;
+
+                try {
+                    const detail = await fetchCanvasPageDetail(baseUrl, course.id, slugOrId);
+                    const richItem = buildSnapshotItemBase(course, sourceMeta, scanTimestamp, {
+                        title: detail?.title || page?.title || '',
+                        url: detail?.html_url || page?.html_url || '',
+                        type: 'page',
+                        moduleName: 'Pages',
+                        published: detail?.published ?? page?.published ?? null,
+                        updatedAt: detail?.updated_at || page?.updated_at || null
+                    });
+                    addRichTextField(richItem, 'body', detail?.body, snapshot.scanStats);
+                    recordSnapshotItem(snapshot, richItem);
+                } catch (e) {
+                    snapshot.scanStats.pageBodyFetchFailures += 1;
+                }
+            });
+
+            await processPool(tasks, SNAPSHOT_PAGE_BODY_CONCURRENCY);
+        })
+        : Promise.resolve();
+
+    await Promise.allSettled([fetchModules, fetchMedia, fetchFiles, fetchPageBodies]);
     return content;
 }
 // BRIGHTSPACE API FUNCTIONS
@@ -1942,6 +2273,500 @@ function buildSourceMeta(baseUrl, platform) {
     };
 }
 
+function normalizeWhitespace(value) {
+    return String(value || '')
+        .replace(/\r/g, '\n')
+        .replace(/\u00a0/g, ' ')
+        .replace(/[ \t]+\n/g, '\n')
+        .replace(/\n{3,}/g, '\n\n')
+        .replace(/[ \t]{2,}/g, ' ')
+        .trim();
+}
+
+function decodeHtmlEntities(value) {
+    const named = {
+        amp: '&',
+        apos: "'",
+        gt: '>',
+        lt: '<',
+        nbsp: ' ',
+        quot: '"'
+    };
+
+    return String(value || '')
+        .replace(/&([a-z]+);/gi, (match, name) => named[name.toLowerCase()] ?? match)
+        .replace(/&#(\d+);/g, (_, code) => {
+            const parsed = Number.parseInt(code, 10);
+            return Number.isFinite(parsed) ? String.fromCodePoint(parsed) : '';
+        })
+        .replace(/&#x([0-9a-f]+);/gi, (_, code) => {
+            const parsed = Number.parseInt(code, 16);
+            return Number.isFinite(parsed) ? String.fromCodePoint(parsed) : '';
+        });
+}
+
+function stripHtmlToText(value) {
+    const withoutMarkup = String(value || '')
+        .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+        .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+        .replace(/<br\s*\/?>/gi, '\n')
+        .replace(/<\/p>/gi, '\n')
+        .replace(/<\/div>/gi, '\n')
+        .replace(/<\/li>/gi, '\n')
+        .replace(/<li[^>]*>/gi, '- ')
+        .replace(/<\/h[1-6]>/gi, '\n')
+        .replace(/<\/tr>/gi, '\n')
+        .replace(/<[^>]+>/g, ' ');
+
+    return normalizeWhitespace(decodeHtmlEntities(withoutMarkup));
+}
+
+function normalizeRichText(value, maxChars = SNAPSHOT_TEXT_CHAR_LIMIT) {
+    const stripped = stripHtmlToText(value);
+    if (!stripped) {
+        return { text: null, truncated: false };
+    }
+
+    if (stripped.length <= maxChars) {
+        return { text: stripped, truncated: false };
+    }
+
+    return {
+        text: `${stripped.slice(0, maxChars).trimEnd()}…`,
+        truncated: true
+    };
+}
+
+function addRichTextField(target, key, value, scanStats, maxChars = SNAPSHOT_TEXT_CHAR_LIMIT) {
+    const { text, truncated } = normalizeRichText(value, maxChars);
+    if (text) {
+        target[key] = text;
+    }
+    if (truncated && scanStats) {
+        scanStats.truncatedTextFieldCount = (scanStats.truncatedTextFieldCount || 0) + 1;
+    }
+}
+
+function getStructuredCourseKey(course, sourceMeta) {
+    if (!course?.id) return null;
+    const platform = String(sourceMeta?.platform || 'canvas').toLowerCase();
+    const platformDomain = String(sourceMeta?.platformDomain || '').toLowerCase();
+    return `${platform}:${platformDomain}:${course.id}`;
+}
+
+function buildTeacherSummaries(teachers) {
+    if (!Array.isArray(teachers)) return [];
+
+    return teachers
+        .map((teacher) => ({
+            id: teacher?.id ?? null,
+            name: teacher?.display_name || teacher?.short_name || teacher?.name || null
+        }))
+        .filter((teacher) => teacher.name)
+        .sort((lhs, rhs) => lhs.name.localeCompare(rhs.name));
+}
+
+function buildCourseSnapshotBase(course, sourceMeta, scanTimestamp) {
+    return {
+        schemaVersion: COURSE_SNAPSHOT_SCHEMA_VERSION,
+        sourceApp: 'canvascope_extension',
+        sourceKind: 'course_snapshot',
+        platform: sourceMeta?.platform || 'canvas',
+        platformDomain: sourceMeta?.platformDomain || '',
+        scannedAt: scanTimestamp,
+        courseKey: getStructuredCourseKey(course, sourceMeta),
+        course: {
+            courseId: course?.id ?? null,
+            courseName: course?.name || '',
+            courseCode: course?.code || '',
+            termName: course?.termName || null,
+            startAt: course?.startAt || null,
+            endAt: course?.endAt || null,
+            defaultView: course?.defaultView || null,
+            workflowState: course?.workflowState || null,
+            enrollmentState: course?.enrollmentState || null,
+            imageUrl: course?.imageUrl || null,
+            syllabusText: course?.syllabusText || null
+        },
+        teacherSummaries: Array.isArray(course?.teacherSummaries) ? course.teacherSummaries.slice() : [],
+        assignmentGroups: [],
+        modules: [],
+        indexedContent: [],
+        scanStats: {
+            itemCount: 0,
+            typeCounts: {},
+            truncatedTextFieldCount: 0,
+            syllabusTruncated: false,
+            pageBodyFetchFailures: 0,
+            detailFetchFailures: 0
+        }
+    };
+}
+
+function buildCourseCatalogEntryFromSnapshot(snapshot) {
+    return {
+        schemaVersion: snapshot?.schemaVersion || COURSE_SNAPSHOT_SCHEMA_VERSION,
+        sourceApp: 'canvascope_extension',
+        courseId: snapshot?.course?.courseId ?? null,
+        courseName: snapshot?.course?.courseName || '',
+        courseCode: snapshot?.course?.courseCode || '',
+        termName: snapshot?.course?.termName || null,
+        startAt: snapshot?.course?.startAt || null,
+        endAt: snapshot?.course?.endAt || null,
+        defaultView: snapshot?.course?.defaultView || null,
+        workflowState: snapshot?.course?.workflowState || null,
+        enrollmentState: snapshot?.course?.enrollmentState || null,
+        imageUrl: snapshot?.course?.imageUrl || null,
+        teacherSummaries: Array.isArray(snapshot?.teacherSummaries) ? snapshot.teacherSummaries.slice() : [],
+        platform: snapshot?.platform || 'canvas',
+        platformDomain: snapshot?.platformDomain || '',
+        scannedAt: snapshot?.scannedAt || null
+    };
+}
+
+function copyModuleRequirement(requirement) {
+    if (!requirement || typeof requirement !== 'object') return null;
+    return {
+        type: requirement.type || null,
+        completed: requirement.completed ?? null,
+        minScore: requirement.min_score ?? null,
+        minPercentage: requirement.min_percentage ?? null
+    };
+}
+
+function copyModuleContentDetails(details) {
+    if (!details || typeof details !== 'object') return null;
+    return {
+        dueAt: details.due_at || null,
+        unlockAt: details.unlock_at || null,
+        lockAt: details.lock_at || null,
+        pointsPossible: details.points_possible ?? null
+    };
+}
+
+function normalizeCanvasIdentifier(value) {
+    if (value === undefined || value === null) return null;
+    const normalized = String(value).trim();
+    return normalized || null;
+}
+
+function cloneSubmissionSummary(summary) {
+    if (!summary || typeof summary !== 'object') return null;
+    return {
+        workflowState: summary.workflowState ?? null,
+        submittedAt: summary.submittedAt ?? null,
+        attempt: summary.attempt ?? null,
+        late: summary.late ?? null,
+        missing: summary.missing ?? null,
+        excused: summary.excused ?? null,
+        grade: summary.grade ?? null,
+        score: summary.score ?? null,
+        submissionType: summary.submissionType ?? null,
+        hasSubmittedSubmissions: summary.hasSubmittedSubmissions ?? null,
+        gradeMatchesCurrentSubmission: summary.gradeMatchesCurrentSubmission ?? null
+    };
+}
+
+function hasMeaningfulSubmissionSummary(summary) {
+    if (!summary || typeof summary !== 'object') return false;
+    return Object.values(summary).some((value) => value !== undefined && value !== null && value !== '');
+}
+
+function buildSubmissionSummary(submission, hasSubmittedSubmissions = null) {
+    const summary = cloneSubmissionSummary({
+        workflowState: submission?.workflow_state || null,
+        submittedAt: submission?.submitted_at || null,
+        attempt: submission?.attempt ?? null,
+        late: submission?.late ?? null,
+        missing: submission?.missing ?? null,
+        excused: submission?.excused ?? null,
+        grade: submission?.grade ?? null,
+        score: submission?.score ?? null,
+        submissionType: submission?.submission_type || null,
+        hasSubmittedSubmissions: hasSubmittedSubmissions ?? null,
+        gradeMatchesCurrentSubmission: submission?.grade_matches_current_submission ?? null
+    });
+
+    return hasMeaningfulSubmissionSummary(summary) ? summary : null;
+}
+
+function isSubmittedFromSummary(summary) {
+    if (!summary || typeof summary !== 'object') return false;
+    const workflowState = String(summary.workflowState || '').trim().toLowerCase();
+    const hasGrade = summary.score !== null && summary.score !== undefined
+        || (typeof summary.grade === 'string' && summary.grade.trim() !== '');
+
+    return Boolean(
+        summary.submittedAt
+        || summary.hasSubmittedSubmissions === true
+        || summary.gradeMatchesCurrentSubmission === true
+        || hasGrade
+        || ['submitted', 'graded', 'pending_review', 'complete'].includes(workflowState)
+    );
+}
+
+function normalizeSubmissionStatus(summary) {
+    if (!summary) return 'not_submitted';
+    if (summary.excused === true) return 'excused';
+    if (summary.missing === true) return 'missing';
+    if (summary.late === true) return 'late';
+    if (isSubmittedFromSummary(summary)) return 'submitted';
+    return summary.workflowState ? 'unknown' : 'not_submitted';
+}
+
+function buildAssignmentSubmissionFields({ assignmentId = null, submission = null, hasSubmittedSubmissions = null } = {}) {
+    const normalizedAssignmentId = normalizeCanvasIdentifier(assignmentId);
+    if (!normalizedAssignmentId) {
+        return {
+            assignmentId: null,
+            submitted: null,
+            submissionStatus: null,
+            submission: null
+        };
+    }
+
+    const submissionSummary = buildSubmissionSummary(submission, hasSubmittedSubmissions);
+    return {
+        assignmentId: normalizedAssignmentId,
+        submitted: isSubmittedFromSummary(submissionSummary),
+        submissionStatus: normalizeSubmissionStatus(submissionSummary),
+        submission: submissionSummary
+    };
+}
+
+function copyAssignmentSubmissionFields(fields) {
+    return {
+        assignmentId: fields?.assignmentId ?? null,
+        submitted: fields?.submitted ?? null,
+        submissionStatus: fields?.submissionStatus ?? null,
+        submission: cloneSubmissionSummary(fields?.submission)
+    };
+}
+
+function resolveAssignmentSubmissionFields(submissionByAssignmentId, assignmentId) {
+    const normalizedAssignmentId = normalizeCanvasIdentifier(assignmentId);
+    if (!normalizedAssignmentId) {
+        return buildAssignmentSubmissionFields();
+    }
+
+    const existing = submissionByAssignmentId?.get(normalizedAssignmentId);
+    if (existing) {
+        return copyAssignmentSubmissionFields(existing);
+    }
+
+    return buildAssignmentSubmissionFields({ assignmentId: normalizedAssignmentId });
+}
+
+function mergeSubmissionSummary(winner, loser) {
+    if (!winner || !loser) return winner || loser || null;
+
+    const fields = [
+        'workflowState',
+        'submittedAt',
+        'attempt',
+        'late',
+        'missing',
+        'excused',
+        'grade',
+        'score',
+        'submissionType',
+        'hasSubmittedSubmissions',
+        'gradeMatchesCurrentSubmission'
+    ];
+
+    for (const field of fields) {
+        if ((winner[field] === undefined || winner[field] === null || winner[field] === '')
+            && loser[field] !== undefined && loser[field] !== null && loser[field] !== '') {
+            winner[field] = loser[field];
+        }
+    }
+
+    return winner;
+}
+
+function mergeCourseAssignmentGroups(snapshot, groups) {
+    if (!snapshot || !Array.isArray(groups)) return;
+
+    snapshot.assignmentGroups = groups
+        .map((group) => ({
+            id: group?.id ?? null,
+            name: group?.name || null,
+            position: group?.position ?? null,
+            groupWeight: group?.group_weight ?? null,
+            rules: group?.rules || null
+        }))
+        .filter((group) => group.id && group.name)
+        .sort((lhs, rhs) => {
+            const lhsPos = lhs.position ?? Number.MAX_SAFE_INTEGER;
+            const rhsPos = rhs.position ?? Number.MAX_SAFE_INTEGER;
+            if (lhsPos === rhsPos) {
+                return lhs.name.localeCompare(rhs.name);
+            }
+            return lhsPos - rhsPos;
+        });
+}
+
+function mergeCourseModules(snapshot, modules) {
+    if (!snapshot || !Array.isArray(modules)) return;
+
+    snapshot.modules = modules
+        .map((module) => ({
+            id: module?.id ?? null,
+            name: module?.name || '',
+            position: module?.position ?? null,
+            unlockAt: module?.unlock_at || null,
+            published: module?.published ?? null,
+            items: Array.isArray(module?.items)
+                ? module.items.map((item) => ({
+                    id: item?.id ?? null,
+                    title: item?.title || '',
+                    type: item?.type ? String(item.type).toLowerCase() : null,
+                    url: item?.html_url || item?.external_url || null,
+                    pageUrl: item?.page_url || null,
+                    contentId: item?.content_id ?? null,
+                    position: item?.position ?? null,
+                    published: item?.published ?? null,
+                    completionRequirement: copyModuleRequirement(item?.completion_requirement),
+                    contentDetails: copyModuleContentDetails(item?.content_details)
+                }))
+                : []
+        }))
+        .filter((module) => module.id && module.name)
+        .sort((lhs, rhs) => {
+            const lhsPos = lhs.position ?? Number.MAX_SAFE_INTEGER;
+            const rhsPos = rhs.position ?? Number.MAX_SAFE_INTEGER;
+            if (lhsPos === rhsPos) {
+                return lhs.name.localeCompare(rhs.name);
+            }
+            return lhsPos - rhsPos;
+        });
+}
+
+function getAssignmentGroupName(snapshot, assignmentGroupId) {
+    if (!snapshot || !assignmentGroupId) return null;
+    const match = (snapshot.assignmentGroups || []).find((group) => group.id === assignmentGroupId);
+    return match?.name || null;
+}
+
+function buildSnapshotItemBase(course, sourceMeta, scanTimestamp, overrides = {}) {
+    return {
+        sourceApp: 'canvascope_extension',
+        title: overrides.title || '',
+        url: overrides.url || '',
+        type: overrides.type || 'unknown',
+        moduleName: overrides.moduleName || '',
+        courseName: course?.name || '',
+        courseId: course?.id ?? null,
+        platform: sourceMeta?.platform || 'canvas',
+        platformDomain: sourceMeta?.platformDomain || '',
+        scannedAt: scanTimestamp,
+        ...overrides
+    };
+}
+
+function recordSnapshotItem(snapshot, item) {
+    if (!snapshot || !item) return;
+    snapshot.indexedContent.push(item);
+}
+
+function mergeIndexedContentFields(winner, loser) {
+    if (!winner || !loser) return;
+
+    const scalarFields = [
+        'assignmentId',
+        'assignmentGroupId',
+        'assignmentGroupName',
+        'contentType',
+        'courseId',
+        'courseName',
+        'dueAt',
+        'folderPath',
+        'hiddenForUser',
+        'lockAt',
+        'lockedForUser',
+        'moduleName',
+        'platform',
+        'platformDomain',
+        'pointsPossible',
+        'published',
+        'scannedAt',
+        'sizeBytes',
+        'sourceApp',
+        'submitted',
+        'submissionStatus',
+        'unlockAt',
+        'updatedAt'
+    ];
+
+    for (const field of scalarFields) {
+        if ((winner[field] === undefined || winner[field] === null || winner[field] === '')
+            && loser[field] !== undefined && loser[field] !== null && loser[field] !== '') {
+            winner[field] = loser[field];
+        }
+    }
+
+    const preferredTextFields = ['instructions', 'description', 'body', 'content', 'text'];
+    for (const field of preferredTextFields) {
+        const winnerValue = typeof winner[field] === 'string' ? winner[field] : '';
+        const loserValue = typeof loser[field] === 'string' ? loser[field] : '';
+        if (!winnerValue && loserValue) {
+            winner[field] = loserValue;
+        } else if (loserValue.length > winnerValue.length) {
+            winner[field] = loserValue;
+        }
+    }
+
+    if ((!Array.isArray(winner.submissionTypes) || winner.submissionTypes.length === 0) && Array.isArray(loser.submissionTypes)) {
+        winner.submissionTypes = loser.submissionTypes.slice();
+    }
+
+    if ((!Array.isArray(winner.allowedExtensions) || winner.allowedExtensions.length === 0) && Array.isArray(loser.allowedExtensions)) {
+        winner.allowedExtensions = loser.allowedExtensions.slice();
+    }
+
+    if (!winner.submission && loser.submission) {
+        winner.submission = cloneSubmissionSummary(loser.submission);
+    } else if (winner.submission && loser.submission) {
+        mergeSubmissionSummary(winner.submission, loser.submission);
+    }
+}
+
+function prepareCourseArtifactsForStorage(courseSnapshotMap) {
+    const courseSnapshots = Array.from(courseSnapshotMap.values())
+        .filter(Boolean)
+        .map((snapshot) => {
+            snapshot.indexedContent = deduplicateCrossType(deduplicateContent(snapshot.indexedContent || []));
+            snapshot.scanStats.itemCount = snapshot.indexedContent.length;
+            snapshot.scanStats.typeCounts = snapshot.indexedContent.reduce((acc, item) => {
+                const type = String(item?.type || 'unknown').toLowerCase();
+                acc[type] = (acc[type] || 0) + 1;
+                return acc;
+            }, {});
+            return snapshot;
+        })
+        .sort((lhs, rhs) => {
+            const lhsName = lhs?.course?.courseName || '';
+            const rhsName = rhs?.course?.courseName || '';
+            return lhsName.localeCompare(rhsName);
+        });
+
+    const courseCatalog = courseSnapshots
+        .map(buildCourseCatalogEntryFromSnapshot)
+        .sort((lhs, rhs) => (lhs.courseName || '').localeCompare(rhs.courseName || ''));
+
+    return { courseCatalog, courseSnapshots };
+}
+
+function flattenSnapshotItems(courseSnapshots) {
+    if (!Array.isArray(courseSnapshots)) return [];
+    const items = [];
+    for (const snapshot of courseSnapshots) {
+        if (!Array.isArray(snapshot?.indexedContent)) continue;
+        items.push(...snapshot.indexedContent);
+    }
+    return deduplicateCrossType(deduplicateContent(items));
+}
+
 function getCourseKey(item) {
     if (!item || typeof item !== 'object') return null;
     const courseId = item.courseId !== undefined && item.courseId !== null
@@ -2039,9 +2864,7 @@ function deduplicateContent(content) {
 
             // Merge due-date fields from either copy (prefer non-null)
             const loser = winner === item ? existing : item;
-            if (!winner.dueAt && loser.dueAt) winner.dueAt = loser.dueAt;
-            if (!winner.unlockAt && loser.unlockAt) winner.unlockAt = loser.unlockAt;
-            if (!winner.lockAt && loser.lockAt) winner.lockAt = loser.lockAt;
+            mergeIndexedContentFields(winner, loser);
         }
     }
 
@@ -2077,9 +2900,7 @@ function deduplicateCrossType(content) {
             }
 
             const loser = winner === item ? existing : item;
-            if (!winner.dueAt && loser.dueAt) winner.dueAt = loser.dueAt;
-            if (!winner.unlockAt && loser.unlockAt) winner.unlockAt = loser.unlockAt;
-            if (!winner.lockAt && loser.lockAt) winner.lockAt = loser.lockAt;
+            mergeIndexedContentFields(winner, loser);
         }
     }
 
@@ -2448,8 +3269,16 @@ async function collectPdfCandidatesFromTab(tabId) {
 }
 
 async function resolveTargetTabForPdfMode(mode, sender) {
+    if (mode === 'sender_tab' && sender?.tab?.id) {
+        try {
+            return await chrome.tabs.get(sender.tab.id);
+        } catch {
+            return sender.tab || null;
+        }
+    }
+
     if (mode === 'sender_tab' && sender?.tab) {
-        return sender.tab;
+        return sender.tab || null;
     }
 
     const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -2880,8 +3709,24 @@ async function sendPdfToLectraFromMessage({ trigger, candidateUrl, sourcePageUrl
 
     const activeMode = sender?.tab ? 'sender_tab' : 'active_tab';
     const context = await resolvePdfContextFromMessage({ mode: activeMode, sender });
-    const resolvedCandidateUrl = normalizePdfCandidateUrl(candidateUrl || context.candidateUrl, sourcePageUrl || context.sourcePageUrl);
-    const resolvedSourceUrl = normalizePdfCandidateUrl(sourcePageUrl || context.sourcePageUrl || resolvedCandidateUrl, context.sourcePageUrl || undefined);
+    const preferCurrentContext = Boolean(context?.hasPdf && context?.candidateUrl);
+    const preferredCandidateUrl = preferCurrentContext
+        ? context.candidateUrl
+        : (candidateUrl || context.candidateUrl);
+    const preferredSourcePageUrl = preferCurrentContext
+        ? (context.sourcePageUrl || sourcePageUrl || preferredCandidateUrl)
+        : (sourcePageUrl || context.sourcePageUrl || preferredCandidateUrl);
+    const resolvedCandidateUrl = normalizePdfCandidateUrl(
+        preferredCandidateUrl,
+        preferredSourcePageUrl || context.sourcePageUrl || undefined
+    );
+    const resolvedSourceUrl = normalizePdfCandidateUrl(
+        preferredSourcePageUrl || resolvedCandidateUrl,
+        context.sourcePageUrl || sourcePageUrl || resolvedCandidateUrl || undefined
+    );
+    const resolvedTitleHint = preferCurrentContext
+        ? (context.titleHint || titleHint || null)
+        : (titleHint || context.titleHint || null);
 
     if (!resolvedCandidateUrl || (!context.hasPdf && !candidateUrl)) {
         return {
@@ -2990,7 +3835,7 @@ async function sendPdfToLectraFromMessage({ trigger, candidateUrl, sourcePageUrl
         const sourceForCourse = resolvedSourceUrl || selectedCandidateUrl;
         const courseId = parseCourseIdFromUrl(sourceForCourse);
         const resolvedTitle = derivePdfTitle({
-            titleHint: titleHint || context.titleHint,
+            titleHint: resolvedTitleHint,
             fallbackFilename: downloaded.filename,
             sourcePageTitle: context.titleHint,
             candidateUrl: selectedCandidateUrl,
@@ -3273,64 +4118,180 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
  * Each item is stored as a row with item_type from the content type
  * and item_data containing the full item object.
  */
+function isExtensionOwnedSyncedRow(row, legacyItemTypes) {
+    const itemType = String(row?.item_type || '').toLowerCase();
+    if (!itemType || itemType === 'pdf_document' || itemType.startsWith('course_brain_')) {
+        return false;
+    }
+
+    if (itemType === COURSE_CATALOG_ITEM_TYPE || itemType === COURSE_SNAPSHOT_ITEM_TYPE) {
+        return true;
+    }
+
+    const itemData = row?.item_data && typeof row.item_data === 'object' ? row.item_data : null;
+    if (itemData?.sourceApp === 'canvascope_extension' || itemData?.sourcePlatform === 'canvascope_extension') {
+        return true;
+    }
+
+    if (!legacyItemTypes.has(itemType)) {
+        return false;
+    }
+
+    return Boolean(
+        itemData?.platform ||
+        itemData?.platformDomain ||
+        itemData?.courseId ||
+        itemData?.courseName
+    );
+}
+
+async function clearExtensionOwnedSyncedItems(userId, legacyItems = []) {
+    const { data: existingRows, error } = await supabaseClient
+        .from('synced_items')
+        .select('id, item_type, item_data')
+        .eq('user_id', userId);
+
+    if (error) {
+        throw error;
+    }
+
+    const legacyItemTypes = new Set(LEGACY_EXTENSION_ITEM_TYPES);
+    for (const item of legacyItems) {
+        const type = String(item?.type || '').toLowerCase().trim();
+        if (type) {
+            legacyItemTypes.add(type);
+        }
+    }
+
+    const rowIds = (existingRows || [])
+        .filter((row) => isExtensionOwnedSyncedRow(row, legacyItemTypes))
+        .map((row) => row.id)
+        .filter(Boolean);
+
+    for (let index = 0; index < rowIds.length; index += EXTENSION_SYNC_BATCH_SIZE) {
+        const batch = rowIds.slice(index, index + EXTENSION_SYNC_BATCH_SIZE);
+        const { error: deleteError } = await supabaseClient
+            .from('synced_items')
+            .delete()
+            .eq('user_id', userId)
+            .in('id', batch);
+
+        if (deleteError) {
+            throw deleteError;
+        }
+    }
+
+    return rowIds.length;
+}
+
+async function insertSyncedRowsInBatches(rows, label) {
+    if (!Array.isArray(rows) || rows.length === 0) return 0;
+
+    let totalInserted = 0;
+    for (let index = 0; index < rows.length; index += EXTENSION_SYNC_BATCH_SIZE) {
+        const batch = rows.slice(index, index + EXTENSION_SYNC_BATCH_SIZE);
+        const { error } = await supabaseClient
+            .from('synced_items')
+            .insert(batch);
+
+        if (error) {
+            console.error(`[Canvascope Sync] ${label} batch insert error at offset ${index}:`, error);
+            continue;
+        }
+
+        totalInserted += batch.length;
+    }
+
+    return totalInserted;
+}
+
 async function syncIndexedContentToSupabase() {
     const { data: { session } } = await supabaseClient.auth.getSession();
     if (!session) return { success: false, error: 'Not signed in' };
 
     const userId = session.user.id;
 
-    // Read local indexed content
-    const storageData = await chrome.storage.local.get(['indexedContent']);
-    const items = storageData.indexedContent || [];
+    const storageData = await chrome.storage.local.get([
+        'indexedContent',
+        COURSE_CATALOG_STORAGE_KEY,
+        COURSE_SNAPSHOTS_STORAGE_KEY
+    ]);
+    const lightweightItems = storageData.indexedContent || [];
+    const courseCatalog = Array.isArray(storageData[COURSE_CATALOG_STORAGE_KEY])
+        ? storageData[COURSE_CATALOG_STORAGE_KEY]
+        : [];
+    const courseSnapshots = Array.isArray(storageData[COURSE_SNAPSHOTS_STORAGE_KEY])
+        ? storageData[COURSE_SNAPSHOTS_STORAGE_KEY]
+        : [];
+    const richSnapshotItems = flattenSnapshotItems(courseSnapshots);
+    const legacyItems = richSnapshotItems.length > 0
+        ? richSnapshotItems
+        : lightweightItems.map((item) => ({ sourceApp: 'canvascope_extension', ...item }));
 
-    if (items.length === 0) {
+    if (legacyItems.length === 0 && courseCatalog.length === 0 && courseSnapshots.length === 0) {
         return { success: true, synced: 0, message: 'No items to sync' };
     }
 
-    console.log(`[Canvascope Sync] Syncing ${items.length} indexed items to Supabase...`);
+    console.log(`[Canvascope Sync] Syncing ${legacyItems.length} legacy items, ${courseSnapshots.length} course snapshots...`);
 
-    // First, delete extension-owned synced_items for this user to do a full refresh.
-    // Keep Lectra-origin rows (`pdf_document`) intact.
-    const { error: deleteError } = await supabaseClient
-        .from('synced_items')
-        .delete()
-        .eq('user_id', userId)
-        .neq('item_type', 'pdf_document');
-
-    if (deleteError) {
+    let deletedCount = 0;
+    try {
+        deletedCount = await clearExtensionOwnedSyncedItems(userId, [...legacyItems, ...lightweightItems]);
+    } catch (deleteError) {
         console.error('[Canvascope Sync] Error clearing old items:', deleteError);
     }
 
-    // Batch insert in chunks of 50
-    const BATCH_SIZE = 50;
-    let totalSynced = 0;
+    const legacyRows = legacyItems.map((item) => ({
+        user_id: userId,
+        item_type: item.type || 'unknown',
+        item_data: {
+            sourceApp: 'canvascope_extension',
+            ...item
+        },
+        sync_status: 'synced'
+    }));
 
-    for (let i = 0; i < items.length; i += BATCH_SIZE) {
-        const batch = items.slice(i, i + BATCH_SIZE);
-        const rows = batch.map(item => ({
+    const catalogRows = courseCatalog.length > 0
+        ? [{
             user_id: userId,
-            item_type: item.type || 'unknown',
-            item_data: item,
+            item_type: COURSE_CATALOG_ITEM_TYPE,
+            item_data: {
+                schemaVersion: COURSE_SNAPSHOT_SCHEMA_VERSION,
+                sourceApp: 'canvascope_extension',
+                generatedAt: new Date().toISOString(),
+                courseCatalog
+            },
             sync_status: 'synced'
-        }));
+        }]
+        : [];
 
-        const { error: insertError } = await supabaseClient
-            .from('synced_items')
-            .insert(rows);
+    const snapshotRows = courseSnapshots.map((snapshot) => ({
+        user_id: userId,
+        item_type: COURSE_SNAPSHOT_ITEM_TYPE,
+        item_data: snapshot,
+        sync_status: 'synced'
+    }));
 
-        if (insertError) {
-            console.error(`[Canvascope Sync] Batch insert error at offset ${i}:`, insertError);
-        } else {
-            totalSynced += batch.length;
-        }
-    }
+    const legacySynced = await insertSyncedRowsInBatches(legacyRows, 'legacy');
+    const catalogSynced = await insertSyncedRowsInBatches(catalogRows, 'catalog');
+    const snapshotSynced = await insertSyncedRowsInBatches(snapshotRows, 'snapshot');
+    const totalSynced = legacySynced + catalogSynced + snapshotSynced;
 
-    console.log(`[Canvascope Sync] Done! Synced ${totalSynced}/${items.length} items.`);
-    return { success: true, synced: totalSynced, total: items.length };
+    console.log(`[Canvascope Sync] Done! Synced ${totalSynced} rows after clearing ${deletedCount} extension-owned rows.`);
+    return {
+        success: true,
+        synced: totalSynced,
+        deleted: deletedCount,
+        legacySynced,
+        catalogSynced,
+        snapshotSynced,
+        totalLegacyItems: legacyItems.length,
+        totalCourseSnapshots: courseSnapshots.length
+    };
 }
 
 /**
- * Wipe all synced_items for the authenticated user in Supabase.
+ * Wipe extension-owned synced_items for the authenticated user in Supabase.
  * Triggered when the user clears their local data.
  */
 async function clearIndexedContentFromSupabase() {
@@ -3340,18 +4301,20 @@ async function clearIndexedContentFromSupabase() {
     const userId = session.user.id;
     console.log(`[Canvascope Sync] Clearing extension synced_items for user ${userId}...`);
 
-    const { error: deleteError } = await supabaseClient
-        .from('synced_items')
-        .delete()
-        .eq('user_id', userId)
-        .neq('item_type', 'pdf_document');
+    const storageData = await chrome.storage.local.get([
+        'indexedContent',
+        COURSE_SNAPSHOTS_STORAGE_KEY
+    ]);
+    const localItems = Array.isArray(storageData.indexedContent) ? storageData.indexedContent : [];
+    const snapshotItems = flattenSnapshotItems(storageData[COURSE_SNAPSHOTS_STORAGE_KEY]);
 
-    if (deleteError) {
+    try {
+        const deleted = await clearExtensionOwnedSyncedItems(userId, [...localItems, ...snapshotItems]);
+        return { success: true, deleted };
+    } catch (deleteError) {
         console.error('[Canvascope Sync] Error clearing items from Supabase:', deleteError);
         return { success: false, error: deleteError.message };
     }
-
-    return { success: true };
 }
 
 // ============================================

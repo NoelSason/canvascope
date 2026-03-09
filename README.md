@@ -31,6 +31,8 @@ Canvascope is a local-first Chrome extension for Canvas and Brightspace. It inde
 - Validates PDF signatures and enforces 25 MB size limit
 - Uploads selected PDF to Supabase Storage bucket `lectra_documents`
 - Registers `pdf_document` rows in `synced_items` for Lectra pickup
+- Builds `courseCatalog` + bounded `courseSnapshots` for Lectra Course Brain
+- Dual-writes enriched course rows plus namespaced snapshot rows to `synced_items` when signed in
 
 ### Privacy Model
 - Local-first indexing: search corpus stays in `chrome.storage.local`
@@ -123,6 +125,14 @@ When `Send to Lectra` succeeds, Canvascope inserts a `synced_items` row with:
 
 This contract aligns with the Lectra workspace specs in `../..` (`lectra [IN PROGRESS]`).
 
+Canvas course scans now also persist:
+
+- Local storage keys: `courseCatalog`, `courseSnapshots`
+- `synced_items.item_type = "canvascope_course_catalog_v1"` for the current course catalog snapshot
+- `synced_items.item_type = "canvascope_course_snapshot_v1"` for per-course Course Brain payloads
+
+Each course snapshot stores bounded plain-text course context for Lectra, including course metadata, teacher summaries, assignment groups, module structure, and enriched `indexedContent` items with fields such as `instructions`, `body`, `pointsPossible`, `submissionTypes`, `contentType`, and `sizeBytes`.
+
 ---
 
 ## Roadmap Snapshot
@@ -135,7 +145,7 @@ This contract aligns with the Lectra workspace specs in `../..` (`lectra [IN PRO
 
 ### Next
 - PDF text extraction for in-extension full text search
-- Expanded content extraction (slides/transcripts/module text)
+- Expanded extraction beyond bounded Canvas text snapshots (PDF OCR, transcripts)
 - Optional semantic search layer
 
 See [docs/ROADMAP.md](docs/ROADMAP.md) for full status.

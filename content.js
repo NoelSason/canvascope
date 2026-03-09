@@ -470,6 +470,7 @@ function removeLectraSendButton() {
         lectraSendButton.parentNode.removeChild(lectraSendButton);
     }
     lectraSendButton = null;
+    lectraPdfContext = null;
     lectraSendButtonBusy = false;
 }
 
@@ -503,11 +504,52 @@ function setLectraSendButtonState(text, state = 'idle') {
     }
 }
 
-function scheduleLectraPdfContextRefresh(delayMs = 0) {
+function requestLectraPdfContext() {
+    return new Promise((resolve) => {
+        chrome.runtime.sendMessage({ action: 'resolvePdfContext', mode: 'sender_tab' }, (response) => {
+            if (chrome.runtime.lastError) {
+                resolve({
+                    ok: false,
+                    reason: chrome.runtime.lastError.message || 'runtime_error',
+                    context: null
+                });
+                return;
+            }
+
+            resolve({
+                ok: true,
+                reason: null,
+                context: response || null
+            });
+        });
+    });
+}
+
+function applyLectraPdfContext(context) {
+    lectraPdfContext = context || null;
+    const confidence = String(context?.confidence || 'none').toLowerCase();
+    const shouldShow = Boolean(context?.hasPdf) && (confidence === 'definitive' || confidence === 'strong');
+
+    if (!shouldShow) {
+        removeLectraSendButton();
+        return null;
+    }
+
+    setLectraSendButtonState('Send to Lectra', 'idle');
+    return lectraPdfContext;
+}
+
+function scheduleLectraPdfContextRefresh(delayMs = 0, { clearStale = false } = {}) {
     if (lectraPdfRefreshTimer) {
         clearTimeout(lectraPdfRefreshTimer);
     }
-    lectraPdfRefreshTimer = setTimeout(refreshLectraPdfContext, delayMs);
+    if (clearStale) {
+        removeLectraSendButton();
+    }
+    lectraPdfRefreshTimer = setTimeout(() => {
+        lectraPdfRefreshTimer = null;
+        refreshLectraPdfContext();
+    }, delayMs);
 }
 
 function refreshLectraPdfContext() {
@@ -516,31 +558,27 @@ function refreshLectraPdfContext() {
         return;
     }
 
-    chrome.runtime.sendMessage({ action: 'resolvePdfContext', mode: 'sender_tab' }, (response) => {
-        if (chrome.runtime.lastError) {
+    requestLectraPdfContext().then((result) => {
+        if (!result.ok) {
             removeLectraSendButton();
             return;
         }
-
-        lectraPdfContext = response || null;
-        const confidence = String(response?.confidence || 'none').toLowerCase();
-        const shouldShow = Boolean(response?.hasPdf) && (confidence === 'definitive' || confidence === 'strong');
-
-        if (!shouldShow) {
-            removeLectraSendButton();
-            return;
-        }
-
-        setLectraSendButtonState('Send to Lectra', 'idle');
+        applyLectraPdfContext(result.context);
     });
 }
 
-function handleLectraSendButtonClick() {
+async function handleLectraSendButtonClick() {
     if (lectraSendButtonBusy) return;
 
-    const candidateUrl = lectraPdfContext?.candidateUrl || null;
+    const resolved = await requestLectraPdfContext();
+    if (!resolved.ok) {
+        removeLectraSendButton();
+        return;
+    }
+
+    const currentContext = applyLectraPdfContext(resolved.context);
+    const candidateUrl = currentContext?.candidateUrl || null;
     if (!candidateUrl) {
-        scheduleLectraPdfContextRefresh(0);
         return;
     }
 
@@ -553,8 +591,8 @@ function handleLectraSendButtonClick() {
         action: 'sendPdfToLectra',
         trigger: 'floating_button',
         candidateUrl,
-        sourcePageUrl: lectraPdfContext?.sourcePageUrl || window.location.href,
-        titleHint: lectraPdfContext?.titleHint || document.title || ''
+        sourcePageUrl: currentContext?.sourcePageUrl || window.location.href,
+        titleHint: currentContext?.titleHint || document.title || ''
     }, (response) => {
         if (chrome.runtime.lastError) {
             setLectraSendButtonState('Failed', 'error');
@@ -596,7 +634,7 @@ function installLectraNavigationHooks() {
     if (lectraHooksInstalled) return;
     lectraHooksInstalled = true;
 
-    const schedule = () => scheduleLectraPdfContextRefresh(40);
+    const schedule = () => scheduleLectraPdfContextRefresh(40, { clearStale: true });
     window.addEventListener('popstate', schedule);
     window.addEventListener('hashchange', schedule);
 
