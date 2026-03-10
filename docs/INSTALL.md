@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- Google Chrome 88+
+- Google Chrome 116+
 - Access to your LMS (Canvas or Brightspace)
 - Optional for Lectra sync: Google sign-in inside Canvascope
 
@@ -74,7 +74,7 @@ Navigate to a supported domain such as:
 3. Click **Send to Lectra** (floating button) or **Send PDF to Lectra** in popup.
 4. Confirm the prompt.
 
-If successful, Canvascope uploads the PDF to Supabase Storage and writes a `pdf_document` entry to `synced_items`.
+If successful, Canvascope uploads the PDF to DropBridge v2 and queues it for the signed-in Lectra iPad receiver.
 
 ---
 
@@ -102,11 +102,14 @@ Indexed local content is preserved unless you clear data.
 
 ## Backend Migration Note (Developers)
 
-If you run your own Supabase backend for Lectra sync, ensure migration:
+If you run your own Supabase backend for DropBridge v2 handoff, ensure migrations include:
 
-- `supabase/migrations/20260304211400_add_lectra_documents_storage.sql`
+- `supabase/migrations/20260227190124_dropbridge_install.sql`
+- `supabase/migrations/20260227190125_dropbridge_v2_account_link.sql`
+- `supabase/migrations/20260302005800_dropbridge_v2_client_kind_lectra_ipad.sql`
+- `supabase/migrations/20260309120000_dropbridge_v2_wake_metadata_push.sql`
 
-This creates the `lectra_documents` bucket (25 MB PDF limit) and RLS policies.
+The wake migration adds `uploads.metadata`, device push-token fields, and private realtime wake-topic authorization.
 
 ---
 

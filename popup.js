@@ -3206,7 +3206,11 @@ async function handleClearData() {
   if (!confirmed) return;
 
   try {
-    await chrome.storage.local.set({ indexedContent: [] });
+    await chrome.storage.local.set({
+      indexedContent: [],
+      courseCatalog: [],
+      courseSnapshots: []
+    });
     state.indexedContent = [];
     state.fuse = null;
     updateUI();

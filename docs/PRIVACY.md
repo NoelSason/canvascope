@@ -1,16 +1,17 @@
 # Canvascope - Privacy Policy
 
-**Last Updated**: March 4, 2026  
+**Last Updated**: March 7, 2026  
 **Version**: 2.2.0
 
 ---
 
 ## Summary
 
-Canvascope is local-first for search indexing. Most course metadata used for search stays on your device.
+Canvascope is local-first for search indexing. Most lightweight search metadata stays on your device.
 
 Canvascope also includes optional cloud-connected features:
 - Google sign-in
+- Course Brain sync for Lectra
 - Lectra PDF handoff (`Send to Lectra`)
 - Bug-report sync workflows (project-maintainer tooling)
 
@@ -32,6 +33,15 @@ When you scan LMS content, Canvascope stores local metadata such as:
 | Due dates | ISO timestamp | Due planner | `chrome.storage.local` |
 | Click feedback | URL + timestamp | Ranking tiebreaks | `chrome.storage.local` |
 
+### Local Course Snapshot Cache
+Canvas scans also keep bounded course-structure data for Lectra/Course Brain:
+
+| Data Type | Example | Purpose | Storage |
+|---|---|---|---|
+| Course catalog | course code, term, teacher summaries | Course-level navigation/context | `chrome.storage.local` |
+| Course snapshots | assignment groups, modules, file metadata | Lectra Course Brain sync | `chrome.storage.local` |
+| Bounded plain-text bodies | syllabus text, assignment instructions, page/discussion body excerpts | Assignment workspace + concept/topic inference | `chrome.storage.local` |
+
 ### Optional Account Data
 If you sign in, Canvascope may read/store:
 
@@ -40,13 +50,24 @@ If you sign in, Canvascope may read/store:
 | Email + display name | Account profile display | Local extension storage + Supabase auth session |
 | OAuth session tokens | Authenticated features | Local extension storage via Supabase auth adapter |
 
-### Optional Lectra PDF Handoff
-If you explicitly choose **Send to Lectra**:
+### Optional Lectra/Course Brain Sync
+If you sign in, Canvascope may sync course data for Lectra:
 
 | Data Type | Purpose | Destination |
 |---|---|---|
-| Selected PDF file (max 25 MB) | iPad annotation workflow | Supabase Storage bucket `lectra_documents` |
-| PDF metadata (`title`, `courseId`, `sourceUrl`, `storagePath`, status) | Lectra sync coordination | Supabase table `synced_items` |
+| Course catalog (`courseCatalog`) | Lectra course picker and course context | Supabase table `synced_items` |
+| Course snapshots (`courseSnapshots`) | Course Brain graph, assignment workspace, topic/concept inference | Supabase table `synced_items` |
+| Enriched item metadata (`instructions`, `body`, points, file metadata) | Lectra Course Brain enrichment | Supabase table `synced_items` |
+
+Text synced for Course Brain is bounded plain text, not raw HTML and not file OCR output.
+
+### Optional Lectra PDF Handoff
+If you explicitly choose **Send to Lectra** for a PDF:
+
+| Data Type | Purpose | Destination |
+|---|---|---|
+| Selected PDF file (max 25 MB) | iPad annotation workflow | DropBridge private storage bucket `drops` (via Edge Function) |
+| PDF metadata (`title`, `courseId`, `sourceUrl`, `sourcePlatform`, `sourceKind`) | Lectra sync coordination | DropBridge queue row `uploads.metadata` (via Edge Function) |
 
 This upload is user-initiated and tied to your authenticated account.
 
@@ -67,7 +88,7 @@ This upload is user-initiated and tied to your authenticated account.
 |---|---|---|
 | LMS endpoints (Canvas/Brightspace) | Yes | Fetch course metadata for indexing/sync |
 | Supabase Auth | Optional | Sign-in/session for account-linked features |
-| Supabase Database/Storage | Optional | Lectra PDF handoff + sync records |
+| Supabase Database/Storage | Optional | Lectra Course Brain sync + PDF handoff |
 | Google OAuth | Optional | User sign-in flow |
 
 ---
@@ -79,8 +100,9 @@ This upload is user-initiated and tied to your authenticated account.
 - Use **Clear All Data** in popup to remove local index data.
 - Uninstalling the extension removes extension-local storage.
 
-### Cloud data (if you use Send to Lectra)
-- PDF and metadata persist in Supabase project storage/database until deleted through backend workflows.
+### Cloud data (if you use sign-in / Lectra features)
+- Course snapshot rows and PDF metadata persist in Supabase database until deleted through backend workflows.
+- Uploaded PDFs persist in Supabase Storage until deleted through backend workflows.
 - Removal is governed by project database/storage policies.
 
 ---

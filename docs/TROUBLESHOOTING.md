@@ -72,12 +72,13 @@ Fix:
 2. Sign in with Google.
 3. Retry send.
 
-### "Upload failed: bucket \"lectra_documents\" does not exist"
-Cause: Backend migration not applied.
+### "No active Lectra receiver found. Open Lectra on iPad and try again."
+Cause: No signed-in `lectra_ipad` device is currently registered for DropBridge v2.
 
 Fix:
-1. Apply migration `supabase/migrations/20260304211400_add_lectra_documents_storage.sql`.
-2. Retry send.
+1. Open Lectra on the iPad.
+2. Confirm it is signed into the same account as Canvascope.
+3. Retry send.
 
 ### "PDF is too large (25 MB max)"
 Cause: File exceeds enforced size limit.

@@ -69,7 +69,7 @@ Purpose: LMS data fetch + optional Lectra PDF upload/metadata sync.
 Canvascope performs network operations for:
 - LMS content retrieval (Canvas/Brightspace)
 - Optional auth/session handling with Supabase/Google OAuth
-- Optional `Send to Lectra` PDF upload + `synced_items` row insert
+- Optional `Send to Lectra` PDF upload through DropBridge v2
 
 Canvascope does not include ad/analytics SDK calls.
 
@@ -82,11 +82,11 @@ Canvascope does not include ad/analytics SDK calls.
 - Authenticated session requirement
 - PDF signature validation
 - 25 MB upper bound
-- Storage path scoped by `auth.uid()`
-- RLS-restricted bucket (`lectra_documents`)
+- Private DropBridge queue/storage managed by Edge Functions
+- Private realtime wake topic authorization per user/device
 
 Required migration:
-- `supabase/migrations/20260304211400_add_lectra_documents_storage.sql`
+- `supabase/migrations/20260309120000_dropbridge_v2_wake_metadata_push.sql`
 
 ---
 
