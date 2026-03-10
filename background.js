@@ -3907,6 +3907,18 @@ async function uploadPdfToLectraViaDropBridgeV2({ accessToken, bytes, filename, 
     return payload;
 }
 
+async function wakeLectraForSyncedItem({ syncedItemId, accessToken }) {
+    const token = accessToken || await getDropBridgeV2AccessToken();
+    if (!token) {
+        throw new Error('Missing access token for wake-lectra-v2');
+    }
+
+    return callDropBridgeV2Function('wake-lectra-v2', {
+        syncedItemId,
+        reason: 'synced_item_inserted'
+    }, token);
+}
+
 async function resolvePdfContextFromMessage({ mode, sender }) {
     const tab = await resolveTargetTabForPdfMode(mode, sender);
     if (!tab) {
@@ -4102,6 +4114,16 @@ async function sendPdfToLectraFromMessage({ trigger, candidateUrl, sourcePageUrl
                 message: insertError.message ? `Uploaded, but failed to register in Lectra: ${insertError.message}` : 'Uploaded, but failed to register in Lectra. Retry send.'
             };
         }
+
+        void wakeLectraForSyncedItem({
+            syncedItemId: rowId,
+            accessToken: session.access_token || null
+        }).catch((error) => {
+            console.warn('[Canvascope PDF Sync] Wake hint failed', {
+                rowId,
+                error: parseErrorMessage(error)
+            });
+        });
 
         console.log('[Canvascope PDF Sync] Sent PDF to Lectra', {
             trigger: trigger || 'unknown',
