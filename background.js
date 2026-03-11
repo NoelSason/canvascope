@@ -96,6 +96,8 @@ let dropBridgeV2QueuedPollReason = null;
 let dropBridgeV2QueuedPollTimer = null;
 let dropBridgeV2LastPollStartedAt = 0;
 const dropBridgeV2ActiveUploads = new Set();
+let syncIndexedContentPromise = null;
+let syncIndexedContentNeedsRerun = false;
 
 function isUuid(value) {
     return typeof value === 'string'
@@ -1042,6 +1044,7 @@ const SNAPSHOT_TEXT_CHAR_LIMIT = 2000;
 const SYLLABUS_TEXT_CHAR_LIMIT = 8000;
 const SNAPSHOT_PAGE_BODY_CONCURRENCY = 4;
 const EXTENSION_SYNC_BATCH_SIZE = 50;
+const EXTENSION_SYNC_READ_PAGE_SIZE = 1000;
 
 const LEGACY_EXTENSION_ITEM_TYPES = new Set([
     'announcement',
@@ -4387,13 +4390,26 @@ function isExtensionOwnedSyncedRow(row, legacyItemTypes) {
 }
 
 async function clearExtensionOwnedSyncedItems(userId, legacyItems = []) {
-    const { data: existingRows, error } = await supabaseClient
-        .from('synced_items')
-        .select('id, item_type, item_data')
-        .eq('user_id', userId);
+    const existingRows = [];
+    for (let offset = 0; ; offset += EXTENSION_SYNC_READ_PAGE_SIZE) {
+        const { data: pageRows, error } = await supabaseClient
+            .from('synced_items')
+            .select('id, item_type, item_data')
+            .eq('user_id', userId)
+            .order('created_at', { ascending: true })
+            .order('id', { ascending: true })
+            .range(offset, offset + EXTENSION_SYNC_READ_PAGE_SIZE - 1);
 
-    if (error) {
-        throw error;
+        if (error) {
+            throw error;
+        }
+
+        const rows = Array.isArray(pageRows) ? pageRows : [];
+        existingRows.push(...rows);
+
+        if (rows.length < EXTENSION_SYNC_READ_PAGE_SIZE) {
+            break;
+        }
     }
 
     const legacyItemTypes = new Set(LEGACY_EXTENSION_ITEM_TYPES);
@@ -4446,7 +4462,7 @@ async function insertSyncedRowsInBatches(rows, label) {
     return totalInserted;
 }
 
-async function syncIndexedContentToSupabase() {
+async function performSyncIndexedContentToSupabase() {
     const { data: { session } } = await supabaseClient.auth.getSession();
     if (!session) return { success: false, error: 'Not signed in' };
 
@@ -4529,6 +4545,29 @@ async function syncIndexedContentToSupabase() {
         totalLegacyItems: legacyItems.length,
         totalCourseSnapshots: courseSnapshots.length
     };
+}
+
+async function syncIndexedContentToSupabase() {
+    if (syncIndexedContentPromise) {
+        syncIndexedContentNeedsRerun = true;
+        return syncIndexedContentPromise;
+    }
+
+    syncIndexedContentPromise = (async () => {
+        let lastResult = null;
+        do {
+            syncIndexedContentNeedsRerun = false;
+            lastResult = await performSyncIndexedContentToSupabase();
+        } while (syncIndexedContentNeedsRerun);
+        return lastResult;
+    })();
+
+    try {
+        return await syncIndexedContentPromise;
+    } finally {
+        syncIndexedContentPromise = null;
+        syncIndexedContentNeedsRerun = false;
+    }
 }
 
 /**
