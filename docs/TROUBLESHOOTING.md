@@ -80,6 +80,14 @@ Fix:
 2. Confirm it is signed into the same account as Canvascope.
 3. Retry send.
 
+### "Lectra -> Canvascope is delayed"
+Cause: The offscreen realtime receiver is unavailable or disconnected, so Canvascope is waiting for the fallback alarm poll.
+
+Fix:
+1. Keep Chrome running.
+2. Open Canvascope once after sign-in or after an extension update so the receiver can bootstrap.
+3. If delays persist, reload the extension to recreate the offscreen receiver and fallback alarm.
+
 ### "PDF is too large (25 MB max)"
 Cause: File exceeds enforced size limit.
 

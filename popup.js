@@ -411,11 +411,7 @@ function bucketTasks(items, now, lookaheadDays = 7) {
     if (!isTaskType(item)) continue;
 
     // Respect active course filter
-    if (state.filters.course) {
-      const ic = (item.courseName || '').toLowerCase();
-      const fc = state.filters.course.toLowerCase();
-      if (ic !== fc && !ic.includes(fc)) continue;
-    }
+    if (!itemMatchesSelectedCourses(item)) continue;
 
     // Skip tasks dismissed by the user
     if (state.dismissedTasks.includes(getCanonicalId(item))) continue;
@@ -925,6 +921,10 @@ const elements = {};
 // ============================================
 
 const MAX_RECENTS = 5;
+const DEFAULT_EXTENSION_SETTINGS = Object.freeze({
+  enableSendToLectra: false,
+  selectedCourseFilters: []
+});
 
 let state = {
   fuse: null,
@@ -933,7 +933,7 @@ let state = {
   searchTimeout: null,
   isScanning: false,
   filters: {
-    course: '',
+    course: [],
     type: ''
   },
   searchHistory: [],
@@ -946,10 +946,154 @@ let state = {
   isSignedIn: false,
   user: null,
   activePdfContext: null,
+  extensionSettings: { ...DEFAULT_EXTENSION_SETTINGS },
   _courseCandidatesCache: null,
   _courseCandidatesVersion: 0,
   dismissedTasks: []
 };
+let selectedCourseFilterWritePromise = Promise.resolve();
+
+function normalizeExtensionSettings(rawSettings) {
+  const source = rawSettings && typeof rawSettings === 'object' ? rawSettings : {};
+  const selectedCourseFilters = Array.isArray(source.selectedCourseFilters)
+    ? [...new Set(source.selectedCourseFilters
+      .map(value => String(value || '').trim())
+      .filter(Boolean))]
+    : [];
+  return {
+    ...DEFAULT_EXTENSION_SETTINGS,
+    ...source,
+    selectedCourseFilters
+  };
+}
+
+async function loadExtensionSettings() {
+  try {
+    const result = await chrome.storage.local.get(['settings']);
+    state.extensionSettings = normalizeExtensionSettings(result.settings);
+  } catch (error) {
+    console.warn('[Canvascope] Could not load settings:', error);
+    state.extensionSettings = { ...DEFAULT_EXTENSION_SETTINGS };
+  }
+
+  syncCourseFiltersFromSettings();
+  applyExtensionSettingsUi();
+}
+
+function applyExtensionSettingsUi() {
+  if (elements.enableSendToLectraToggle) {
+    elements.enableSendToLectraToggle.checked = Boolean(state.extensionSettings.enableSendToLectra);
+  }
+}
+
+async function updateExtensionSettings(patch) {
+  const result = await chrome.storage.local.get(['settings']);
+  const nextSettings = normalizeExtensionSettings({
+    ...(result.settings || {}),
+    ...patch
+  });
+
+  await chrome.storage.local.set({ settings: nextSettings });
+  state.extensionSettings = nextSettings;
+  syncCourseFiltersFromSettings();
+  applyExtensionSettingsUi();
+  return nextSettings;
+}
+
+function normalizeSelectedCourseFilters(values) {
+  if (!Array.isArray(values)) return [];
+  return [...new Set(values
+    .map(value => String(value || '').trim())
+    .filter(Boolean))]
+    .sort((left, right) => left.localeCompare(right));
+}
+
+function selectedCourseFiltersKey(values) {
+  return normalizeSelectedCourseFilters(values).join('||');
+}
+
+function syncCourseFiltersFromSettings() {
+  state.filters.course = normalizeSelectedCourseFilters(state.extensionSettings.selectedCourseFilters);
+  updateCourseFilterTriggerText();
+}
+
+function updateCourseFilterTriggerText() {
+  if (!elements.courseText) return;
+
+  const selectedCourses = normalizeSelectedCourseFilters(state.filters.course);
+  if (selectedCourses.length === 0) {
+    elements.courseText.textContent = 'All Courses';
+    return;
+  }
+
+  if (selectedCourses.length === 1) {
+    elements.courseText.textContent = selectedCourses[0];
+    return;
+  }
+
+  elements.courseText.textContent = `${selectedCourses.length} Classes`;
+}
+
+function itemMatchesSelectedCourses(item, selectedCourses = state.filters.course) {
+  const normalizedSelections = normalizeSelectedCourseFilters(selectedCourses);
+  if (normalizedSelections.length === 0) return true;
+
+  const itemCourse = normalizeText(item?.courseName || '');
+  if (!itemCourse) return false;
+
+  return normalizedSelections.some(course => normalizeText(course) === itemCourse);
+}
+
+function buildCourseOption(label, { value = label, selected = false } = {}) {
+  const option = document.createElement('div');
+  option.className = 'custom-option custom-option-multiselect';
+  option.dataset.value = value;
+  option.dataset.label = label;
+
+  if (selected) {
+    option.classList.add('selected');
+  }
+
+  const checkbox = document.createElement('span');
+  checkbox.className = 'custom-option-checkbox';
+  checkbox.setAttribute('aria-hidden', 'true');
+
+  const text = document.createElement('span');
+  text.className = 'custom-option-label';
+  text.textContent = label;
+
+  option.appendChild(checkbox);
+  option.appendChild(text);
+  return option;
+}
+
+async function setSelectedCourseFilters(nextSelectedCourses) {
+  const normalizedSelection = normalizeSelectedCourseFilters(nextSelectedCourses);
+  const previousSelection = selectedCourseFiltersKey(state.filters.course);
+  const nextSelection = selectedCourseFiltersKey(normalizedSelection);
+
+  if (previousSelection === nextSelection) return;
+
+  state.filters.course = normalizedSelection;
+  handleFilterChange();
+
+  try {
+    selectedCourseFilterWritePromise = selectedCourseFilterWritePromise
+      .catch(() => {
+        // Keep the queue alive so the latest selection still persists.
+      })
+      .then(async () => {
+        if (selectedCourseFiltersKey(state.filters.course) !== nextSelection) return;
+        await updateExtensionSettings({ selectedCourseFilters: normalizedSelection });
+      });
+
+    await selectedCourseFilterWritePromise;
+  } catch (error) {
+    console.error('[Canvascope] Failed to save selected classes:', error);
+    await loadExtensionSettings();
+    handleFilterChange();
+  }
+}
 
 // ============================================
 // INITIALIZATION
@@ -981,6 +1125,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   console.log('[Canvascope] Popup opened');
   initializeElements();
   setupEventListeners();
+  await loadExtensionSettings();
   await loadContent();
   await loadSearchHistory();
   await loadRecentlyOpened();
@@ -1013,6 +1158,29 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   if (!state.isOverlayMode) {
     await refreshPdfFallbackAvailability();
+  }
+
+  try {
+    chrome.storage.onChanged.addListener((changes, areaName) => {
+      if (areaName !== 'local' || !changes.settings) return;
+
+      const previousCourseKey = selectedCourseFiltersKey(state.filters.course);
+      const previousSendToLectra = Boolean(state.extensionSettings.enableSendToLectra);
+
+      state.extensionSettings = normalizeExtensionSettings(changes.settings.newValue);
+      syncCourseFiltersFromSettings();
+      applyExtensionSettingsUi();
+
+      if (!state.isOverlayMode && previousSendToLectra !== Boolean(state.extensionSettings.enableSendToLectra)) {
+        refreshPdfFallbackAvailability();
+      }
+
+      if (previousCourseKey !== selectedCourseFiltersKey(state.filters.course)) {
+        handleFilterChange();
+      }
+    });
+  } catch (error) {
+    console.warn('[Canvascope] Could not subscribe to settings updates:', error);
   }
 
   // Check if running in overlay mode
@@ -1117,9 +1285,8 @@ function initializeElements() {
   elements.accountNameDisplay = document.getElementById('account-name-display');
   elements.accountEmailDisplay = document.getElementById('account-email-display');
   elements.accountAvatarPlaceholder = document.getElementById('account-avatar-placeholder');
+  elements.enableSendToLectraToggle = document.getElementById('enable-send-to-lectra');
   elements.logoutBtn = document.getElementById('logout-btn');
-  elements.accountDbContent = document.getElementById('account-db-content');
-  elements.syncDbBtn = document.getElementById('sync-db-btn');
 
   // Sync Status Elements
   elements.syncStatus = document.getElementById('sync-status');
@@ -1202,9 +1369,9 @@ function setupEventListeners() {
   // Auth Integration
   if (elements.googleSignInBtn) {
     elements.googleSignInBtn.addEventListener('click', () => {
-      // If already signed in, open the account modal instead of re-authenticating
+      // If already signed in, open settings instead of re-authenticating.
       if (state.isSignedIn) {
-        showAccountModal();
+        showSettingsModal();
         return;
       }
 
@@ -1251,41 +1418,21 @@ function setupEventListeners() {
     });
   }
 
-  if (elements.syncDbBtn) {
-    elements.syncDbBtn.addEventListener('click', () => {
-      elements.syncDbBtn.disabled = true;
-      elements.syncDbBtn.querySelector('.btn-text').textContent = 'Syncing...';
+  if (elements.enableSendToLectraToggle) {
+    elements.enableSendToLectraToggle.addEventListener('change', async (event) => {
+      const toggle = event.currentTarget;
+      const enabled = Boolean(toggle.checked);
+      toggle.disabled = true;
 
-      chrome.runtime.sendMessage({ type: 'syncIndexedContent' }, (response) => {
-        elements.syncDbBtn.disabled = false;
-        if (response && response.success) {
-          elements.syncDbBtn.querySelector('.btn-text').textContent = `Synced ${response.synced} items \u2713`;
-          elements.syncDbBtn.style.backgroundColor = 'rgba(76, 175, 80, 0.1)';
-          elements.syncDbBtn.style.color = '#4CAF50';
-          elements.syncDbBtn.style.borderColor = 'rgba(76, 175, 80, 0.2)';
-
-          // Refresh the DB view
-          showAccountModal();
-
-          // Reset button after 3s
-          setTimeout(() => {
-            if (elements.syncDbBtn) {
-              elements.syncDbBtn.querySelector('.btn-text').textContent = 'Sync to Database';
-              elements.syncDbBtn.style.backgroundColor = 'rgba(33, 150, 243, 0.1)';
-              elements.syncDbBtn.style.color = '#2196F3';
-              elements.syncDbBtn.style.borderColor = 'rgba(33, 150, 243, 0.2)';
-            }
-          }, 3000);
-        } else {
-          elements.syncDbBtn.querySelector('.btn-text').textContent = 'Sync failed';
-          console.error('Sync failed:', response?.error);
-          setTimeout(() => {
-            if (elements.syncDbBtn) {
-              elements.syncDbBtn.querySelector('.btn-text').textContent = 'Sync to Database';
-            }
-          }, 3000);
-        }
-      });
+      try {
+        await updateExtensionSettings({ enableSendToLectra: enabled });
+        await refreshPdfFallbackAvailability();
+      } catch (error) {
+        console.error('[Canvascope] Failed to update settings:', error);
+        applyExtensionSettingsUi();
+      } finally {
+        toggle.disabled = false;
+      }
     });
   }
 
@@ -1408,9 +1555,9 @@ function setupEventListeners() {
 }
 
 /**
- * Show and populate the account profile modal
+ * Show the signed-in settings modal.
  */
-function showAccountModal() {
+function showSettingsModal() {
   if (!state.user || !elements.accountModal) return;
 
   const user = state.user;
@@ -1430,65 +1577,8 @@ function showAccountModal() {
     }
   }
 
-  // Show loading state for DB content
-  if (elements.accountDbContent) {
-    elements.accountDbContent.innerHTML = '<p style="color: var(--text-secondary); font-size: 12px; text-align: center;">Loading database content...</p>';
-  }
-
+  applyExtensionSettingsUi();
   elements.accountModal.classList.remove('hidden');
-
-  // Fetch database content
-  chrome.runtime.sendMessage({ type: 'fetchUserData' }, (response) => {
-    if (!elements.accountDbContent) return;
-
-    if (!response || !response.success) {
-      elements.accountDbContent.innerHTML = `<p style="color: #f44336; font-size: 12px; text-align: center;">Error: ${response?.error || 'Failed to load'}</p>`;
-      return;
-    }
-
-    let html = '';
-    const tables = response.tables;
-    const tableNames = { users: 'Users', preferences: 'Preferences', synced_items: 'Synced Items' };
-    const tableIcons = { users: '👤', preferences: '⚙️', synced_items: '🔄' };
-
-    for (const [key, label] of Object.entries(tableNames)) {
-      const table = tables[key];
-      const icon = tableIcons[key];
-      const rowCount = table.data?.length || 0;
-
-      html += `<div style="margin-bottom: 12px;">`;
-      html += `<div style="display: flex; align-items: center; gap: 6px; margin-bottom: 6px; padding-bottom: 4px; border-bottom: 1px solid var(--border-color);">`;
-      html += `<span style="font-size: 14px;">${icon}</span>`;
-      html += `<span style="font-weight: 600; font-size: 13px; color: var(--text-color);">${label}</span>`;
-      html += `<span style="margin-left: auto; font-size: 11px; color: var(--text-secondary); background: var(--card-bg); padding: 1px 7px; border-radius: 10px;">${rowCount} row${rowCount !== 1 ? 's' : ''}</span>`;
-      html += `</div>`;
-
-      if (table.error) {
-        html += `<p style="color: #ff9800; font-size: 11px; padding: 4px 8px;">⚠ ${table.error}</p>`;
-      } else if (rowCount === 0) {
-        html += `<p style="color: var(--text-secondary); font-size: 11px; padding: 4px 8px; font-style: italic;">No data yet</p>`;
-      } else {
-        for (const row of table.data) {
-          html += `<div style="background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 8px; padding: 8px 10px; margin-bottom: 6px; font-size: 11px; word-break: break-all;">`;
-          for (const [field, value] of Object.entries(row)) {
-            // Skip internal IDs for cleaner display
-            const displayVal = (value === null || value === undefined) ? '<em style="color: var(--text-secondary);">null</em>' :
-              (typeof value === 'object' ? `<code style="background: rgba(255,255,255,0.05); padding: 1px 4px; border-radius: 3px; font-size: 10px;">${JSON.stringify(value)}</code>` :
-                String(value));
-            html += `<div style="display: flex; gap: 6px; padding: 2px 0; line-height: 1.4;">`;
-            html += `<span style="color: var(--text-secondary); min-width: 90px; flex-shrink: 0; font-weight: 500;">${field}</span>`;
-            html += `<span style="color: var(--text-color);">${displayVal}</span>`;
-            html += `</div>`;
-          }
-          html += `</div>`;
-        }
-      }
-
-      html += `</div>`;
-    }
-
-    elements.accountDbContent.innerHTML = html;
-  });
 }
 
 /**
@@ -1523,6 +1613,26 @@ function setupCustomDropdown(wrapper, trigger, optionsContainer, filterType) {
   optionsContainer.addEventListener('click', (e) => {
     const option = e.target.closest('.custom-option');
     if (!option) return;
+    if (filterType === 'course') {
+      e.stopPropagation();
+
+      const value = String(option.dataset.value || '').trim();
+      const nextSelectedCourses = value
+        ? (() => {
+          const selectedCourses = new Set(normalizeSelectedCourseFilters(state.filters.course));
+          if (selectedCourses.has(value)) {
+            selectedCourses.delete(value);
+          } else {
+            selectedCourses.add(value);
+          }
+          return Array.from(selectedCourses);
+        })()
+        : [];
+
+      void setSelectedCourseFilters(nextSelectedCourses);
+      return;
+    }
+
     selectOption(option, wrapper, optionsContainer, filterType);
   });
 
@@ -1531,6 +1641,20 @@ function setupCustomDropdown(wrapper, trigger, optionsContainer, filterType) {
   let searchTimeout = null;
 
   trigger.addEventListener('keydown', (e) => {
+    if (filterType === 'course') {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        wrapper.classList.toggle('open');
+        return;
+      }
+
+      if (e.key === 'Escape') {
+        wrapper.classList.remove('open');
+        trigger.focus();
+      }
+      return;
+    }
+
     // Navigate with arrows
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       e.preventDefault();
@@ -1620,9 +1744,15 @@ function selectOption(option, wrapper, optionsContainer, filterType, close = tru
 
   // Update text and value
   const value = option.dataset.value;
-  const text = option.textContent;
+  const text = option.dataset.label || option.textContent;
 
-  wrapper.querySelector('span').textContent = text;
+  if (filterType === 'course') {
+    updateCourseFilterTriggerText();
+  } else if (filterType === 'type' && elements.typeText) {
+    elements.typeText.textContent = text;
+  } else {
+    wrapper.querySelector('span').textContent = text;
+  }
 
   if (close) {
     wrapper.classList.remove('open');
@@ -1731,6 +1861,15 @@ async function refreshPdfFallbackAvailability() {
     elements.sendPdfBtn.classList.add('hidden');
     return;
   }
+
+  if (!state.extensionSettings.enableSendToLectra) {
+    state.activePdfContext = null;
+    elements.sendPdfBtn.classList.add('hidden');
+    elements.sendPdfBtn.title = '';
+    resetSendPdfButtonState();
+    return;
+  }
+
   elements.sendPdfBtn.classList.remove('hidden');
 
   try {
@@ -1759,6 +1898,7 @@ async function refreshPdfFallbackAvailability() {
 
 async function handleSendPdfFallback() {
   if (!elements.sendPdfBtn) return;
+  if (!state.extensionSettings.enableSendToLectra) return;
 
   let context = state.activePdfContext;
   const confidence = String(context?.confidence || 'none').toLowerCase();
@@ -1970,15 +2110,8 @@ function initializeFuse() {
 
 function applyFilters() {
   state.filteredContent = state.indexedContent.filter(item => {
-    // Course filter - use includes for partial matching
-    if (state.filters.course) {
-      const itemCourse = (item.courseName || '').toLowerCase();
-      const filterCourse = state.filters.course.toLowerCase();
-      // Allow exact match or partial match
-      if (itemCourse !== filterCourse && !itemCourse.includes(filterCourse)) {
-        return false;
-      }
-    }
+    if (!itemMatchesSelectedCourses(item)) return false;
+
     // Type filter - exact match
     if (state.filters.type && item.type !== state.filters.type) {
       return false;
@@ -2002,7 +2135,7 @@ function handleFilterChange() {
 }
 
 function populateCourseFilter() {
-  const courses = new Set();
+  const courses = new Set(normalizeSelectedCourseFilters(state.filters.course));
 
   // Extract unique courses
   state.indexedContent.forEach(item => {
@@ -2011,48 +2144,34 @@ function populateCourseFilter() {
     }
   });
 
-  // Clear existing options (except "All Courses")
-  // Note: first child is "All Courses"
-  const allCoursesOption = elements.courseOptions.firstElementChild;
+  // Rebuild the full option list so the checkbox state always matches the
+  // persisted course selection, including classes that are currently saved
+  // but may not be present in the latest index yet.
   elements.courseOptions.innerHTML = '';
-  if (allCoursesOption) {
-    elements.courseOptions.appendChild(allCoursesOption);
-  } else {
-    // Recreate if missing
-    const opt = document.createElement('div');
-    opt.className = 'custom-option selected';
-    opt.dataset.value = '';
-    opt.textContent = 'All Courses';
-    elements.courseOptions.appendChild(opt);
-  }
+  elements.courseOptions.appendChild(
+    buildCourseOption('All Courses', {
+      value: '',
+      selected: state.filters.course.length === 0
+    })
+  );
 
   // Add course options
   Array.from(courses).sort().forEach(course => {
     // Skip invalid course names
-    if (course === 'Dashboard' || course.startsWith('Announcements - ') || course.includes(' - ')) return;
+    const isPersistedSelection = state.filters.course.includes(course);
+    if (
+      !isPersistedSelection &&
+      (course === 'Dashboard' || course.startsWith('Announcements - ') || course.includes(' - '))
+    ) return;
 
-    const option = document.createElement('div');
-    option.className = 'custom-option';
-    if (course === state.filters.course) {
-      option.classList.add('selected');
-    }
-    option.dataset.value = course;
-    option.textContent = course;
-    elements.courseOptions.appendChild(option);
+    elements.courseOptions.appendChild(
+      buildCourseOption(course, {
+        selected: state.filters.course.includes(course)
+      })
+    );
   });
 
-  // Update trigger text if valid
-  if (state.filters.course) {
-    const selectedOption = Array.from(elements.courseOptions.children).find(opt => opt.dataset.value === state.filters.course);
-    if (selectedOption) {
-      elements.courseText.textContent = selectedOption.textContent;
-    } else {
-      // Reset if course not found
-      state.filters.course = '';
-      elements.courseText.textContent = 'All Courses';
-      handleFilterChange();
-    }
-  }
+  updateCourseFilterTriggerText();
 }
 
 function handleSearchInput(event) {

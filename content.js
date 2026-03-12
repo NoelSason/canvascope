@@ -39,11 +39,33 @@ const KNOWN_CANVAS_DOMAINS = [
 const BRIGHTSPACE_DOMAIN_SUFFIXES = ['.brightspace.com', '.d2l.com'];
 const KNOWN_BRIGHTSPACE_DOMAINS = [];
 let contentCustomDomains = [];
+const DEFAULT_EXTENSION_SETTINGS = Object.freeze({
+    enableSendToLectra: false,
+    selectedCourseFilters: []
+});
+let contentExtensionSettings = { ...DEFAULT_EXTENSION_SETTINGS };
 
 // Load custom domains from storage so domain checks work for user-added domains
 try {
-    chrome.storage.local.get(['customDomains']).then(data => {
+    chrome.storage.local.get(['customDomains', 'settings']).then(data => {
         contentCustomDomains = data.customDomains || [];
+        contentExtensionSettings = normalizeExtensionSettings(data.settings);
+        scheduleLectraPdfContextRefresh(0);
+    });
+} catch (e) { /* ignore if storage unavailable */ }
+
+try {
+    chrome.storage.onChanged.addListener((changes, areaName) => {
+        if (areaName !== 'local') return;
+
+        if (changes.customDomains) {
+            contentCustomDomains = changes.customDomains.newValue || [];
+        }
+
+        if (changes.settings) {
+            contentExtensionSettings = normalizeExtensionSettings(changes.settings.newValue);
+            scheduleLectraPdfContextRefresh(0);
+        }
     });
 } catch (e) { /* ignore if storage unavailable */ }
 
@@ -291,6 +313,18 @@ let lectraSendButtonBusy = false;
 let lectraPdfRefreshTimer = null;
 let lectraHooksInstalled = false;
 
+function normalizeExtensionSettings(rawSettings) {
+    const source = rawSettings && typeof rawSettings === 'object' ? rawSettings : {};
+    return {
+        ...DEFAULT_EXTENSION_SETTINGS,
+        ...source
+    };
+}
+
+function isSendToLectraEnabled() {
+    return Boolean(contentExtensionSettings.enableSendToLectra);
+}
+
 function normalizePdfCandidateUrl(rawUrl, baseUrl = window.location.href) {
     if (!rawUrl) return null;
     try {
@@ -511,7 +545,7 @@ function scheduleLectraPdfContextRefresh(delayMs = 0) {
 }
 
 function refreshLectraPdfContext() {
-    if (!isCanvasDomain()) {
+    if (!isCanvasDomain() || !isSendToLectraEnabled()) {
         removeLectraSendButton();
         return;
     }
@@ -537,6 +571,10 @@ function refreshLectraPdfContext() {
 
 function handleLectraSendButtonClick() {
     if (lectraSendButtonBusy) return;
+    if (!isSendToLectraEnabled()) {
+        removeLectraSendButton();
+        return;
+    }
 
     const candidateUrl = lectraPdfContext?.candidateUrl || null;
     if (!candidateUrl) {

@@ -31,6 +31,7 @@ Canvascope is a local-first Chrome extension for Canvas and Brightspace. It inde
 - Validates PDF signatures and enforces 25 MB size limit
 - Uploads selected PDF to Supabase Storage bucket `lectra_documents`
 - Registers `pdf_document` rows in `synced_items` for Lectra pickup
+- Receives Lectra-origin files through DropBridge v2 with an offscreen realtime receiver plus alarm fallback
 
 ### Privacy Model
 - Local-first indexing: search corpus stays in `chrome.storage.local`
@@ -60,6 +61,8 @@ Canvascope is a local-first Chrome extension for Canvas and Brightspace. It inde
 3. Confirm the send action.
 4. The extension uploads the file and writes a `pdf_document` row for Lectra.
 
+> Direction split: Canvascope -> Lectra uses `lectra_documents` + `synced_items`. Lectra -> Canvascope uses DropBridge v2 queue delivery and automatic browser downloads.
+
 > Detailed setup docs: [docs/INSTALL.md](docs/INSTALL.md)
 
 ---
@@ -74,6 +77,8 @@ Canvascope/
 ├── content.js
 ├── background.js
 ├── background-wrapper.js
+├── offscreen.html
+├── offscreen.js
 ├── styles.css
 ├── oauth-callback.html
 ├── oauth-callback.js

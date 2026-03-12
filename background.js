@@ -75,8 +75,6 @@ if (supabaseClient) {
 
 // --- DROPBRIDGE V2 (ACCOUNT-LINKED, ZERO-PAIRING) ---
 const DROPBRIDGE_V2_ENABLED = true;
-const DROPBRIDGE_V2_POLL_INTERVAL_MS = 60 * 1000; // 60s steady-state fallback poll
-const DROPBRIDGE_V2_REGISTER_REFRESH_MS = 5 * 60 * 1000;
 const DROPBRIDGE_V2_DOWNLOAD_WATCHDOG_INTERVAL_MS = 15 * 1000;
 const DROPBRIDGE_V2_DOWNLOAD_MAX_OBSERVE_MS = 30 * 60 * 1000;
 const DROPBRIDGE_V2_STORAGE_DEVICE_ID = 'dropBridgeV2DeviceId';
@@ -85,19 +83,44 @@ const DROPBRIDGE_V2_MODE = 'v2';
 const DROPBRIDGE_V2_POLL_LIMIT = 5;
 const DROPBRIDGE_V2_WAKE_EVENT = 'upload_queued';
 const DROPBRIDGE_V2_WAKE_POLL_DEBOUNCE_MS = 1000;
+const DROPBRIDGE_V2_FALLBACK_ALARM_NAME = 'dropBridgeV2FallbackPoll';
+const DROPBRIDGE_V2_FALLBACK_ALARM_MINUTES_MODERN = 0.5;
+const DROPBRIDGE_V2_FALLBACK_ALARM_MINUTES_LEGACY = 1;
+const DROPBRIDGE_V2_FALLBACK_ALARM_MIN_CHROME_MAJOR = 120;
+const DROPBRIDGE_V2_OFFSCREEN_DOCUMENT_PATH = 'offscreen.html';
+const DROPBRIDGE_V2_OFFSCREEN_DOCUMENT_URL = chrome.runtime.getURL(DROPBRIDGE_V2_OFFSCREEN_DOCUMENT_PATH);
+const DROPBRIDGE_V2_OFFSCREEN_JUSTIFICATION = 'Maintain a low-latency Lectra receive connection while Chrome is running.';
+const DROPBRIDGE_V2_DIAGNOSTICS_STORAGE_KEY = 'dropBridgeV2Diagnostics';
+const DROPBRIDGE_V2_DIAGNOSTIC_EVENT_LIMIT = 25;
 const DROPBRIDGE_V2_DEBUG = false; // enable only for local debugging
+const DEFAULT_EXTENSION_SETTINGS = Object.freeze({
+    enableSendToLectra: false,
+    selectedCourseFilters: []
+});
 
-let dropBridgeV2PollTimer = null;
-let dropBridgeV2RegisterTimer = null;
 let dropBridgeV2PollInFlight = false;
-let dropBridgeV2WakeChannel = null;
-let dropBridgeV2WakeTopic = null;
 let dropBridgeV2QueuedPollReason = null;
 let dropBridgeV2QueuedPollTimer = null;
 let dropBridgeV2LastPollStartedAt = 0;
+let dropBridgeV2EnsureOffscreenPromise = null;
+let dropBridgeV2DiagnosticsState = null;
+let dropBridgeV2DiagnosticsWritePromise = Promise.resolve();
 const dropBridgeV2ActiveUploads = new Set();
 let syncIndexedContentPromise = null;
 let syncIndexedContentNeedsRerun = false;
+
+function normalizeExtensionSettings(rawSettings) {
+    const source = rawSettings && typeof rawSettings === 'object' ? rawSettings : {};
+    return {
+        ...DEFAULT_EXTENSION_SETTINGS,
+        ...source
+    };
+}
+
+async function getExtensionSettings() {
+    const stored = await chrome.storage.local.get(['settings']);
+    return normalizeExtensionSettings(stored.settings);
+}
 
 function isUuid(value) {
     return typeof value === 'string'
@@ -210,6 +233,64 @@ function dropBridgeDebug(message, details = undefined) {
         return;
     }
     console.log(`[DropBridge v2][debug][${timestamp}] ${message}`, details);
+}
+
+function getChromeMajorVersion(userAgent = navigator?.userAgent || '') {
+    const match = String(userAgent).match(/Chrome\/(\d+)/i) || String(userAgent).match(/Chromium\/(\d+)/i);
+    const major = Number(match?.[1] || 0);
+    return Number.isFinite(major) ? major : 0;
+}
+
+function getDropBridgeV2FallbackAlarmPeriodMinutes() {
+    const chromeMajor = getChromeMajorVersion();
+    return chromeMajor >= DROPBRIDGE_V2_FALLBACK_ALARM_MIN_CHROME_MAJOR
+        ? DROPBRIDGE_V2_FALLBACK_ALARM_MINUTES_MODERN
+        : DROPBRIDGE_V2_FALLBACK_ALARM_MINUTES_LEGACY;
+}
+
+function normalizeDropBridgeV2Diagnostics(rawDiagnostics) {
+    const source = rawDiagnostics && typeof rawDiagnostics === 'object' ? rawDiagnostics : {};
+    return {
+        ...source,
+        recentEvents: Array.isArray(source.recentEvents)
+            ? source.recentEvents.slice(-DROPBRIDGE_V2_DIAGNOSTIC_EVENT_LIMIT)
+            : []
+    };
+}
+
+async function getDropBridgeV2DiagnosticsState() {
+    if (dropBridgeV2DiagnosticsState) {
+        return dropBridgeV2DiagnosticsState;
+    }
+
+    const stored = await chrome.storage.local.get([DROPBRIDGE_V2_DIAGNOSTICS_STORAGE_KEY]);
+    dropBridgeV2DiagnosticsState = normalizeDropBridgeV2Diagnostics(stored?.[DROPBRIDGE_V2_DIAGNOSTICS_STORAGE_KEY]);
+    return dropBridgeV2DiagnosticsState;
+}
+
+function updateDropBridgeV2Diagnostics(patch = {}, event = null) {
+    dropBridgeV2DiagnosticsWritePromise = dropBridgeV2DiagnosticsWritePromise.then(async () => {
+        const current = await getDropBridgeV2DiagnosticsState();
+        const nowIso = new Date().toISOString();
+        const next = {
+            ...current,
+            ...patch,
+            updatedAt: nowIso,
+            recentEvents: event
+                ? [...current.recentEvents, { at: nowIso, ...event }].slice(-DROPBRIDGE_V2_DIAGNOSTIC_EVENT_LIMIT)
+                : current.recentEvents
+        };
+        dropBridgeV2DiagnosticsState = next;
+        await chrome.storage.local.set({
+            [DROPBRIDGE_V2_DIAGNOSTICS_STORAGE_KEY]: next
+        });
+        return next;
+    }).catch((error) => {
+        console.warn('[DropBridge v2] Failed to update diagnostics:', parseErrorMessage(error));
+        return dropBridgeV2DiagnosticsState;
+    });
+
+    return dropBridgeV2DiagnosticsWritePromise;
 }
 
 function isSupabaseSessionExpired(session, skewSeconds = 30) {
@@ -383,6 +464,17 @@ async function updateDropBridgeV2UploadStatus({ accessToken, deviceId, uploadId,
             clientKind: 'canvascope_extension'
         }, accessToken);
         dropBridgeDebug('status ack: success', { uploadId, deviceId, status });
+        void updateDropBridgeV2Diagnostics({
+            lastAckAt: new Date().toISOString(),
+            lastAckUploadId: uploadId,
+            lastAckStatus: status,
+            lastAckOk: true
+        }, {
+            type: 'upload_ack',
+            uploadId,
+            status,
+            ok: true
+        });
         return true;
     } catch (error) {
         console.error(`[DropBridge v2] Status update failure for ${uploadId} -> ${status}:`, parseErrorMessage(error));
@@ -390,6 +482,18 @@ async function updateDropBridgeV2UploadStatus({ accessToken, deviceId, uploadId,
             uploadId,
             deviceId,
             status,
+            error: parseErrorMessage(error)
+        });
+        void updateDropBridgeV2Diagnostics({
+            lastAckAt: new Date().toISOString(),
+            lastAckUploadId: uploadId,
+            lastAckStatus: status,
+            lastAckOk: false
+        }, {
+            type: 'upload_ack',
+            uploadId,
+            status,
+            ok: false,
             error: parseErrorMessage(error)
         });
         return false;
@@ -421,6 +525,17 @@ async function triggerDropBridgeDownload(upload) {
 
     if (!downloadUrl) {
         dropBridgeDebug('download: missing downloadUrl -> queued', { uploadId });
+        void updateDropBridgeV2Diagnostics({
+            lastDownloadAt: new Date().toISOString(),
+            lastDownloadUploadId: uploadId,
+            lastDownloadStatus: 'queued',
+            lastDownloadReason: 'Missing downloadUrl'
+        }, {
+            type: 'download_finalized',
+            uploadId,
+            status: 'queued',
+            reason: 'Missing downloadUrl'
+        });
         return { status: 'queued', reason: 'Missing downloadUrl' };
     }
 
@@ -443,6 +558,17 @@ async function triggerDropBridgeDownload(upload) {
                 downloadId,
                 result,
                 elapsedMs: Date.now() - startedAt
+            });
+            void updateDropBridgeV2Diagnostics({
+                lastDownloadAt: new Date().toISOString(),
+                lastDownloadUploadId: uploadId,
+                lastDownloadStatus: result.status,
+                lastDownloadReason: result.reason || null
+            }, {
+                type: 'download_finalized',
+                uploadId,
+                status: result.status,
+                reason: result.reason || null
             });
             resolve(result);
         };
@@ -587,6 +713,14 @@ async function processDropBridgeV2Upload(upload, accessToken, deviceId) {
         deviceId,
         activeCount: dropBridgeV2ActiveUploads.size
     });
+    void updateDropBridgeV2Diagnostics({
+        lastClaimedAt: new Date().toISOString(),
+        lastClaimedUploadId: uploadId
+    }, {
+        type: 'upload_processing_started',
+        uploadId,
+        deviceId
+    });
     try {
         const result = await triggerDropBridgeDownload(upload);
         if (result.status === 'downloaded') {
@@ -643,115 +777,226 @@ function clearDropBridgeV2QueuedPoll() {
     dropBridgeV2QueuedPollReason = null;
 }
 
-async function stopDropBridgeV2RealtimeSubscription(reason = 'stop') {
-    if (!supabaseClient || !dropBridgeV2WakeChannel) {
-        dropBridgeDebug('realtime: stop skipped', {
-            reason,
-            hasSupabaseClient: Boolean(supabaseClient),
-            hasChannel: Boolean(dropBridgeV2WakeChannel)
-        });
-        dropBridgeV2WakeTopic = null;
-        return;
+async function hasDropBridgeV2OffscreenDocument() {
+    if (!chrome.offscreen) {
+        return false;
     }
 
-    const channel = dropBridgeV2WakeChannel;
-    const topic = dropBridgeV2WakeTopic;
-    dropBridgeV2WakeChannel = null;
-    dropBridgeV2WakeTopic = null;
-
-    try {
-        await supabaseClient.removeChannel(channel);
-        dropBridgeDebug('realtime: channel removed', { reason, topic });
-    } catch (error) {
-        console.warn(`[DropBridge v2] Realtime unsubscribe failure (${reason}):`, parseErrorMessage(error));
+    if (typeof chrome.runtime.getContexts === 'function') {
+        try {
+            const contexts = await chrome.runtime.getContexts({
+                contextTypes: ['OFFSCREEN_DOCUMENT'],
+                documentUrls: [DROPBRIDGE_V2_OFFSCREEN_DOCUMENT_URL]
+            });
+            return Array.isArray(contexts) && contexts.length > 0;
+        } catch (error) {
+            dropBridgeDebug('offscreen: getContexts failed', { error: parseErrorMessage(error) });
+        }
     }
+
+    if (self.clients && typeof self.clients.matchAll === 'function') {
+        const clients = await self.clients.matchAll();
+        return clients.some((client) => client.url === DROPBRIDGE_V2_OFFSCREEN_DOCUMENT_URL);
+    }
+
+    return false;
 }
 
-async function ensureDropBridgeV2RealtimeSubscription(reason = 'startup', accessToken = null) {
-    if (!DROPBRIDGE_V2_ENABLED || !supabaseClient) return false;
-
-    const token = accessToken || await getDropBridgeV2AccessToken();
-    if (!token) {
-        await stopDropBridgeV2RealtimeSubscription(`${reason}-no-token`);
+async function ensureDropBridgeV2OffscreenReceiver(reason = 'startup') {
+    if (!DROPBRIDGE_V2_ENABLED) return false;
+    if (!chrome.offscreen) {
+        console.warn('[DropBridge v2] chrome.offscreen is unavailable; falling back to alarm-only receive mode.');
+        void updateDropBridgeV2Diagnostics({
+            receiverStatus: 'unsupported',
+            receiverStatusAt: new Date().toISOString(),
+            receiverError: 'chrome.offscreen unavailable'
+        }, {
+            type: 'receiver_status',
+            status: 'unsupported',
+            reason
+        });
         return false;
     }
 
-    const { data: { session }, error: sessionError } = await supabaseClient.auth.getSession();
-    if (sessionError) {
-        throw sessionError;
+    if (dropBridgeV2EnsureOffscreenPromise) {
+        return dropBridgeV2EnsureOffscreenPromise;
     }
 
-    if (!session?.user?.id) {
-        await stopDropBridgeV2RealtimeSubscription(`${reason}-no-session`);
+    dropBridgeV2EnsureOffscreenPromise = (async () => {
+        if (await hasDropBridgeV2OffscreenDocument()) {
+            void updateDropBridgeV2Diagnostics({
+                receiverStatus: 'existing',
+                receiverStatusAt: new Date().toISOString()
+            }, {
+                type: 'receiver_status',
+                status: 'existing',
+                reason
+            });
+            return true;
+        }
+
+        void updateDropBridgeV2Diagnostics({
+            receiverStatus: 'creating',
+            receiverStatusAt: new Date().toISOString(),
+            receiverError: null
+        }, {
+            type: 'receiver_status',
+            status: 'creating',
+            reason
+        });
+
+        try {
+            await chrome.offscreen.createDocument({
+                url: DROPBRIDGE_V2_OFFSCREEN_DOCUMENT_PATH,
+                reasons: [chrome.offscreen.Reason?.WORKERS || 'WORKERS'],
+                justification: DROPBRIDGE_V2_OFFSCREEN_JUSTIFICATION
+            });
+            void updateDropBridgeV2Diagnostics({
+                receiverStatus: 'created',
+                receiverStatusAt: new Date().toISOString(),
+                receiverError: null
+            }, {
+                type: 'receiver_status',
+                status: 'created',
+                reason
+            });
+            return true;
+        } catch (error) {
+            const message = parseErrorMessage(error);
+            const lowered = message.toLowerCase();
+            const alreadyExists = lowered.includes('single offscreen document') || lowered.includes('already exists');
+            if (alreadyExists) {
+                void updateDropBridgeV2Diagnostics({
+                    receiverStatus: 'existing',
+                    receiverStatusAt: new Date().toISOString(),
+                    receiverError: null
+                }, {
+                    type: 'receiver_status',
+                    status: 'existing',
+                    reason
+                });
+                return true;
+            }
+
+            void updateDropBridgeV2Diagnostics({
+                receiverStatus: 'error',
+                receiverStatusAt: new Date().toISOString(),
+                receiverError: message
+            }, {
+                type: 'receiver_status',
+                status: 'error',
+                reason,
+                error: message
+            });
+            throw error;
+        } finally {
+            dropBridgeV2EnsureOffscreenPromise = null;
+        }
+    })();
+
+    return dropBridgeV2EnsureOffscreenPromise;
+}
+
+async function closeDropBridgeV2OffscreenReceiver(reason = 'stop') {
+    if (!chrome.offscreen) {
         return false;
     }
 
-    await supabaseClient.realtime.setAuth(token);
+    const hasDocument = await hasDropBridgeV2OffscreenDocument();
+    if (!hasDocument) {
+        return false;
+    }
+
+    await chrome.offscreen.closeDocument();
+    void updateDropBridgeV2Diagnostics({
+        receiverStatus: 'closed',
+        receiverStatusAt: new Date().toISOString()
+    }, {
+        type: 'receiver_status',
+        status: 'closed',
+        reason
+    });
+    return true;
+}
+
+async function ensureDropBridgeV2FallbackAlarm(reason = 'startup') {
+    const periodInMinutes = getDropBridgeV2FallbackAlarmPeriodMinutes();
+    const existing = await chrome.alarms.get(DROPBRIDGE_V2_FALLBACK_ALARM_NAME);
+    const shouldRecreate = !existing || Number(existing.periodInMinutes) !== periodInMinutes;
+
+    if (shouldRecreate) {
+        await chrome.alarms.create(DROPBRIDGE_V2_FALLBACK_ALARM_NAME, {
+            when: Date.now() + Math.max(1000, Math.round(periodInMinutes * 60 * 1000)),
+            periodInMinutes
+        });
+    }
+
+    void updateDropBridgeV2Diagnostics({
+        fallbackAlarmPeriodMinutes: periodInMinutes,
+        fallbackAlarmEnsuredAt: new Date().toISOString()
+    }, {
+        type: 'fallback_alarm',
+        reason,
+        periodInMinutes
+    });
+    return periodInMinutes;
+}
+
+async function clearDropBridgeV2FallbackAlarm(reason = 'stop') {
+    await chrome.alarms.clear(DROPBRIDGE_V2_FALLBACK_ALARM_NAME);
+    void updateDropBridgeV2Diagnostics({
+        fallbackAlarmClearedAt: new Date().toISOString()
+    }, {
+        type: 'fallback_alarm_cleared',
+        reason
+    });
+}
+
+async function buildDropBridgeV2ReceiverContext() {
+    if (!DROPBRIDGE_V2_ENABLED || !supabaseClient) {
+        return {
+            success: true,
+            enabled: false,
+            signedIn: false
+        };
+    }
+
+    const accessToken = await getDropBridgeV2AccessToken();
+    const { data: { session }, error } = await supabaseClient.auth.getSession();
+    if (error) {
+        throw error;
+    }
+
+    const userId = session?.user?.id || null;
+    if (!userId || !accessToken) {
+        return {
+            success: true,
+            enabled: true,
+            signedIn: false,
+            userId,
+            accessToken: null,
+            deviceId: null,
+            topic: null,
+            supabaseUrl,
+            supabaseKey,
+            wakeEvent: DROPBRIDGE_V2_WAKE_EVENT
+        };
+    }
 
     const deviceId = await getOrCreateDropBridgeV2DeviceId();
-    const topic = buildDropBridgeV2WakeTopic(session.user.id, deviceId);
-
-    if (dropBridgeV2WakeChannel && dropBridgeV2WakeTopic === topic) {
-        dropBridgeDebug('realtime: existing channel reused', { reason, topic });
-        return true;
-    }
-
-    await stopDropBridgeV2RealtimeSubscription(`${reason}-replace`);
-
-    const channel = supabaseClient.channel(topic, {
-        config: {
-            private: true
-        }
-    });
-
-    channel.on('broadcast', { event: DROPBRIDGE_V2_WAKE_EVENT }, (payload) => {
-        dropBridgeDebug('realtime: wake event', { topic, payload });
-        console.log(`[DropBridge v2] Wake event received on ${topic}`);
-        requestDropBridgeV2Poll(`wake-${DROPBRIDGE_V2_WAKE_EVENT}`).catch((error) => {
-            console.error('[DropBridge v2] Wake-triggered poll failure:', parseErrorMessage(error));
-        });
-    });
-
-    dropBridgeV2WakeChannel = channel;
-    dropBridgeV2WakeTopic = topic;
-
-    channel.subscribe((status, error) => {
-        if (channel !== dropBridgeV2WakeChannel) {
-            return;
-        }
-
-        dropBridgeDebug('realtime: subscribe status', {
-            reason,
-            topic,
-            status,
-            error: error ? parseErrorMessage(error) : null
-        });
-
-        if (status === 'SUBSCRIBED') {
-            console.log(`[DropBridge v2] Wake subscription active (${topic})`);
-            requestDropBridgeV2Poll(`realtime-${reason}`).catch((pollError) => {
-                console.error('[DropBridge v2] Realtime subscribe poll failure:', parseErrorMessage(pollError));
-            });
-            return;
-        }
-
-        if (status === 'CHANNEL_ERROR') {
-            console.error(`[DropBridge v2] Realtime channel error (${topic}):`, error ? parseErrorMessage(error) : 'unknown error');
-            return;
-        }
-
-        if (status === 'TIMED_OUT') {
-            console.warn(`[DropBridge v2] Realtime subscribe timed out (${topic})`);
-            return;
-        }
-
-        if (status === 'CLOSED') {
-            console.log(`[DropBridge v2] Realtime channel closed (${topic})`);
-        }
-    });
-
-    dropBridgeDebug('realtime: subscribe requested', { reason, topic });
-    return true;
+    return {
+        success: true,
+        enabled: true,
+        signedIn: true,
+        userId,
+        accessToken,
+        deviceId,
+        topic: buildDropBridgeV2WakeTopic(userId, deviceId),
+        supabaseUrl,
+        supabaseKey,
+        wakeEvent: DROPBRIDGE_V2_WAKE_EVENT,
+        debug: DROPBRIDGE_V2_DEBUG
+    };
 }
 
 async function requestDropBridgeV2Poll(reason = 'manual') {
@@ -765,7 +1010,7 @@ async function requestDropBridgeV2Poll(reason = 'manual') {
         return;
     }
 
-    const isWakeDriven = reason !== 'interval';
+    const isWakeDriven = reason !== 'alarm';
     const sinceLastPollStartMs = Date.now() - dropBridgeV2LastPollStartedAt;
     if (isWakeDriven && sinceLastPollStartMs < DROPBRIDGE_V2_WAKE_POLL_DEBOUNCE_MS) {
         dropBridgeV2QueuedPollReason = reason;
@@ -831,10 +1076,18 @@ async function registerDropBridgeV2Device(reason = 'startup', accessToken = null
     }
 
     console.log(`[DropBridge v2] Registered device (${reason}) as "${deviceName}"`);
+    void updateDropBridgeV2Diagnostics({
+        receiverDeviceId: deviceId,
+        receiverRegisteredAt: new Date().toISOString()
+    }, {
+        type: 'device_registered',
+        reason,
+        deviceId
+    });
     return true;
 }
 
-async function pollDropBridgeV2Once(reason = 'interval') {
+async function pollDropBridgeV2Once(reason = 'alarm') {
     if (!DROPBRIDGE_V2_ENABLED || !supabaseClient) {
         dropBridgeDebug('poll: skipped', {
             reason,
@@ -855,11 +1108,27 @@ async function pollDropBridgeV2Once(reason = 'interval') {
     dropBridgeV2LastPollStartedAt = pollStartedAtMs;
     dropBridgeDebug('poll: begin', { reason });
     dropBridgeV2PollInFlight = true;
+    void updateDropBridgeV2Diagnostics({
+        lastPollStartedAt: new Date(pollStartedAtMs).toISOString(),
+        lastPollReason: reason
+    }, {
+        type: 'poll_started',
+        reason
+    });
 
     try {
         const accessToken = await getDropBridgeV2AccessToken();
         if (!accessToken) {
             dropBridgeDebug('poll: no access token, exiting', { reason });
+            void updateDropBridgeV2Diagnostics({
+                lastPollFinishedAt: new Date().toISOString(),
+                lastPollResult: 'no_access_token',
+                lastPollUploadCount: 0
+            }, {
+                type: 'poll_finished',
+                reason,
+                result: 'no_access_token'
+            });
             return;
         }
 
@@ -878,15 +1147,32 @@ async function pollDropBridgeV2Once(reason = 'interval') {
             uploadCount: uploads.length,
             uploads
         });
+        void updateDropBridgeV2Diagnostics({
+            lastPollUploadCount: uploads.length,
+            lastPollResult: 'ok'
+        }, {
+            type: 'poll_uploads_ready',
+            reason,
+            uploadCount: uploads.length
+        });
 
         for (let index = 0; index < uploads.length; index += 1) {
             const upload = uploads[index];
+            const uploadId = resolveDropBridgeUploadId(upload);
             dropBridgeDebug('poll: processing upload', {
                 reason,
                 deviceId,
                 index,
                 total: uploads.length,
-                uploadId: resolveDropBridgeUploadId(upload)
+                uploadId
+            });
+            void updateDropBridgeV2Diagnostics({
+                lastClaimedAt: new Date().toISOString(),
+                lastClaimedUploadId: uploadId
+            }, {
+                type: 'upload_claimed',
+                reason,
+                uploadId
             });
             await processDropBridgeV2Upload(upload, accessToken, deviceId);
         }
@@ -896,9 +1182,26 @@ async function pollDropBridgeV2Once(reason = 'interval') {
             reason,
             error: parseErrorMessage(error)
         });
+        void updateDropBridgeV2Diagnostics({
+            lastPollResult: 'error',
+            lastPollError: parseErrorMessage(error)
+        }, {
+            type: 'poll_error',
+            reason,
+            error: parseErrorMessage(error)
+        });
     } finally {
         dropBridgeV2PollInFlight = false;
+        const finishedAtIso = new Date().toISOString();
         dropBridgeDebug('poll: end', {
+            reason,
+            durationMs: Date.now() - pollStartedAtMs
+        });
+        void updateDropBridgeV2Diagnostics({
+            lastPollFinishedAt: finishedAtIso,
+            lastPollDurationMs: Date.now() - pollStartedAtMs
+        }, {
+            type: 'poll_finished',
             reason,
             durationMs: Date.now() - pollStartedAtMs
         });
@@ -915,20 +1218,15 @@ async function pollDropBridgeV2Once(reason = 'interval') {
 
 function stopDropBridgeV2Loop() {
     dropBridgeDebug('loop: stop requested', {
-        hadPollTimer: Boolean(dropBridgeV2PollTimer),
-        hadRegisterTimer: Boolean(dropBridgeV2RegisterTimer),
         activeUploads: dropBridgeV2ActiveUploads.size
     });
-    if (dropBridgeV2PollTimer) {
-        clearInterval(dropBridgeV2PollTimer);
-        dropBridgeV2PollTimer = null;
-    }
-    if (dropBridgeV2RegisterTimer) {
-        clearInterval(dropBridgeV2RegisterTimer);
-        dropBridgeV2RegisterTimer = null;
-    }
     clearDropBridgeV2QueuedPoll();
-    void stopDropBridgeV2RealtimeSubscription('loop-stop');
+    clearDropBridgeV2FallbackAlarm('loop-stop').catch((error) => {
+        console.warn('[DropBridge v2] Failed to clear fallback alarm:', parseErrorMessage(error));
+    });
+    closeDropBridgeV2OffscreenReceiver('loop-stop').catch((error) => {
+        console.warn('[DropBridge v2] Failed to close offscreen receiver:', parseErrorMessage(error));
+    });
     dropBridgeV2ActiveUploads.clear();
     dropBridgeDebug('loop: stopped');
 }
@@ -947,7 +1245,7 @@ async function startDropBridgeV2Loop(reason = 'startup') {
     try {
         const accessToken = await getDropBridgeV2AccessToken();
         if (!accessToken) {
-            dropBridgeDebug('loop: start no token, stopping existing timers', { reason });
+            dropBridgeDebug('loop: start no token, stopping receiver services', { reason });
             stopDropBridgeV2Loop();
             return;
         }
@@ -958,30 +1256,8 @@ async function startDropBridgeV2Loop(reason = 'startup') {
             return;
         }
 
-        await ensureDropBridgeV2RealtimeSubscription(reason, accessToken);
-
-        if (!dropBridgeV2PollTimer) {
-            dropBridgeV2PollTimer = setInterval(() => {
-                requestDropBridgeV2Poll('interval').catch((error) => {
-                    console.error('[DropBridge v2] Interval poll failure:', parseErrorMessage(error));
-                });
-            }, DROPBRIDGE_V2_POLL_INTERVAL_MS);
-            console.log(`[DropBridge v2] Poll loop started (${Math.round(DROPBRIDGE_V2_POLL_INTERVAL_MS / 1000)}s)`);
-            dropBridgeDebug('loop: poll timer started', {
-                intervalMs: DROPBRIDGE_V2_POLL_INTERVAL_MS
-            });
-        }
-
-        if (!dropBridgeV2RegisterTimer) {
-            dropBridgeV2RegisterTimer = setInterval(() => {
-                registerDropBridgeV2Device('refresh').catch((error) => {
-                    console.error('[DropBridge v2] Periodic register failure:', parseErrorMessage(error));
-                });
-            }, DROPBRIDGE_V2_REGISTER_REFRESH_MS);
-            dropBridgeDebug('loop: register refresh timer started', {
-                intervalMs: DROPBRIDGE_V2_REGISTER_REFRESH_MS
-            });
-        }
+        await ensureDropBridgeV2FallbackAlarm(reason);
+        await ensureDropBridgeV2OffscreenReceiver(reason);
 
         await requestDropBridgeV2Poll(`${reason}-immediate`);
         dropBridgeDebug('loop: start finished', { reason });
@@ -1090,6 +1366,7 @@ chrome.runtime.onInstalled.addListener((details) => {
             [COURSE_CATALOG_STORAGE_KEY]: [],
             [COURSE_SNAPSHOTS_STORAGE_KEY]: [],
             settings: {
+                ...DEFAULT_EXTENSION_SETTINGS,
                 version: chrome.runtime.getManifest().version,
                 installedAt: new Date().toISOString(),
                 lastScanTime: 0
@@ -1146,6 +1423,11 @@ chrome.alarms.onAlarm.addListener((alarm) => {
     }
     if (alarm.name === 'deadlineReminder') {
         checkDeadlineReminders();
+    }
+    if (alarm.name === DROPBRIDGE_V2_FALLBACK_ALARM_NAME) {
+        requestDropBridgeV2Poll('alarm').catch((error) => {
+            console.error('[DropBridge v2] Alarm-triggered poll failure:', parseErrorMessage(error));
+        });
     }
 });
 
@@ -3949,6 +4231,15 @@ async function resolvePdfContextFromMessage({ mode, sender }) {
 }
 
 async function sendPdfToLectraFromMessage({ trigger, candidateUrl, sourcePageUrl, titleHint, sender }) {
+    const extensionSettings = await getExtensionSettings();
+    if (!extensionSettings.enableSendToLectra) {
+        return {
+            success: false,
+            code: 'feature_disabled',
+            message: 'Enable Send to Lectra in Canvascope settings to send PDFs.'
+        };
+    }
+
     if (!supabaseClient) {
         return {
             success: false,
@@ -4307,7 +4598,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                 if (sessionError) throw sessionError;
                 if (!session) { sendResponse({ success: false, error: 'Not signed in' }); return; }
 
-                // Fetch from all 3 tables in parallel
                 const [usersRes, prefsRes, syncedRes] = await Promise.all([
                     supabaseClient.from('users').select('*').eq('id', session.user.id),
                     supabaseClient.from('preferences').select('*').eq('user_id', session.user.id),
@@ -4685,6 +4975,82 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             brightspaceSuffixes: BRIGHTSPACE_DOMAIN_SUFFIXES,
             brightspaceDomains: KNOWN_BRIGHTSPACE_DOMAINS
         });
+        return true;
+    }
+
+    if (message.action === 'dropbridgeGetReceiverContext') {
+        (async () => {
+            try {
+                const payload = await buildDropBridgeV2ReceiverContext();
+                sendResponse(payload);
+            } catch (error) {
+                sendResponse({
+                    success: false,
+                    enabled: DROPBRIDGE_V2_ENABLED,
+                    signedIn: false,
+                    error: parseErrorMessage(error)
+                });
+            }
+        })();
+        return true;
+    }
+
+    if (message.action === 'dropbridgeReceiverWake') {
+        (async () => {
+            try {
+                const wakeReason = String(message.reason || 'offscreen');
+                const topic = message.topic ? String(message.topic) : null;
+                const uploadId = message.uploadId ? String(message.uploadId) : null;
+                void updateDropBridgeV2Diagnostics({
+                    lastWakeAt: new Date().toISOString(),
+                    lastWakeReason: wakeReason,
+                    lastWakeTopic: topic
+                }, {
+                    type: 'receiver_wake',
+                    reason: wakeReason,
+                    topic,
+                    uploadId
+                });
+                await requestDropBridgeV2Poll(`offscreen-${wakeReason}`);
+                sendResponse({ success: true });
+            } catch (error) {
+                sendResponse({
+                    success: false,
+                    error: parseErrorMessage(error)
+                });
+            }
+        })();
+        return true;
+    }
+
+    if (message.action === 'dropbridgeReceiverStatus') {
+        (async () => {
+            try {
+                const status = String(message.status || 'unknown').toLowerCase();
+                const patch = {
+                    receiverStatus: status,
+                    receiverStatusAt: new Date().toISOString(),
+                    receiverTopic: message.topic ? String(message.topic) : null,
+                    receiverError: message.error ? String(message.error) : (status === 'subscribed' ? null : undefined)
+                };
+                if (status === 'subscribed') {
+                    patch.receiverSubscribedAt = patch.receiverStatusAt;
+                }
+                await updateDropBridgeV2Diagnostics(patch, {
+                    type: 'receiver_status',
+                    status,
+                    reason: message.reason ? String(message.reason) : null,
+                    topic: patch.receiverTopic,
+                    error: message.error ? String(message.error) : null
+                });
+                sendResponse({ success: true });
+            } catch (error) {
+                sendResponse({
+                    success: false,
+                    error: parseErrorMessage(error)
+                });
+            }
+        })();
         return true;
     }
 

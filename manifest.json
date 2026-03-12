@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Canvascope",
-  "version": "3.0.0",
+  "version": "4.0.0",
   "minimum_chrome_version": "116",
   "description": "Instantly search Canvas and Brightspace content, then optionally send PDFs to Lectra for iPad annotation.",
   "icons": {
@@ -23,6 +23,7 @@
     "activeTab",
     "tabs",
     "alarms",
+    "offscreen",
     "scripting",
     "identity",
     "downloads"

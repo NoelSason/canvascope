@@ -66,10 +66,11 @@ If you explicitly choose **Send to Lectra** for a PDF:
 
 | Data Type | Purpose | Destination |
 |---|---|---|
-| Selected PDF file (max 25 MB) | iPad annotation workflow | DropBridge private storage bucket `drops` (via Edge Function) |
-| PDF metadata (`title`, `courseId`, `sourceUrl`, `sourcePlatform`, `sourceKind`) | Lectra sync coordination | DropBridge queue row `uploads.metadata` (via Edge Function) |
+| Selected PDF file (max 25 MB) | iPad annotation workflow | Supabase Storage bucket `lectra_documents` |
+| PDF metadata (`title`, `courseId`, `sourceUrl`, `storagePath`, `sourcePlatform`, `sourceKind`) | Lectra sync coordination | Supabase table `synced_items` |
 
 This upload is user-initiated and tied to your authenticated account.
+Reverse-direction Lectra -> Canvascope delivery uses DropBridge v2 queue metadata plus short-lived download URLs to trigger browser downloads.
 
 ---
 

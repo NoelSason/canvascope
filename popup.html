@@ -163,36 +163,50 @@
       <div class="browse-tabs" id="browse-tabs"></div>
       <div class="browse-content" id="browse-content"></div>
     </div>
-    <!-- Account Modal -->
+    <!-- Settings Modal -->
     <div id="account-modal" class="browse-modal hidden" style="z-index: 2000; display: flex; flex-direction: column;">
       <div class="browse-header">
-        <h2 class="browse-title">Google Account</h2>
+        <h2 class="browse-title">Settings</h2>
         <button id="close-account-modal" class="close-btn" aria-label="Close">×</button>
       </div>
-      <div class="browse-content" style="padding: 20px; text-align: center; overflow-y: auto; flex: 1;">
-        <div id="account-avatar-placeholder"
-          style="width: 56px; height: 56px; border-radius: 50%; background-color: var(--border-color); color: var(--text-color); margin: 0 auto 10px; display: flex; align-items: center; justify-content: center; font-size: 22px; font-weight: bold;">
+      <div class="browse-content settings-modal-content">
+        <div class="settings-profile">
+          <div id="account-avatar-placeholder" class="settings-avatar"></div>
+          <div class="settings-profile-copy">
+            <h3 id="account-name-display" class="settings-profile-name">Loading...</h3>
+            <p id="account-email-display" class="settings-profile-email">Please wait</p>
+          </div>
         </div>
-        <h3 id="account-name-display" style="margin: 0 0 2px; font-weight: 600; font-size: 15px;">Loading...</h3>
-        <p id="account-email-display" style="margin: 0 0 16px; color: var(--text-secondary); font-size: 13px;">Please
-          wait</p>
 
-        <!-- Database Content Section -->
-        <div id="account-db-content" style="text-align: left;">
-          <p style="color: var(--text-secondary); font-size: 12px; text-align: center;">Loading database content...</p>
+        <div class="settings-card">
+          <div class="settings-card-header">
+            <h3 class="settings-card-title">Lectra</h3>
+            <p class="settings-card-subtitle">Control optional PDF handoff features.</p>
+          </div>
+
+          <label class="setting-row" for="enable-send-to-lectra">
+            <div class="setting-copy">
+              <span class="setting-title">Enable Send to Lectra</span>
+              <span class="setting-description">Show Lectra send actions for supported PDFs. This is off by default.</span>
+            </div>
+            <span class="setting-toggle-shell">
+              <input id="enable-send-to-lectra" class="setting-toggle-input" type="checkbox" role="switch"
+                aria-label="Enable Send to Lectra">
+              <span class="setting-toggle-slider" aria-hidden="true"></span>
+            </span>
+          </label>
         </div>
       </div>
       <!-- Sign Out pinned at bottom -->
-      <div style="padding: 12px 20px; border-top: 1px solid var(--border-color); flex-shrink: 0;">
-        <button id="logout-btn" class="action-btn"
-          style="width: 100%; justify-content: center; padding: 10px; background-color: rgba(244, 67, 54, 0.1); color: #f44336; border-color: rgba(244, 67, 54, 0.2);">
+      <div class="settings-modal-footer">
+        <button id="logout-btn" class="action-btn settings-logout-btn">
           <svg class="btn-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
             stroke-width="2">
             <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
             <polyline points="16 17 21 12 16 7"></polyline>
             <line x1="21" y1="12" x2="9" y2="12"></line>
           </svg>
-          <span class="btn-text" style="color: inherit;">Sign out</span>
+          <span class="btn-text">Sign out</span>
         </button>
       </div>
     </div>
