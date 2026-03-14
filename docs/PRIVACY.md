@@ -70,7 +70,7 @@ If you explicitly choose **Send to Lectra** for a PDF:
 | PDF metadata (`title`, `courseId`, `sourceUrl`, `storagePath`, `sourcePlatform`, `sourceKind`) | Lectra sync coordination | Supabase table `synced_items` |
 
 This upload is user-initiated and tied to your authenticated account.
-Reverse-direction Lectra -> Canvascope delivery uses DropBridge v2 queue metadata plus short-lived download URLs to trigger browser downloads.
+Reverse-direction Lectra -> Canvascope delivery uses DropBridge v2 queue metadata plus short-lived download URLs to trigger browser downloads. For this optional receive flow, Canvascope may create a hidden Chrome offscreen document that keeps a Supabase Realtime worker connected so queued files can wake the extension without opening a visible tab. If the offscreen receiver is unavailable, Canvascope falls back to periodic alarm-based polling.
 
 ---
 
