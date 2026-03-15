@@ -164,7 +164,7 @@
       <div class="browse-content" id="browse-content"></div>
     </div>
     <!-- Settings Modal -->
-    <div id="account-modal" class="browse-modal hidden" style="z-index: 2000; display: flex; flex-direction: column;">
+    <div id="account-modal" class="browse-modal settings-modal hidden">
       <div class="browse-header">
         <h2 class="browse-title">Settings</h2>
         <button id="close-account-modal" class="close-btn" aria-label="Close">×</button>
@@ -181,7 +181,7 @@
         <div class="settings-card">
           <div class="settings-card-header">
             <h3 class="settings-card-title">Lectra</h3>
-            <p class="settings-card-subtitle">Control optional PDF handoff features.</p>
+            <p class="settings-card-subtitle">Control optional PDF handoff features and advanced search tuning.</p>
           </div>
 
           <label class="setting-row" for="enable-send-to-lectra">
@@ -195,6 +195,115 @@
               <span class="setting-toggle-slider" aria-hidden="true"></span>
             </span>
           </label>
+
+          <label class="setting-row" for="enable-custom-algorithm">
+            <div class="setting-copy">
+              <span class="setting-title">Custom Algorithm</span>
+              <span class="setting-description">Tune how Canvascope ranks search results for your workflow.</span>
+            </div>
+            <span class="setting-toggle-shell">
+              <input id="enable-custom-algorithm" class="setting-toggle-input" type="checkbox" role="switch"
+                aria-label="Enable Custom Algorithm">
+              <span class="setting-toggle-slider" aria-hidden="true"></span>
+            </span>
+          </label>
+
+          <div id="custom-algorithm-panel" class="custom-algorithm-panel hidden">
+            <div class="settings-warning-card">
+              <span class="settings-warning-badge">Experimental</span>
+              <p class="settings-warning-text">These controls directly change Canvascope search ranking. Aggressive values can make results noisier or less predictable.</p>
+            </div>
+
+            <div class="algorithm-slider-list">
+              <label class="algorithm-slider" for="algorithm-fuzzy-threshold">
+                <div class="algorithm-slider-header">
+                  <div class="algorithm-slider-copy">
+                    <span class="algorithm-slider-title">Broad Match</span>
+                    <span class="algorithm-slider-description">Higher values allow looser fuzzy matches.</span>
+                  </div>
+                  <span class="algorithm-slider-value" data-algorithm-value-for="fuzzyThreshold">35%</span>
+                </div>
+                <input id="algorithm-fuzzy-threshold" class="algorithm-range" type="range" min="15" max="65" step="1"
+                  value="35" data-algorithm-setting="fuzzyThreshold">
+              </label>
+
+              <label class="algorithm-slider" for="algorithm-title-weight">
+                <div class="algorithm-slider-header">
+                  <div class="algorithm-slider-copy">
+                    <span class="algorithm-slider-title">Title Priority</span>
+                    <span class="algorithm-slider-description">Push exact title matches harder than everything else.</span>
+                  </div>
+                  <span class="algorithm-slider-value" data-algorithm-value-for="titleWeight">100%</span>
+                </div>
+                <input id="algorithm-title-weight" class="algorithm-range" type="range" min="50" max="180" step="5"
+                  value="100" data-algorithm-setting="titleWeight">
+              </label>
+
+              <label class="algorithm-slider" for="algorithm-context-weight">
+                <div class="algorithm-slider-header">
+                  <div class="algorithm-slider-copy">
+                    <span class="algorithm-slider-title">Context Match</span>
+                    <span class="algorithm-slider-description">Use folders, modules, and course labels more heavily.</span>
+                  </div>
+                  <span class="algorithm-slider-value" data-algorithm-value-for="contextWeight">100%</span>
+                </div>
+                <input id="algorithm-context-weight" class="algorithm-range" type="range" min="50" max="180" step="5"
+                  value="100" data-algorithm-setting="contextWeight">
+              </label>
+
+              <label class="algorithm-slider" for="algorithm-recency-boost">
+                <div class="algorithm-slider-header">
+                  <div class="algorithm-slider-copy">
+                    <span class="algorithm-slider-title">Freshness</span>
+                    <span class="algorithm-slider-description">Prefer recently synced material more strongly.</span>
+                  </div>
+                  <span class="algorithm-slider-value" data-algorithm-value-for="recencyBoost">100%</span>
+                </div>
+                <input id="algorithm-recency-boost" class="algorithm-range" type="range" min="0" max="200" step="5"
+                  value="100" data-algorithm-setting="recencyBoost">
+              </label>
+
+              <label class="algorithm-slider" for="algorithm-course-boost">
+                <div class="algorithm-slider-header">
+                  <div class="algorithm-slider-copy">
+                    <span class="algorithm-slider-title">Course Bias</span>
+                    <span class="algorithm-slider-description">Favor the active class, favorites, and course-name hints.</span>
+                  </div>
+                  <span class="algorithm-slider-value" data-algorithm-value-for="courseBoost">100%</span>
+                </div>
+                <input id="algorithm-course-boost" class="algorithm-range" type="range" min="0" max="200" step="5"
+                  value="100" data-algorithm-setting="courseBoost">
+              </label>
+
+              <label class="algorithm-slider" for="algorithm-due-date-boost">
+                <div class="algorithm-slider-header">
+                  <div class="algorithm-slider-copy">
+                    <span class="algorithm-slider-title">Due Date Priority</span>
+                    <span class="algorithm-slider-description">Lift upcoming work and push overdue work lower.</span>
+                  </div>
+                  <span class="algorithm-slider-value" data-algorithm-value-for="dueDateBoost">100%</span>
+                </div>
+                <input id="algorithm-due-date-boost" class="algorithm-range" type="range" min="0" max="200" step="5"
+                  value="100" data-algorithm-setting="dueDateBoost">
+              </label>
+
+              <label class="algorithm-slider" for="algorithm-type-boost">
+                <div class="algorithm-slider-header">
+                  <div class="algorithm-slider-copy">
+                    <span class="algorithm-slider-title">Task Type Bias</span>
+                    <span class="algorithm-slider-description">Increase or soften built-in assignment, quiz, and file boosts.</span>
+                  </div>
+                  <span class="algorithm-slider-value" data-algorithm-value-for="typeBoost">100%</span>
+                </div>
+                <input id="algorithm-type-boost" class="algorithm-range" type="range" min="0" max="200" step="5"
+                  value="100" data-algorithm-setting="typeBoost">
+              </label>
+            </div>
+
+            <button id="reset-custom-algorithm" class="action-btn secondary-btn settings-inline-btn" type="button">
+              <span class="btn-text">Reset to defaults</span>
+            </button>
+          </div>
         </div>
       </div>
       <!-- Sign Out pinned at bottom -->

@@ -38,28 +38,47 @@ try {
   });
 } catch (e) { /* storage unavailable during tests */ }
 
-const FUSE_OPTIONS = {
-  threshold: 0.35,
+const BASE_FUSE_OPTIONS = Object.freeze({
   includeScore: true,
   includeMatches: true,
   minMatchCharLength: 2,
   ignoreLocation: true,
-  findAllMatches: true,
-  keys: [
-    { name: 'title', weight: 3.0 },
-    { name: 'searchTitleNormalized', weight: 2.5 },
-    { name: 'searchAliases', weight: 2.0 },
-    { name: 'folderPath', weight: 1.8 },
-    { name: 'moduleName', weight: 1.5 },
-    { name: 'courseName', weight: 1.2 },
-    { name: 'type', weight: 0.5 }
-  ]
-};
+  findAllMatches: true
+});
 
-const FUSE_OPTIONS_RELAXED = {
-  ...FUSE_OPTIONS,
-  threshold: 0.55
-};
+const BASE_FUSE_KEYS = Object.freeze([
+  Object.freeze({ name: 'title', weight: 3.0, bucket: 'title' }),
+  Object.freeze({ name: 'searchTitleNormalized', weight: 2.5, bucket: 'title' }),
+  Object.freeze({ name: 'searchAliases', weight: 2.0, bucket: 'title' }),
+  Object.freeze({ name: 'searchCourseNormalized', weight: 2.2, bucket: 'context' }),
+  Object.freeze({ name: 'folderPath', weight: 1.8, bucket: 'context' }),
+  Object.freeze({ name: 'moduleName', weight: 1.5, bucket: 'context' }),
+  Object.freeze({ name: 'courseName', weight: 1.2, bucket: 'context' }),
+  Object.freeze({ name: 'type', weight: 0.5, bucket: 'type' })
+]);
+
+const DEFAULT_CUSTOM_ALGORITHM = Object.freeze({
+  enabled: false,
+  fuzzyThreshold: 35,
+  titleWeight: 100,
+  contextWeight: 100,
+  recencyBoost: 100,
+  courseBoost: 100,
+  dueDateBoost: 100,
+  typeBoost: 100
+});
+
+const CUSTOM_ALGORITHM_LIMITS = Object.freeze({
+  fuzzyThreshold: Object.freeze({ min: 15, max: 65 }),
+  titleWeight: Object.freeze({ min: 50, max: 180 }),
+  contextWeight: Object.freeze({ min: 50, max: 180 }),
+  recencyBoost: Object.freeze({ min: 0, max: 200 }),
+  courseBoost: Object.freeze({ min: 0, max: 200 }),
+  dueDateBoost: Object.freeze({ min: 0, max: 200 }),
+  typeBoost: Object.freeze({ min: 0, max: 200 })
+});
+
+const CUSTOM_ALGORITHM_WARNING = 'Custom Algorithm is experimental. It changes how Canvascope ranks search results and can make matches less predictable. Enable it anyway?';
 
 const MAX_RESULTS = 20;
 const SEARCH_DEBOUNCE_MS = 150;
@@ -76,6 +95,76 @@ const TYPE_BOOST = {
   video: 0.08,
   externalurl: 0.05
 };
+
+function clampAlgorithmValue(key, rawValue) {
+  const bounds = CUSTOM_ALGORITHM_LIMITS[key];
+  if (!bounds) return DEFAULT_CUSTOM_ALGORITHM[key];
+
+  const parsed = Number(rawValue);
+  if (!Number.isFinite(parsed)) {
+    return DEFAULT_CUSTOM_ALGORITHM[key];
+  }
+
+  return Math.min(bounds.max, Math.max(bounds.min, Math.round(parsed)));
+}
+
+function normalizeCustomAlgorithm(rawCustomAlgorithm) {
+  const source = rawCustomAlgorithm && typeof rawCustomAlgorithm === 'object' ? rawCustomAlgorithm : {};
+  const normalized = {
+    ...DEFAULT_CUSTOM_ALGORITHM,
+    enabled: Boolean(source.enabled)
+  };
+
+  for (const key of Object.keys(CUSTOM_ALGORITHM_LIMITS)) {
+    normalized[key] = clampAlgorithmValue(key, source[key]);
+  }
+
+  return normalized;
+}
+
+function getStoredCustomAlgorithm(settings = state.extensionSettings) {
+  return normalizeCustomAlgorithm(settings?.customAlgorithm);
+}
+
+function getActiveSearchAlgorithm(settings = state.extensionSettings) {
+  const stored = getStoredCustomAlgorithm(settings);
+  return stored.enabled ? stored : { ...DEFAULT_CUSTOM_ALGORITHM };
+}
+
+function getActiveSearchAlgorithmKey(settings = state.extensionSettings) {
+  return JSON.stringify(getActiveSearchAlgorithm(settings));
+}
+
+function buildFuseOptions({ relaxed = false, settings = state.extensionSettings } = {}) {
+  const tuning = getActiveSearchAlgorithm(settings);
+  const titleMultiplier = tuning.titleWeight / 100;
+  const contextMultiplier = tuning.contextWeight / 100;
+  const typeMultiplier = tuning.typeBoost / 100;
+  const threshold = Math.min(0.8, (tuning.fuzzyThreshold / 100) + (relaxed ? 0.2 : 0));
+
+  return {
+    ...BASE_FUSE_OPTIONS,
+    threshold,
+    keys: BASE_FUSE_KEYS.map(({ name, weight, bucket }) => {
+      let multiplier = 1;
+      if (bucket === 'title') multiplier = titleMultiplier;
+      if (bucket === 'context') multiplier = contextMultiplier;
+      if (bucket === 'type') multiplier = typeMultiplier;
+
+      return {
+        name,
+        weight: Math.max(0.001, weight * multiplier)
+      };
+    })
+  };
+}
+
+function formatCustomAlgorithmValue(key, value) {
+  if (key === 'fuzzyThreshold') {
+    return `${value}%`;
+  }
+  return `${value}%`;
+}
 
 // ============================================
 // INTENT DETECTION
@@ -637,6 +726,10 @@ const ABBREV_MAP = {
   ch: 'chapter',
   chap: 'chapter',
   wk: 'week',
+  phys: 'physics',
+  bio: 'biology',
+  biol: 'biology',
+  chem: 'chemistry',
   pset: 'problem set',
   ps: 'problem set'
 };
@@ -708,6 +801,7 @@ function numberVariants(text) {
 function buildSearchFields(item) {
   const normalized = expandAbbreviations(item.title || '');
   let aliases = numberVariants(normalized);
+  const normalizedCourse = expandAbbreviations(item.courseName || '');
   // Include folder path in aliases so folder names are searchable
   if (item.folderPath) {
     aliases += ' ' + normalizeText(item.folderPath);
@@ -717,8 +811,145 @@ function buildSearchFields(item) {
   }
   return {
     searchTitleNormalized: normalized,
-    searchAliases: aliases
+    searchAliases: aliases,
+    searchCourseNormalized: normalizedCourse
   };
+}
+
+function getCourseHintSignals(normalizedQuery) {
+  const q = normalizeText(normalizedQuery || '');
+  const qTokens = q.split(/\s+/).filter(Boolean);
+  return {
+    biology: qTokens.some(t => t === 'bio' || t === 'biol' || t === 'biology'),
+    chemistry: qTokens.some(t => t === 'chem' || t === 'chemistry'),
+    physics: qTokens.some(t => t === 'phys' || t === 'physics')
+  };
+}
+
+function itemMatchesCourseHints(item, hintSignals) {
+  const itemCourse = (item?.searchCourseNormalized || expandAbbreviations(item?.courseName || '')).toLowerCase();
+  if (!itemCourse) return false;
+
+  if (hintSignals.biology && itemCourse.includes('biology')) return true;
+  if (hintSignals.chemistry && itemCourse.includes('chemistry')) return true;
+  if (hintSignals.physics && itemCourse.includes('physics')) return true;
+
+  return false;
+}
+
+function itemMatchesCourseScope(item, courseScope) {
+  if (!courseScope?.coursePrefix) return false;
+  const itemCourse = normalizeText(item?.courseName || '');
+  if (!itemCourse) return false;
+  return new RegExp(`^${courseScope.coursePrefix}(\\s|$)`).test(itemCourse);
+}
+
+function isLabLikeQuery(normalizedQuery) {
+  const q = String(normalizedQuery || '').toLowerCase();
+  return q.includes('lab') || q.includes('laboratory');
+}
+
+function isLabContextItem(item) {
+  const raw = `${item?.title || ''} ${item?.folderPath || ''} ${item?.moduleName || ''}`;
+  const normalized = `${item?.searchTitleNormalized || normalizeText(item?.title || '')} ${normalizeText(item?.folderPath || '')} ${normalizeText(item?.moduleName || '')}`.toLowerCase();
+  return /(?:pre[\s-]*lab|prelab|lab(?:oratory)?)(?:\s*#?\s*\d+)?/i.test(raw) || normalized.includes('laboratory');
+}
+
+function collectPatternNumbers(text, regexFactory) {
+  const value = String(text || '');
+  if (!value) return [];
+
+  const numbers = [];
+  const regex = regexFactory();
+  let match = regex.exec(value);
+  while (match) {
+    const num = String(match[1] || '').replace(/^0+/, '') || '0';
+    numbers.push(num);
+    match = regex.exec(value);
+  }
+  return numbers;
+}
+
+function extractLabSequenceNumbers(item) {
+  const texts = [item?.title, item?.folderPath, item?.moduleName];
+  const direct = new Set();
+
+  const directPatterns = [
+    () => /(?:^|[\s_|/.-])(?:[a-z0-9]{0,8})?(?:pre[\s-]*lab|prelab|lab(?:oratory)?)\s*#?\s*0*(\d{1,3})(?=$|[\s_|/.-])/ig
+  ];
+
+  for (const text of texts) {
+    for (const pattern of directPatterns) {
+      for (const n of collectPatternNumbers(text, pattern)) direct.add(n);
+    }
+  }
+
+  if (direct.size > 0) {
+    return Array.from(direct);
+  }
+
+  const fallback = new Set();
+  for (const text of texts) {
+    for (const n of collectPatternNumbers(text, () => /(?:^|[\s_|/.-])week\s*#?\s*0*(\d{1,3})(?=$|[\s_|/.-])/ig)) {
+      fallback.add(n);
+    }
+  }
+  return Array.from(fallback);
+}
+
+function expandTemporalLabSiblings(results, normalizedQuery, courseScope) {
+  if (!Array.isArray(results) || results.length === 0) return results;
+  if (!isLabLikeQuery(normalizedQuery)) return results;
+
+  const hintSignals = getCourseHintSignals(normalizedQuery);
+  const hasCourseHint = Object.values(hintSignals).some(Boolean);
+  if (!courseScope && !hasCourseHint) return results;
+
+  const anchorCourseNumbers = new Map();
+  for (const result of results) {
+    const item = result?.item;
+    if (!item) continue;
+
+    const matchesScopedCourse = courseScope ? itemMatchesCourseScope(item, courseScope) : itemMatchesCourseHints(item, hintSignals);
+    if (!matchesScopedCourse) continue;
+
+    const sequenceNumbers = extractLabSequenceNumbers(item);
+    if (sequenceNumbers.length === 0) continue;
+
+    const courseKey = normalizeText(item.courseName || '');
+    if (!courseKey) continue;
+
+    if (!anchorCourseNumbers.has(courseKey)) {
+      anchorCourseNumbers.set(courseKey, new Set());
+    }
+    const bucket = anchorCourseNumbers.get(courseKey);
+    for (const n of sequenceNumbers) bucket.add(n);
+  }
+
+  if (anchorCourseNumbers.size === 0) return results;
+
+  const expanded = [...results];
+  const seenUrls = new Set(results.map(r => r.item?.url).filter(Boolean));
+
+  for (const item of state.filteredContent) {
+    if (!item?.url || seenUrls.has(item.url)) continue;
+
+    const courseKey = normalizeText(item.courseName || '');
+    const targetNumbers = anchorCourseNumbers.get(courseKey);
+    if (!targetNumbers || targetNumbers.size === 0) continue;
+    if (!isLabContextItem(item)) continue;
+
+    const itemNumbers = extractLabSequenceNumbers(item);
+    if (itemNumbers.length === 0) continue;
+
+    const overlapsAnchor = itemNumbers.some(n => targetNumbers.has(n));
+    if (!overlapsAnchor) continue;
+
+    expanded.push({ item, score: 0.18, prePass: false, temporalLabExpansion: true });
+    seenUrls.add(item.url);
+  }
+
+  return expanded;
 }
 
 /**
@@ -814,29 +1045,31 @@ function detectCourseScope(query) {
 }
 
 function getQueryCourseHintBoost(item, normalizedQuery) {
-  const q = normalizeText(normalizedQuery || '');
-  if (!q) return 0;
-
-  const qTokens = q.split(/\s+/).filter(Boolean);
-  const itemCourse = normalizeText(item.courseName || '');
+  const hintSignals = getCourseHintSignals(normalizedQuery);
+  const itemCourse = (item?.searchCourseNormalized || expandAbbreviations(item?.courseName || '')).toLowerCase();
   if (!itemCourse) return 0;
-
-  const hasBioHint = qTokens.some(t => t === 'bio' || t === 'biol' || t === 'biology');
-  const hasChemHint = qTokens.some(t => t === 'chem' || t === 'chemistry');
 
   let boost = 0;
 
-  if (hasBioHint) {
-    if (itemCourse.includes('biology') || itemCourse.includes('biol') || /\bbio\b/.test(itemCourse)) {
+  if (hintSignals.biology) {
+    if (itemCourse.includes('biology')) {
       boost += 0.55;
     } else {
       boost -= 0.22;
     }
   }
 
-  if (hasChemHint) {
-    if (itemCourse.includes('chem') || itemCourse.includes('chemistry')) {
+  if (hintSignals.chemistry) {
+    if (itemCourse.includes('chemistry')) {
       boost += 0.45;
+    } else {
+      boost -= 0.18;
+    }
+  }
+
+  if (hintSignals.physics) {
+    if (itemCourse.includes('physics')) {
+      boost += 0.50;
     } else {
       boost -= 0.18;
     }
@@ -923,7 +1156,8 @@ const elements = {};
 const MAX_RECENTS = 5;
 const DEFAULT_EXTENSION_SETTINGS = Object.freeze({
   enableSendToLectra: false,
-  selectedCourseFilters: []
+  selectedCourseFilters: [],
+  customAlgorithm: DEFAULT_CUSTOM_ALGORITHM
 });
 
 let state = {
@@ -963,7 +1197,8 @@ function normalizeExtensionSettings(rawSettings) {
   return {
     ...DEFAULT_EXTENSION_SETTINGS,
     ...source,
-    selectedCourseFilters
+    selectedCourseFilters,
+    customAlgorithm: normalizeCustomAlgorithm(source.customAlgorithm)
   };
 }
 
@@ -984,6 +1219,25 @@ function applyExtensionSettingsUi() {
   if (elements.enableSendToLectraToggle) {
     elements.enableSendToLectraToggle.checked = Boolean(state.extensionSettings.enableSendToLectra);
   }
+
+  const customAlgorithm = getStoredCustomAlgorithm();
+
+  if (elements.enableCustomAlgorithmToggle) {
+    elements.enableCustomAlgorithmToggle.checked = customAlgorithm.enabled;
+  }
+
+  if (elements.customAlgorithmPanel) {
+    elements.customAlgorithmPanel.classList.toggle('hidden', !customAlgorithm.enabled);
+  }
+
+  if (elements.customAlgorithmSliders) {
+    for (const slider of elements.customAlgorithmSliders) {
+      const key = slider.dataset.algorithmSetting;
+      if (!key || !(key in customAlgorithm)) continue;
+      slider.value = String(customAlgorithm[key]);
+      updateCustomAlgorithmValueLabel(key, customAlgorithm[key]);
+    }
+  }
 }
 
 async function updateExtensionSettings(patch) {
@@ -998,6 +1252,31 @@ async function updateExtensionSettings(patch) {
   syncCourseFiltersFromSettings();
   applyExtensionSettingsUi();
   return nextSettings;
+}
+
+async function updateCustomAlgorithmSettings(patch) {
+  const current = getStoredCustomAlgorithm();
+  return updateExtensionSettings({
+    customAlgorithm: {
+      ...current,
+      ...patch
+    }
+  });
+}
+
+function updateCustomAlgorithmValueLabel(key, value) {
+  const label = elements.customAlgorithmValueLabels?.[key];
+  if (!label) return;
+  label.textContent = formatCustomAlgorithmValue(key, value);
+}
+
+function rerunSearchWithCurrentQuery() {
+  initializeFuse();
+
+  const activeQuery = elements.searchInput?.value.trim();
+  if (activeQuery) {
+    performSearch(activeQuery);
+  }
 }
 
 function normalizeSelectedCourseFilters(values) {
@@ -1166,10 +1445,13 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       const previousCourseKey = selectedCourseFiltersKey(state.filters.course);
       const previousSendToLectra = Boolean(state.extensionSettings.enableSendToLectra);
+      const previousAlgorithmKey = getActiveSearchAlgorithmKey(state.extensionSettings);
 
       state.extensionSettings = normalizeExtensionSettings(changes.settings.newValue);
       syncCourseFiltersFromSettings();
       applyExtensionSettingsUi();
+
+      const algorithmChanged = previousAlgorithmKey !== getActiveSearchAlgorithmKey(state.extensionSettings);
 
       if (!state.isOverlayMode && previousSendToLectra !== Boolean(state.extensionSettings.enableSendToLectra)) {
         refreshPdfFallbackAvailability();
@@ -1177,6 +1459,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       if (previousCourseKey !== selectedCourseFiltersKey(state.filters.course)) {
         handleFilterChange();
+      } else if (algorithmChanged) {
+        rerunSearchWithCurrentQuery();
       }
     });
   } catch (error) {
@@ -1286,6 +1570,14 @@ function initializeElements() {
   elements.accountEmailDisplay = document.getElementById('account-email-display');
   elements.accountAvatarPlaceholder = document.getElementById('account-avatar-placeholder');
   elements.enableSendToLectraToggle = document.getElementById('enable-send-to-lectra');
+  elements.enableCustomAlgorithmToggle = document.getElementById('enable-custom-algorithm');
+  elements.customAlgorithmPanel = document.getElementById('custom-algorithm-panel');
+  elements.resetCustomAlgorithmBtn = document.getElementById('reset-custom-algorithm');
+  elements.customAlgorithmSliders = Array.from(document.querySelectorAll('[data-algorithm-setting]'));
+  elements.customAlgorithmValueLabels = Object.fromEntries(
+    Array.from(document.querySelectorAll('[data-algorithm-value-for]'))
+      .map(node => [node.dataset.algorithmValueFor, node])
+  );
   elements.logoutBtn = document.getElementById('logout-btn');
 
   // Sync Status Elements
@@ -1432,6 +1724,76 @@ function setupEventListeners() {
         applyExtensionSettingsUi();
       } finally {
         toggle.disabled = false;
+      }
+    });
+  }
+
+  if (elements.enableCustomAlgorithmToggle) {
+    elements.enableCustomAlgorithmToggle.addEventListener('change', async (event) => {
+      const toggle = event.currentTarget;
+      const enabled = Boolean(toggle.checked);
+
+      if (enabled && !window.confirm(CUSTOM_ALGORITHM_WARNING)) {
+        toggle.checked = false;
+        return;
+      }
+
+      toggle.disabled = true;
+
+      try {
+        await updateCustomAlgorithmSettings({ enabled });
+        rerunSearchWithCurrentQuery();
+      } catch (error) {
+        console.error('[Canvascope] Failed to update custom algorithm settings:', error);
+        applyExtensionSettingsUi();
+      } finally {
+        toggle.disabled = false;
+      }
+    });
+  }
+
+  if (elements.customAlgorithmSliders) {
+    for (const slider of elements.customAlgorithmSliders) {
+      slider.addEventListener('input', (event) => {
+        const input = event.currentTarget;
+        updateCustomAlgorithmValueLabel(input.dataset.algorithmSetting, Number(input.value));
+      });
+
+      slider.addEventListener('change', async (event) => {
+        const input = event.currentTarget;
+        const key = input.dataset.algorithmSetting;
+        if (!key) return;
+
+        input.disabled = true;
+
+        try {
+          await updateCustomAlgorithmSettings({ [key]: Number(input.value) });
+          rerunSearchWithCurrentQuery();
+        } catch (error) {
+          console.error('[Canvascope] Failed to persist custom algorithm slider:', error);
+          applyExtensionSettingsUi();
+        } finally {
+          input.disabled = false;
+        }
+      });
+    }
+  }
+
+  if (elements.resetCustomAlgorithmBtn) {
+    elements.resetCustomAlgorithmBtn.addEventListener('click', async () => {
+      elements.resetCustomAlgorithmBtn.disabled = true;
+
+      try {
+        await updateCustomAlgorithmSettings({
+          ...DEFAULT_CUSTOM_ALGORITHM,
+          enabled: true
+        });
+        rerunSearchWithCurrentQuery();
+      } catch (error) {
+        console.error('[Canvascope] Failed to reset custom algorithm settings:', error);
+        applyExtensionSettingsUi();
+      } finally {
+        elements.resetCustomAlgorithmBtn.disabled = false;
       }
     });
   }
@@ -2096,11 +2458,14 @@ function initializeFuse() {
     const fields = buildSearchFields(item);
     item.searchTitleNormalized = fields.searchTitleNormalized;
     item.searchAliases = fields.searchAliases;
+    item.searchCourseNormalized = fields.searchCourseNormalized;
   }
 
   if (state.filteredContent.length > 0) {
-    state.fuse = new Fuse(state.filteredContent, FUSE_OPTIONS);
-    state.fuseRelaxed = new Fuse(state.filteredContent, FUSE_OPTIONS_RELAXED);
+    const strictFuseOptions = buildFuseOptions();
+    const relaxedFuseOptions = buildFuseOptions({ relaxed: true });
+    state.fuse = new Fuse(state.filteredContent, strictFuseOptions);
+    state.fuseRelaxed = new Fuse(state.filteredContent, relaxedFuseOptions);
   } else {
     state.fuse = null;
     state.fuseRelaxed = null;
@@ -2242,8 +2607,8 @@ function performSearch(query) {
     return;
   }
 
-  const activeFuse = temporalIntent.kind ? new Fuse(searchCorpus, FUSE_OPTIONS) : state.fuse;
-  const activeFuseRelaxed = temporalIntent.kind ? new Fuse(searchCorpus, FUSE_OPTIONS_RELAXED) : state.fuseRelaxed;
+  const activeFuse = temporalIntent.kind ? new Fuse(searchCorpus, buildFuseOptions()) : state.fuse;
+  const activeFuseRelaxed = temporalIntent.kind ? new Fuse(searchCorpus, buildFuseOptions({ relaxed: true })) : state.fuseRelaxed;
 
   const searchStart = performance.now();
 
@@ -2456,6 +2821,8 @@ function performSearch(query) {
       temporalResults = applyTemporalFilter(temporalSeed, temporalIntent.kind);
     }
 
+    temporalResults = expandTemporalLabSiblings(temporalResults, normalizedQuery, courseScope);
+
     results = temporalResults;
   }
 
@@ -2550,7 +2917,14 @@ function performSearch(query) {
  * Calculate custom score combining Fuse score with type, recency, position,
  * intent, numeric, coverage, click-feedback, due-date, and active-course boosts.
  */
-function calculateScore(item, fuseScore, normalizedQuery, intent, queryNums, isPrePass) {
+function calculateScore(item, fuseScore, normalizedQuery, intent, queryNums, isPrePass, algorithm) {
+  const tuning = algorithm || getActiveSearchAlgorithm();
+  const typeMultiplier = tuning.typeBoost / 100;
+  const recencyMultiplier = tuning.recencyBoost / 100;
+  const courseMultiplier = tuning.courseBoost / 100;
+  const dueDateMultiplier = tuning.dueDateBoost / 100;
+  const contextMultiplier = tuning.contextWeight / 100;
+
   // Base: invert Fuse score. Pre-pass items use their calculated baseScore (0.0 is perfect)
   let score;
   if (isPrePass && fuseScore !== undefined) {
@@ -2562,13 +2936,13 @@ function calculateScore(item, fuseScore, normalizedQuery, intent, queryNums, isP
   }
 
   // ── Type boost (0.05–0.30) ──────────────────────
-  score += TYPE_BOOST[item.type] || 0;
+  score += (TYPE_BOOST[item.type] || 0) * typeMultiplier;
 
   // ── Recency boost (scannedAt) ───────────────────
   const ts = item.scannedAt ? new Date(item.scannedAt).getTime() : 0;
   if (ts > 0) {
     const daysAgo = (Date.now() - ts) / (1000 * 60 * 60 * 24);
-    score += Math.max(0, 0.15 - (daysAgo * 0.005));
+    score += Math.max(0, 0.15 - (daysAgo * 0.005)) * recencyMultiplier;
   }
 
   // ── Suffix / position boost ─────────────────────
@@ -2626,13 +3000,13 @@ function calculateScore(item, fuseScore, normalizedQuery, intent, queryNums, isP
   }
 
   // ── Active-course prior ─────────────────────────
-  score += getActiveCourseBoost(item);
+  score += getActiveCourseBoost(item) * courseMultiplier;
 
   // ── Starred-course boost ────────────────────────
-  score += getStarredCourseBoost(item);
+  score += getStarredCourseBoost(item) * courseMultiplier;
 
   // ── Query course-hint boost (e.g., "bio lab this week") ──
-  score += getQueryCourseHintBoost(item, normalizedQuery);
+  score += getQueryCourseHintBoost(item, normalizedQuery) * courseMultiplier;
 
   // ── Folder-context boost ────────────────────────
   // Boost items whose folder/module name matches query tokens
@@ -2647,7 +3021,7 @@ function calculateScore(item, fuseScore, normalizedQuery, intent, queryNums, isP
       }
       if (folderHits > 0) {
         // Proportional boost, max +0.35
-        score += Math.min(0.35, 0.25 * (folderHits / qTokens.length));
+        score += Math.min(0.35, 0.25 * (folderHits / qTokens.length)) * contextMultiplier;
       }
     }
   }
@@ -2667,10 +3041,10 @@ function calculateScore(item, fuseScore, normalizedQuery, intent, queryNums, isP
       const daysUntilDue = (dueTs - Date.now()) / (1000 * 60 * 60 * 24);
       if (daysUntilDue >= 0 && daysUntilDue <= 21) {
         // Upcoming: strong boost, especially near-term
-        score += Math.max(0.08, 0.34 - daysUntilDue * 0.015);
+        score += Math.max(0.08, 0.34 - daysUntilDue * 0.015) * dueDateMultiplier;
       } else if (daysUntilDue < 0 && daysUntilDue > -30) {
         // Overdue: explicit penalty so future tasks sort above overdue ones
-        score -= Math.min(0.55, 0.22 + Math.abs(daysUntilDue) * 0.03);
+        score -= Math.min(0.55, 0.22 + Math.abs(daysUntilDue) * 0.03) * dueDateMultiplier;
       }
     }
   }
@@ -2682,9 +3056,10 @@ function calculateScore(item, fuseScore, normalizedQuery, intent, queryNums, isP
  * Re-rank results using full scoring pipeline + diversity pass
  */
 function rankResults(results, normalizedQuery, intent, queryNums) {
+  const algorithm = getActiveSearchAlgorithm();
   const scored = results
     .map(r => {
-      const finalScore = calculateScore(r.item, r.score, normalizedQuery, intent, queryNums, !!r.prePass);
+      const finalScore = calculateScore(r.item, r.score, normalizedQuery, intent, queryNums, !!r.prePass, algorithm);
       return {
         ...r,
         finalScore
