@@ -2995,28 +2995,65 @@ function buildSubmissionSummary(submission, hasSubmittedSubmissions = null) {
     return hasMeaningfulSubmissionSummary(summary) ? summary : null;
 }
 
-function isSubmittedFromSummary(summary) {
+function hasConcreteSubmissionEvidence(summary) {
     if (!summary || typeof summary !== 'object') return false;
-    const workflowState = String(summary.workflowState || '').trim().toLowerCase();
+    if (summary.missing === true) return false;
+    if (summary.excused === true) return true;
+
+    const hasAttempt = Number(summary.attempt ?? 0) > 0;
     const hasGrade = summary.score !== null && summary.score !== undefined
         || (typeof summary.grade === 'string' && summary.grade.trim() !== '');
+    const hasSubmittedAt = typeof summary.submittedAt === 'string' && summary.submittedAt.trim() !== '';
+    const hasSubmissionType = typeof summary.submissionType === 'string' && summary.submissionType.trim() !== '';
+    const workflowState = String(summary.workflowState || '').trim().toLowerCase();
 
-    return Boolean(
-        summary.submittedAt
-        || summary.hasSubmittedSubmissions === true
-        || summary.gradeMatchesCurrentSubmission === true
-        || hasGrade
-        || ['submitted', 'graded', 'pending_review', 'complete'].includes(workflowState)
-    );
+    if (hasSubmittedAt || hasAttempt || hasGrade || hasSubmissionType) return true;
+    if (summary.late === true) return true;
+
+    return ['submitted', 'graded', 'complete'].includes(workflowState);
+}
+
+function isSubmittedFromSummary(summary) {
+    return hasConcreteSubmissionEvidence(summary);
 }
 
 function normalizeSubmissionStatus(summary) {
     if (!summary) return 'not_submitted';
     if (summary.excused === true) return 'excused';
     if (summary.missing === true) return 'missing';
-    if (summary.late === true) return 'late';
-    if (isSubmittedFromSummary(summary)) return 'submitted';
+    if (hasConcreteSubmissionEvidence(summary)) {
+        return summary.late === true ? 'late' : 'submitted';
+    }
+    const workflowState = String(summary.workflowState || '').trim().toLowerCase();
+    if (['unsubmitted', 'untaken', 'new', 'pending_review'].includes(workflowState)) {
+        return 'not_submitted';
+    }
     return summary.workflowState ? 'unknown' : 'not_submitted';
+}
+
+function normalizeStoredSubmissionFields(item) {
+    if (!item || typeof item !== 'object') return item;
+    const summary = cloneSubmissionSummary(item.submission);
+    if (!summary && item.submitted === undefined && item.submissionStatus === undefined) {
+        return item;
+    }
+
+    return {
+        ...item,
+        submitted: isSubmittedFromSummary(summary),
+        submissionStatus: normalizeSubmissionStatus(summary),
+        submission: summary
+    };
+}
+
+function normalizeStoredCourseSnapshot(snapshot) {
+    if (!snapshot || typeof snapshot !== 'object') return snapshot;
+    return {
+        ...snapshot,
+        indexedContent: Array.isArray(snapshot.indexedContent)
+            ? snapshot.indexedContent.map((item) => normalizeStoredSubmissionFields(item))
+            : []
+    };
 }
 
 function buildAssignmentSubmissionFields({ assignmentId = null, submission = null, hasSubmittedSubmissions = null } = {}) {
@@ -4768,12 +4805,12 @@ async function performSyncIndexedContentToSupabase() {
         ? storageData[COURSE_CATALOG_STORAGE_KEY]
         : [];
     const courseSnapshots = Array.isArray(storageData[COURSE_SNAPSHOTS_STORAGE_KEY])
-        ? storageData[COURSE_SNAPSHOTS_STORAGE_KEY]
+        ? storageData[COURSE_SNAPSHOTS_STORAGE_KEY].map((snapshot) => normalizeStoredCourseSnapshot(snapshot))
         : [];
     const richSnapshotItems = flattenSnapshotItems(courseSnapshots);
     const legacyItems = richSnapshotItems.length > 0
         ? richSnapshotItems
-        : lightweightItems.map((item) => ({ sourceApp: 'canvascope_extension', ...item }));
+        : lightweightItems.map((item) => normalizeStoredSubmissionFields({ sourceApp: 'canvascope_extension', ...item }));
 
     if (legacyItems.length === 0 && courseCatalog.length === 0 && courseSnapshots.length === 0) {
         return { success: true, synced: 0, message: 'No items to sync' };

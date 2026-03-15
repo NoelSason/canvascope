@@ -356,6 +356,7 @@ function computeNumericAlignment(queryNums, titleText) {
 // ============================================
 
 const STOP_TOKENS = new Set(['the', 'in', 'on', 'of', 'to', 'for', 'and', 'or', 'is']);
+const BROAD_QUERY_TOKENS = new Set(['lab', 'laboratory', 'chemistry', 'biology', 'physics']);
 
 /**
  * Compute fraction of query tokens present in searchable text using boundaries.
@@ -470,6 +471,39 @@ function isTaskType(item) {
   return TASK_TYPES.has((item.type || '').toLowerCase());
 }
 
+function hasConcreteTaskSubmissionEvidence(summary) {
+  if (!summary || typeof summary !== 'object') return false;
+  if (summary.missing === true) return false;
+  if (summary.excused === true) return true;
+
+  const hasAttempt = Number(summary.attempt ?? 0) > 0;
+  const hasGrade = summary.score !== null && summary.score !== undefined
+    || (typeof summary.grade === 'string' && summary.grade.trim() !== '');
+  const hasSubmittedAt = typeof summary.submittedAt === 'string' && summary.submittedAt.trim() !== '';
+  const hasSubmissionType = typeof summary.submissionType === 'string' && summary.submissionType.trim() !== '';
+  const workflowState = String(summary.workflowState || '').trim().toLowerCase();
+
+  if (hasSubmittedAt || hasAttempt || hasGrade || hasSubmissionType) return true;
+  if (summary.late === true) return true;
+
+  return ['submitted', 'graded', 'complete'].includes(workflowState);
+}
+
+function isCompletedTask(item) {
+  if (!isTaskType(item)) return false;
+
+  if (item?.submission && typeof item.submission === 'object') {
+    return hasConcreteTaskSubmissionEvidence(item.submission);
+  }
+
+  if (item?.submitted === true) {
+    const submissionStatus = String(item?.submissionStatus || '').trim().toLowerCase();
+    return ['submitted', 'late', 'excused'].includes(submissionStatus);
+  }
+
+  return false;
+}
+
 function parseDueTs(item) {
   if (!item.dueAt) return 0;
   const ts = new Date(item.dueAt).getTime();
@@ -489,6 +523,7 @@ function bucketTasks(items, now, lookaheadDays = 7) {
   const today = [];
   const next7Days = [];
   const undated = [];
+  const completed = [];
 
   const startOfDay = new Date(now);
   startOfDay.setHours(0, 0, 0, 0);
@@ -504,6 +539,11 @@ function bucketTasks(items, now, lookaheadDays = 7) {
 
     // Skip tasks dismissed by the user
     if (state.dismissedTasks.includes(getCanonicalId(item))) continue;
+
+    if (isCompletedTask(item)) {
+      completed.push(item);
+      continue;
+    }
 
     const dueTs = parseDueTs(item);
     if (dueTs === 0) {
@@ -527,11 +567,18 @@ function bucketTasks(items, now, lookaheadDays = 7) {
   next7Days.sort(byDue);
   // Undated: alphabetical
   undated.sort((a, b) => (a.title || '').localeCompare(b.title || ''));
+  completed.sort((a, b) => {
+    const aTs = parseDueTs(a);
+    const bTs = parseDueTs(b);
+    if (aTs !== bTs) return bTs - aTs;
+    return (a.title || '').localeCompare(b.title || '');
+  });
 
-  return { overdue, today, next7Days, undated };
+  return { overdue, today, next7Days, undated, completed };
 }
 
 function formatDueLabel(item) {
+  if (isCompletedTask(item)) return 'Completed';
   const ts = parseDueTs(item);
   if (ts === 0) return 'No due date';
   const d = new Date(ts);
@@ -554,6 +601,7 @@ function formatDueLabel(item) {
 }
 
 function dueUrgencyClass(item) {
+  if (isCompletedTask(item)) return 'completed';
   const ts = parseDueTs(item);
   if (ts === 0) return 'undated';
   const now = Date.now();
@@ -570,7 +618,7 @@ function renderDuePlanner() {
   if (!planner || state.isOverlayMode) return;
 
   const buckets = bucketTasks(state.indexedContent, Date.now());
-  const total = buckets.overdue.length + buckets.today.length + buckets.next7Days.length + buckets.undated.length;
+  const total = buckets.overdue.length + buckets.today.length + buckets.next7Days.length + buckets.undated.length + buckets.completed.length;
 
   planner.innerHTML = '';
 
@@ -583,7 +631,8 @@ function renderDuePlanner() {
     { key: 'overdue', label: '⚠ Overdue', items: buckets.overdue, cls: 'overdue' },
     { key: 'today', label: '📅 Due Today', items: buckets.today, cls: 'today' },
     { key: 'next7Days', label: '📋 Next 7 Days', items: buckets.next7Days, cls: 'upcoming' },
-    { key: 'undated', label: '❓ No Due Date', items: buckets.undated, cls: 'undated' }
+    { key: 'undated', label: '❓ No Due Date', items: buckets.undated, cls: 'undated' },
+    { key: 'completed', label: '✓ Completed', items: buckets.completed, cls: 'completed' }
   ];
 
   for (const sec of sections) {
@@ -816,25 +865,235 @@ function buildSearchFields(item) {
   };
 }
 
-function getCourseHintSignals(normalizedQuery) {
-  const q = normalizeText(normalizedQuery || '');
-  const qTokens = q.split(/\s+/).filter(Boolean);
+function getSearchTokenVocabulary() {
+  const content = state.indexedContent || [];
+  if (state._searchVocabularyCache && state._searchVocabularyCacheVersion === content.length) {
+    return state._searchVocabularyCache;
+  }
+
+  const tokenFreq = new Map();
+  const addTokens = (text) => {
+    const tokens = normalizeText(text).split(/\s+/).filter(Boolean);
+    for (const token of tokens) {
+      if (token.length < 3) continue;
+      if (/^\d+$/.test(token)) continue;
+      tokenFreq.set(token, (tokenFreq.get(token) || 0) + 1);
+    }
+  };
+
+  for (const item of content) {
+    addTokens(item.searchTitleNormalized || expandAbbreviations(item.title || ''));
+    addTokens(item.searchCourseNormalized || expandAbbreviations(item.courseName || ''));
+    addTokens(item.searchAliases || '');
+    addTokens(item.folderPath || '');
+    addTokens(item.moduleName || '');
+  }
+
+  const byInitial = new Map();
+  for (const token of tokenFreq.keys()) {
+    const initial = token[0];
+    if (!byInitial.has(initial)) byInitial.set(initial, []);
+    byInitial.get(initial).push(token);
+  }
+
+  const cache = { tokenFreq, byInitial };
+  state._searchVocabularyCache = cache;
+  state._searchVocabularyCacheVersion = content.length;
+  return cache;
+}
+
+function commonPrefixLength(a, b) {
+  const left = String(a || '');
+  const right = String(b || '');
+  const limit = Math.min(left.length, right.length);
+  let idx = 0;
+  while (idx < limit && left[idx] === right[idx]) idx++;
+  return idx;
+}
+
+function getTypoDistanceLimit(token) {
+  const len = String(token || '').length;
+  if (len >= 10) return 3;
+  if (len >= 6) return 2;
+  if (len >= 4) return 1;
+  return 0;
+}
+
+function isBetterCorrectionCandidate(candidate, incumbent) {
+  if (!incumbent) return true;
+  if (candidate.dist !== incumbent.dist) return candidate.dist < incumbent.dist;
+  if (candidate.prefixLen !== incumbent.prefixLen) return candidate.prefixLen > incumbent.prefixLen;
+  if (candidate.freq !== incumbent.freq) return candidate.freq > incumbent.freq;
+  if (candidate.lengthDiff !== incumbent.lengthDiff) return candidate.lengthDiff < incumbent.lengthDiff;
+  return candidate.token < incumbent.token;
+}
+
+function findClosestIndexedToken(token) {
+  const normalizedToken = normalizeText(token);
+  if (!normalizedToken || STOP_TOKENS.has(normalizedToken) || /^\d+$/.test(normalizedToken)) return null;
+
+  const { tokenFreq, byInitial } = getSearchTokenVocabulary();
+  if (tokenFreq.has(normalizedToken)) return normalizedToken;
+
+  const maxDist = getTypoDistanceLimit(normalizedToken);
+  if (maxDist === 0) return null;
+
+  const candidates = byInitial.get(normalizedToken[0]) || [];
+  const suffix = normalizedToken.slice(-2);
+  let best = null;
+  let second = null;
+
+  for (const candidateToken of candidates) {
+    const lengthDiff = Math.abs(candidateToken.length - normalizedToken.length);
+    if (lengthDiff > maxDist) continue;
+
+    const prefixLen = commonPrefixLength(normalizedToken, candidateToken);
+    const suffixMatches = suffix.length === 2 && candidateToken.endsWith(suffix);
+    if (prefixLen < 2 && !suffixMatches) continue;
+
+    const dist = levenshteinDistance(normalizedToken, candidateToken);
+    if (dist === 0 || dist > maxDist) continue;
+
+    const candidate = {
+      token: candidateToken,
+      dist,
+      prefixLen,
+      freq: tokenFreq.get(candidateToken) || 0,
+      lengthDiff
+    };
+
+    if (isBetterCorrectionCandidate(candidate, best)) {
+      second = best;
+      best = candidate;
+    } else if (isBetterCorrectionCandidate(candidate, second)) {
+      second = candidate;
+    }
+  }
+
+  if (!best) return null;
+  if (best.dist >= 2 && best.prefixLen < 3) return null;
+  if (second && second.dist === best.dist && second.prefixLen === best.prefixLen && Math.abs(second.freq - best.freq) <= 1) {
+    return null;
+  }
+
+  return best.token;
+}
+
+function buildTypoTolerantQuery(normalizedQuery) {
+  const baseQuery = normalizeText(normalizedQuery || '');
+  const tokens = baseQuery.split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) {
+    return { correctedQuery: baseQuery, corrections: [] };
+  }
+
+  const corrections = [];
+  const correctedTokens = tokens.map(token => {
+    const corrected = findClosestIndexedToken(token);
+    if (corrected && corrected !== token) {
+      corrections.push({ from: token, to: corrected });
+      return corrected;
+    }
+    return token;
+  });
+
   return {
-    biology: qTokens.some(t => t === 'bio' || t === 'biol' || t === 'biology'),
-    chemistry: qTokens.some(t => t === 'chem' || t === 'chemistry'),
-    physics: qTokens.some(t => t === 'phys' || t === 'physics')
+    correctedQuery: correctedTokens.join(' ').trim(),
+    corrections
   };
 }
 
+/**
+ * Build a set of subject keywords found across all indexed course names.
+ * Cached on state._subjectKeywordsCache and invalidated when content changes.
+ *
+ * Returns a Map<keyword, Set<normalizedCourseName>> so we can look up which
+ * courses a keyword belongs to.
+ */
+function getSubjectKeywordIndex() {
+  const content = state.indexedContent || [];
+  if (state._subjectKeywordsCache && state._subjectKeywordsCacheVersion === content.length) {
+    return state._subjectKeywordsCache;
+  }
+
+  // Minimum token length to avoid matching noise like "a", "to", "of"
+  const MIN_TOKEN_LEN = 3;
+  // Common stop words that appear in course names but aren't subject identifiers
+  const STOP_WORDS = new Set([
+    'the', 'and', 'for', 'with', 'from', 'intro', 'introduction',
+    'topics', 'special', 'section', 'fall', 'winter', 'spring', 'summer',
+    'quarter', 'semester', 'online', 'lecture', 'discussion', 'lab', 'laboratory'
+  ]);
+
+  const index = new Map();
+  const seen = new Set();
+
+  for (const item of content) {
+    if (!item.courseName) continue;
+    const courseKey = normalizeText(item.courseName);
+    if (seen.has(courseKey)) continue;
+    seen.add(courseKey);
+
+    // Expand abbreviations so "phys" in a course name becomes "physics", etc.
+    const expanded = expandAbbreviations(item.courseName);
+    const tokens = expanded.split(/\s+/).filter(Boolean);
+
+    for (const token of tokens) {
+      if (token.length < MIN_TOKEN_LEN) continue;
+      if (STOP_WORDS.has(token)) continue;
+      // Skip pure numbers (course numbers like "101")
+      if (/^\d+$/.test(token)) continue;
+
+      if (!index.has(token)) {
+        index.set(token, new Set());
+      }
+      index.get(token).add(courseKey);
+    }
+  }
+
+  state._subjectKeywordsCache = index;
+  state._subjectKeywordsCacheVersion = content.length;
+  return index;
+}
+
+/**
+ * Detect course hint signals from query tokens by matching against actual
+ * course names in the user's data. Returns an object with:
+ *   matchedCourseKeys: Set<normalizedCourseName> — courses that matched
+ *   hasHint: boolean — whether any course hint was detected
+ */
+function getCourseHintSignals(normalizedQuery) {
+  const q = normalizeText(normalizedQuery || '');
+  const qTokens = q.split(/\s+/).filter(Boolean);
+  if (qTokens.length === 0) return { matchedCourseKeys: new Set(), hasHint: false };
+
+  const subjectIndex = getSubjectKeywordIndex();
+  const matchedCourseKeys = new Set();
+
+  for (const token of qTokens) {
+    // Also try the expanded form (e.g., user types "bio" → check "biology")
+    const expanded = expandAbbreviations(token);
+    const variants = expanded !== token ? [token, ...expanded.split(/\s+/)] : [token];
+
+    for (const variant of variants) {
+      const courses = subjectIndex.get(variant);
+      if (courses && courses.size > 0) {
+        // Only count as a hint if the keyword isn't in every single course
+        // (otherwise it's a generic word, not a subject differentiator)
+        if (courses.size < (state._subjectKeywordsCacheVersion || Infinity) * 0.5) {
+          for (const c of courses) matchedCourseKeys.add(c);
+        }
+      }
+    }
+  }
+
+  return { matchedCourseKeys, hasHint: matchedCourseKeys.size > 0 };
+}
+
 function itemMatchesCourseHints(item, hintSignals) {
-  const itemCourse = (item?.searchCourseNormalized || expandAbbreviations(item?.courseName || '')).toLowerCase();
+  if (!hintSignals.hasHint) return false;
+  const itemCourse = normalizeText(item?.courseName || '');
   if (!itemCourse) return false;
-
-  if (hintSignals.biology && itemCourse.includes('biology')) return true;
-  if (hintSignals.chemistry && itemCourse.includes('chemistry')) return true;
-  if (hintSignals.physics && itemCourse.includes('physics')) return true;
-
-  return false;
+  return hintSignals.matchedCourseKeys.has(itemCourse);
 }
 
 function itemMatchesCourseScope(item, courseScope) {
@@ -874,8 +1133,15 @@ function extractLabSequenceNumbers(item) {
   const texts = [item?.title, item?.folderPath, item?.moduleName];
   const direct = new Set();
 
+  // Boundary character class: characters that act as word boundaries in titles.
+  // Includes colon so "Lab 1: Airbags" works, and common delimiters.
+  const B = '[\\s_|/.:;,#=-]';
+
   const directPatterns = [
-    () => /(?:^|[\s_|/.-])(?:[a-z0-9]{0,8})?(?:pre[\s-]*lab|prelab|lab(?:oratory)?)\s*#?\s*0*(\d{1,3})(?=$|[\s_|/.-])/ig
+    // "Lab 5", "prelab5", "1BLprelab5", "Lab #05", "Lab 1: Airbags", "laboratory 3", etc.
+    () => new RegExp(`(?:^|${B})(?:[a-z0-9]{0,8})?(?:pre[\\s-]*lab|prelab|lab(?:oratory)?)\\s*#?\\s*0*(\\d{1,3})(?=$|${B})`, 'ig'),
+    // Reverse: "5 Lab", "#5 lab" — number before the lab keyword
+    () => new RegExp(`(?:^|${B})#?0*(\\d{1,3})\\s*(?:pre[\\s-]*lab|prelab|lab(?:oratory)?)(?=$|${B})`, 'ig')
   ];
 
   for (const text of texts) {
@@ -888,13 +1154,38 @@ function extractLabSequenceNumbers(item) {
     return Array.from(direct);
   }
 
-  const fallback = new Set();
+  // Fallback 1: "week N" pattern (e.g., "Week 5 Pre-Lab Questions")
+  const weekFallback = new Set();
   for (const text of texts) {
-    for (const n of collectPatternNumbers(text, () => /(?:^|[\s_|/.-])week\s*#?\s*0*(\d{1,3})(?=$|[\s_|/.-])/ig)) {
-      fallback.add(n);
+    for (const n of collectPatternNumbers(text, () => new RegExp(`(?:^|${B})week\\s*#?\\s*0*(\\d{1,3})(?=$|${B})`, 'ig'))) {
+      weekFallback.add(n);
     }
   }
-  return Array.from(fallback);
+  if (weekFallback.size > 0) return Array.from(weekFallback);
+
+  // Fallback 2: If the item is a lab-context item (confirmed by caller) but
+  // the number is detached from the lab keyword, extract any standalone number
+  // from the TITLE ONLY (not module/folder which can contain noisy numbers).
+  // Only use this if the title contains exactly one distinct number to avoid
+  // ambiguity (e.g., "Experiment 5 Report" in a lab course).
+  // Skip numbers that look like times (e.g., "7-9pm", "7:30") or dates.
+  if (isLabContextItem(item)) {
+    const titleOnly = item?.title || '';
+    if (titleOnly) {
+      // Strip time-like patterns (e.g., "7-9pm", "7:30am", "12:00") before extracting
+      const cleaned = titleOnly.replace(/\d{1,2}[\s]*[-–:]\s*\d{1,2}\s*(?:am|pm|AM|PM)?/g, '')
+                                .replace(/\d{1,2}\s*(?:am|pm|AM|PM)/g, '');
+      const standaloneNumbers = new Set();
+      for (const n of collectPatternNumbers(cleaned, () => new RegExp(`(?:^|${B})#?0*(\\d{1,3})(?=$|${B})`, 'ig'))) {
+        standaloneNumbers.add(n);
+      }
+      if (standaloneNumbers.size === 1) {
+        return Array.from(standaloneNumbers);
+      }
+    }
+  }
+
+  return [];
 }
 
 function expandTemporalLabSiblings(results, normalizedQuery, courseScope) {
@@ -902,8 +1193,7 @@ function expandTemporalLabSiblings(results, normalizedQuery, courseScope) {
   if (!isLabLikeQuery(normalizedQuery)) return results;
 
   const hintSignals = getCourseHintSignals(normalizedQuery);
-  const hasCourseHint = Object.values(hintSignals).some(Boolean);
-  if (!courseScope && !hasCourseHint) return results;
+  if (!courseScope && !hintSignals.hasHint) return results;
 
   const anchorCourseNumbers = new Map();
   for (const result of results) {
@@ -1046,36 +1336,17 @@ function detectCourseScope(query) {
 
 function getQueryCourseHintBoost(item, normalizedQuery) {
   const hintSignals = getCourseHintSignals(normalizedQuery);
-  const itemCourse = (item?.searchCourseNormalized || expandAbbreviations(item?.courseName || '')).toLowerCase();
+  if (!hintSignals.hasHint) return 0;
+
+  const itemCourse = normalizeText(item?.courseName || '');
   if (!itemCourse) return 0;
 
-  let boost = 0;
-
-  if (hintSignals.biology) {
-    if (itemCourse.includes('biology')) {
-      boost += 0.55;
-    } else {
-      boost -= 0.22;
-    }
+  if (hintSignals.matchedCourseKeys.has(itemCourse)) {
+    return 0.50;
   }
 
-  if (hintSignals.chemistry) {
-    if (itemCourse.includes('chemistry')) {
-      boost += 0.45;
-    } else {
-      boost -= 0.18;
-    }
-  }
-
-  if (hintSignals.physics) {
-    if (itemCourse.includes('physics')) {
-      boost += 0.50;
-    } else {
-      boost -= 0.18;
-    }
-  }
-
-  return boost;
+  // Penalty for items not in any hinted course
+  return -0.18;
 }
 
 // ============================================
@@ -2591,15 +2862,32 @@ function performSearch(query) {
     }
   }
 
+  const typoTolerantQuery = buildTypoTolerantQuery(normalizedQuery);
+  const rankingQuery = typoTolerantQuery.corrections.length ? typoTolerantQuery.correctedQuery : normalizedQuery;
+  const rawEffectiveQuery = normalizeText(effectiveQuery).toLowerCase();
+  const searchQueries = Array.from(new Set([
+    rankingQuery.toLowerCase(),
+    normalizedQuery.toLowerCase(),
+    rawEffectiveQuery
+  ].filter(Boolean)));
+  if (typoTolerantQuery.corrections.length > 0) {
+    const correctionSummary = typoTolerantQuery.corrections.map(c => `${c.from}->${c.to}`).join(', ');
+    console.log(`[Canvascope] Typo-tolerant query rewrite: "${normalizedQuery}" => "${rankingQuery}" (${correctionSummary})`);
+  }
+
   // Derive search metadata once
-  const intent = detectQueryIntent(normalizedQuery);
-  const queryNums = extractNumericTokens(normalizedQuery);
+  const intent = detectQueryIntent(rankingQuery);
+  const queryNums = extractNumericTokens(rankingQuery);
+  const courseHintSignals = courseScope ? null : getCourseHintSignals(rankingQuery);
 
   // Temporal-first retrieval: when query has a time intent, scope the corpus
   // before lexical ranking so relevant due items are never dropped by early truncation.
-  const searchCorpus = temporalIntent.kind
+  const temporalCorpus = temporalIntent.kind
     ? filterItemsByTemporalWindow(state.filteredContent, temporalIntent.kind)
     : state.filteredContent;
+  const searchCorpus = courseScope
+    ? temporalCorpus.filter(item => itemMatchesCourseScope(item, courseScope))
+    : temporalCorpus;
 
   if (searchCorpus.length === 0) {
     showNoResults(`No results for "${query}"`);
@@ -2613,10 +2901,6 @@ function performSearch(query) {
   const searchStart = performance.now();
 
   // ── Exact/prefix pre-pass ──────────────────────────
-  const normQ = normalizedQuery.toLowerCase();
-  const rawQ = normalizeText(effectiveQuery).toLowerCase();
-  const queryVariants = normQ === rawQ ? [normQ] : [normQ, rawQ];
-
   const prePassHits = [];
   const prePassUrls = new Set();
 
@@ -2625,8 +2909,8 @@ function performSearch(query) {
 
     let bestBaseScore = null;
 
-    // Check against both expanded and raw query versions
-    for (const q of queryVariants) {
+    // Check against the corrected, expanded, and raw query variants.
+    for (const q of searchQueries) {
       if (!q) continue;
 
       const escapedQ = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -2655,26 +2939,24 @@ function performSearch(query) {
   }
 
   // ── Fuse pass A: strict ────────────────────────────
-  let fuseResults = activeFuse.search(normalizedQuery, { limit: MAX_RESULTS * 3 });
-
-  // Also search with effective query and merge unique results
-  if (normalizedQuery !== normalizeText(effectiveQuery)) {
-    const origResults = activeFuse.search(effectiveQuery, { limit: MAX_RESULTS * 3 });
-    const seenUrls = new Set(fuseResults.map(r => r.item.url));
-    for (const r of origResults) {
-      if (!seenUrls.has(r.item.url)) {
-        fuseResults.push(r);
-        seenUrls.add(r.item.url);
+  let fuseResults = [];
+  const seenFuseUrls = new Set();
+  const appendFuseResults = (fuseInstance) => {
+    for (const q of searchQueries) {
+      const nextResults = fuseInstance.search(q, { limit: MAX_RESULTS * 3 });
+      for (const r of nextResults) {
+        if (!seenFuseUrls.has(r.item.url)) {
+          fuseResults.push(r);
+          seenFuseUrls.add(r.item.url);
+        }
       }
     }
-  }
+  };
+  appendFuseResults(activeFuse);
 
   // ── Fuse pass B: relaxed fallback ──────────────────
   if (fuseResults.length === 0 && activeFuseRelaxed) {
-    fuseResults = activeFuseRelaxed.search(normalizedQuery, { limit: MAX_RESULTS * 3 });
-    if (fuseResults.length === 0) {
-      fuseResults = activeFuseRelaxed.search(effectiveQuery, { limit: MAX_RESULTS * 3 });
-    }
+    appendFuseResults(activeFuseRelaxed);
   }
 
   // ── Merge pre-pass + Fuse (dedup by URL) ───────────
@@ -2690,11 +2972,16 @@ function performSearch(query) {
   // helps with hard token boundaries.
   const lexicalResults = [];
   const lexScores = new Map();
-  const qTokens = normalizedQuery.toLowerCase().split(/\s+/).filter(t => t.length > 0 && (t.length > 1 || !STOP_TOKENS.has(t)));
+  const qTokens = rankingQuery.toLowerCase().split(/\s+/).filter(t => t.length > 0 && (t.length > 1 || !STOP_TOKENS.has(t)));
   if (qTokens.length > 0) {
     for (const item of searchCorpus) {
       if (prePassUrls.has(item.url)) continue;
-      const searchableText = `${item.searchTitleNormalized} ${item.folderPath || ''} ${item.moduleName || ''}`.toLowerCase();
+      const searchableText = [
+        item.searchTitleNormalized || normalizeText(item.title || ''),
+        item.searchCourseNormalized || normalizeText(item.courseName || ''),
+        normalizeText(item.folderPath || ''),
+        normalizeText(item.moduleName || '')
+      ].join(' ').toLowerCase();
       let matchedTokens = 0;
       for (const t of qTokens) {
         if (t.length === 1) {
@@ -2725,6 +3012,17 @@ function performSearch(query) {
       rrfScores.set(r.item.url, (rrfScores.get(r.item.url) || 0) + (1 / (RRF_K + i + 1)));
     });
 
+    const shouldInjectLexicalRecall = qTokens.length >= 3 || qTokens.some(t => !BROAD_QUERY_TOKENS.has(t));
+    if (shouldInjectLexicalRecall) {
+      const seenResultUrls = new Set(results.map(r => r.item.url));
+      for (const r of lexicalResults) {
+        if (!seenResultUrls.has(r.item.url)) {
+          results.push(r);
+          seenResultUrls.add(r.item.url);
+        }
+      }
+    }
+
     // Re-assign unified scores to the mapped fuse results before they enter standard ranker
     for (const r of results) {
       if (r.prePass) continue; // let exact prefix match sail through
@@ -2744,7 +3042,7 @@ function performSearch(query) {
 
     // Secondary recall: scan target course items for query token matches
     // in title + folderPath + moduleName (catches folder-name matches)
-    const qTokens = normalizedQuery.toLowerCase().split(/\s+/).filter(t => t.length > 0 && (t.length > 1 || !STOP_TOKENS.has(t)));
+    const qTokens = rankingQuery.toLowerCase().split(/\s+/).filter(t => t.length > 0 && (t.length > 1 || !STOP_TOKENS.has(t)));
     if (qTokens.length > 0) {
       for (const item of searchCorpus) {
         if (seenUrls.has(item.url)) continue;
@@ -2785,12 +3083,19 @@ function performSearch(query) {
     }
   }
 
+  if (!courseScope && courseHintSignals?.hasHint) {
+    const hintedResults = results.filter(r => itemMatchesCourseHints(r.item, courseHintSignals));
+    if (hintedResults.length > 0) {
+      results = hintedResults;
+    }
+  }
+
   if (temporalIntent.kind) {
     let temporalResults = applyTemporalFilter(results, temporalIntent.kind);
 
     // Ensure broad temporal queries (e.g. "lab this week") don't lose relevant items
     // due to retrieval/ranking truncation.
-    const broadTokens = (normalizedQuery || '').split(/\s+/).filter(t => t.length > 0 && !STOP_TOKENS.has(t));
+    const broadTokens = (rankingQuery || '').split(/\s+/).filter(t => t.length > 0 && !STOP_TOKENS.has(t));
     if (broadTokens.length <= 1) {
       const recallSeed = [];
       for (const item of searchCorpus) {
@@ -2817,11 +3122,20 @@ function performSearch(query) {
     // If user queried only a time phrase (e.g., "this week"), search pipeline may
     // have little/no lexical signal. Fall back to all indexed items, then filter by time.
     if (temporalResults.length === 0 && (!normalizedQuery || normalizedQuery.length === 0)) {
-      const temporalSeed = state.filteredContent.map(item => ({ item, score: 0.5, prePass: false }));
+      const temporalSeed = searchCorpus.map(item => ({ item, score: 0.5, prePass: false }));
       temporalResults = applyTemporalFilter(temporalSeed, temporalIntent.kind);
     }
 
-    temporalResults = expandTemporalLabSiblings(temporalResults, normalizedQuery, courseScope);
+    temporalResults = expandTemporalLabSiblings(temporalResults, rankingQuery, courseScope);
+
+    if (courseScope) {
+      temporalResults = temporalResults.filter(r => itemMatchesCourseScope(r.item, courseScope));
+    } else if (courseHintSignals?.hasHint) {
+      const hintedTemporalResults = temporalResults.filter(r => itemMatchesCourseHints(r.item, courseHintSignals));
+      if (hintedTemporalResults.length > 0) {
+        temporalResults = hintedTemporalResults;
+      }
+    }
 
     results = temporalResults;
   }
@@ -2840,7 +3154,7 @@ function performSearch(query) {
   }
 
   // Apply full ranking pipeline (intent, numeric, coverage, click, due, diversity)
-  results = rankResults(results, normalizedQuery, intent, queryNums);
+  results = rankResults(results, rankingQuery, intent, queryNums);
 
   // Hard ordering rule for temporal queries: upcoming/future items before overdue.
   if (temporalIntent.kind) {
@@ -2855,6 +3169,10 @@ function performSearch(query) {
     }
 
     withDue.sort((a, b) => {
+      const aCompleted = isCompletedTask(a.r.item);
+      const bCompleted = isCompletedTask(b.r.item);
+      if (aCompleted !== bCompleted) return aCompleted ? 1 : -1;
+
       const aFuture = a.dueTs >= nowTs;
       const bFuture = b.dueTs >= nowTs;
 
@@ -2874,7 +3192,7 @@ function performSearch(query) {
   // prefer the most recent assignment-like item first.
   // BUT: skip if the top result is an exact/prefix match (pre-pass hit)
   // so that exact matches like "PreLab E" don't get overridden by "PreLab F".
-  const generalTokens = (normalizedQuery || '').split(/\s+/).filter(t => t.length > 0 && !STOP_TOKENS.has(t));
+  const generalTokens = (rankingQuery || '').split(/\s+/).filter(t => t.length > 0 && !STOP_TOKENS.has(t));
   const isGeneralQuery = !temporalIntent.kind && queryNums.length === 0 && generalTokens.length <= 3;
   const topIsExactMatch = results.length > 0 && results[0].prePass;
 
@@ -2893,8 +3211,14 @@ function performSearch(query) {
       }
     }
 
-    // Most recent due date first (newest assignment-like item at top)
-    recencyCandidates.sort((a, b) => b.dueTs - a.dueTs);
+    // Most recent due date first (newest assignment-like item at top),
+    // but keep completed items behind unfinished work.
+    recencyCandidates.sort((a, b) => {
+      const aCompleted = isCompletedTask(a.r.item);
+      const bCompleted = isCompletedTask(b.r.item);
+      if (aCompleted !== bCompleted) return aCompleted ? 1 : -1;
+      return b.dueTs - a.dueTs;
+    });
     results = [...recencyCandidates.map(x => x.r), ...otherResults];
   }
 
@@ -3032,6 +3356,11 @@ function calculateScore(item, fuseScore, normalizedQuery, intent, queryNums, isP
   // ── Dismissed Tasks penalty ─────────────────────
   if (state.dismissedTasks && state.dismissedTasks.includes(item.url)) {
     score -= 0.4;
+  }
+
+  // ── Completed-task penalty ──────────────────────
+  if (isCompletedTask(item)) {
+    score -= 0.9;
   }
 
   // ── Due-date-aware freshness (future > overdue) ────────────────────
@@ -3551,6 +3880,38 @@ async function loadContent() {
   }
 }
 
+function clonePopupSubmissionSummary(summary) {
+  if (!summary || typeof summary !== 'object') return null;
+  return {
+    workflowState: summary.workflowState ?? null,
+    submittedAt: summary.submittedAt ?? null,
+    attempt: summary.attempt ?? null,
+    late: summary.late ?? null,
+    missing: summary.missing ?? null,
+    excused: summary.excused ?? null,
+    grade: summary.grade ?? null,
+    score: summary.score ?? null,
+    submissionType: summary.submissionType ?? null,
+    hasSubmittedSubmissions: summary.hasSubmittedSubmissions ?? null,
+    gradeMatchesCurrentSubmission: summary.gradeMatchesCurrentSubmission ?? null
+  };
+}
+
+function mergePopupSubmissionState(winner, loser) {
+  if (!winner || !loser) return;
+
+  for (const field of ['assignmentId', 'submitted', 'submissionStatus']) {
+    if ((winner[field] === undefined || winner[field] === null || winner[field] === '')
+      && loser[field] !== undefined && loser[field] !== null && loser[field] !== '') {
+      winner[field] = loser[field];
+    }
+  }
+
+  if (!winner.submission && loser.submission) {
+    winner.submission = clonePopupSubmissionSummary(loser.submission);
+  }
+}
+
 /**
  * Derive a stable canonical identity key for a content item.
  * Prefers URL-based identity (origin + pathname).
@@ -3634,6 +3995,7 @@ function deduplicateContent(content) {
       if (!winner.dueAt && loser.dueAt) winner.dueAt = loser.dueAt;
       if (!winner.unlockAt && loser.unlockAt) winner.unlockAt = loser.unlockAt;
       if (!winner.lockAt && loser.lockAt) winner.lockAt = loser.lockAt;
+      mergePopupSubmissionState(winner, loser);
     }
   }
 
@@ -3667,6 +4029,7 @@ function deduplicateCrossType(content) {
       if (!winner.dueAt && loser.dueAt) winner.dueAt = loser.dueAt;
       if (!winner.unlockAt && loser.unlockAt) winner.unlockAt = loser.unlockAt;
       if (!winner.lockAt && loser.lockAt) winner.lockAt = loser.lockAt;
+      mergePopupSubmissionState(winner, loser);
     }
   }
 
