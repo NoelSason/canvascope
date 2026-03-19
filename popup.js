@@ -1425,6 +1425,7 @@ const elements = {};
 // ============================================
 
 const MAX_RECENTS = 5;
+const PDF_VIEWER_DEBUG = true;
 const DEFAULT_EXTENSION_SETTINGS = Object.freeze({
   enableSendToLectra: false,
   selectedCourseFilters: [],
@@ -1523,6 +1524,73 @@ async function updateExtensionSettings(patch) {
   syncCourseFiltersFromSettings();
   applyExtensionSettingsUi();
   return nextSettings;
+}
+
+function getAllowedFileSchemeAccess() {
+  return new Promise((resolve) => {
+    chrome.extension.isAllowedFileSchemeAccess((allowed) => {
+      resolve(Boolean(allowed));
+    });
+  });
+}
+
+async function syncPdfViewerOverlayRegistration(reason = 'popup') {
+  try {
+    return await chrome.runtime.sendMessage({
+      action: 'syncPdfViewerOverlayRegistration',
+      reason
+    });
+  } catch (error) {
+    console.warn('[Canvascope] Failed to sync PDF viewer overlay registration:', error);
+    return {
+      success: false,
+      enabled: false,
+      matches: [],
+      reason: error?.message || 'sync_failed'
+    };
+  }
+}
+
+async function runPdfViewerDebugProbe(reason = 'popup') {
+  if (!PDF_VIEWER_DEBUG) return null;
+
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    const url = String(tab?.url || '');
+    const looksPdf = url.startsWith('file:')
+      || url.toLowerCase().includes('.pdf')
+      || url.toLowerCase().includes('/pdf/');
+
+    if (!looksPdf) {
+      return null;
+    }
+
+    const response = await chrome.runtime.sendMessage({
+      action: 'debugPdfViewerOverlayActiveTab',
+      reason
+    });
+    console.log('[Canvascope PDF Viewer][Popup] Active-tab diagnostics', response);
+    return response;
+  } catch (error) {
+    console.warn('[Canvascope PDF Viewer][Popup] Debug probe failed', error);
+    return null;
+  }
+}
+
+async function getPdfFallbackDisabledTitle() {
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (String(tab?.url || '').startsWith('file:')) {
+      const fileAccessAllowed = await getAllowedFileSchemeAccess();
+      if (!fileAccessAllowed) {
+        return 'Enable "Allow access to file URLs" in Manage Extension to send local PDFs.';
+      }
+    }
+  } catch (error) {
+    console.warn('[Canvascope] Could not inspect active tab for PDF fallback hint:', error);
+  }
+
+  return 'Open a PDF tab to send.';
 }
 
 async function updateCustomAlgorithmSettings(patch) {
@@ -1988,8 +2056,31 @@ function setupEventListeners() {
       toggle.disabled = true;
 
       try {
+        let fileAccessAllowed = false;
+
+        if (enabled) {
+          fileAccessAllowed = await getAllowedFileSchemeAccess();
+        }
+
         await updateExtensionSettings({ enableSendToLectra: enabled });
+        const syncResult = await syncPdfViewerOverlayRegistration(enabled ? 'popup-send-to-lectra-enabled' : 'popup-send-to-lectra-disabled');
         await refreshPdfFallbackAvailability();
+
+        if (enabled) {
+          if (syncResult?.enabled) {
+            showSyncedStatus(
+              fileAccessAllowed
+                ? 'Website PDF viewer button enabled'
+                : 'Website PDF button enabled. Local PDFs still need file URL access.'
+            );
+          } else {
+            showErrorStatus(
+              fileAccessAllowed
+                ? 'PDF viewer overlay failed to register.'
+                : 'PDF viewer overlay failed to register. Local PDFs also need file URL access.'
+            );
+          }
+        }
       } catch (error) {
         console.error('[Canvascope] Failed to update settings:', error);
         applyExtensionSettingsUi();
@@ -2519,13 +2610,15 @@ async function refreshPdfFallbackAvailability() {
       elements.sendPdfBtn.title = '';
     } else {
       resetSendPdfButtonState();
-      elements.sendPdfBtn.title = 'Open a PDF tab to send.';
+      elements.sendPdfBtn.title = await getPdfFallbackDisabledTitle();
+      await runPdfViewerDebugProbe('refresh-pdf-fallback-no-context');
     }
   } catch (e) {
     state.activePdfContext = null;
     elements.sendPdfBtn.classList.remove('hidden');
     resetSendPdfButtonState();
-    elements.sendPdfBtn.title = 'Open a PDF tab to send.';
+    elements.sendPdfBtn.title = await getPdfFallbackDisabledTitle();
+    await runPdfViewerDebugProbe('refresh-pdf-fallback-error');
   }
 }
 

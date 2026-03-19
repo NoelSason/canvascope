@@ -97,6 +97,16 @@ const DEFAULT_EXTENSION_SETTINGS = Object.freeze({
     enableSendToLectra: false,
     selectedCourseFilters: []
 });
+const PDF_VIEWER_OVERLAY_CONTENT_SCRIPT_ID = 'canvascopePdfViewerOverlay';
+const PDF_VIEWER_OVERLAY_WEBSITE_ORIGINS = ['https://*/*', 'http://*/*'];
+const PDF_VIEWER_OVERLAY_FILE_MATCH = 'file:///*';
+const PDF_VIEWER_DEBUG = true;
+const STATIC_LMS_CONTENT_SCRIPT_MATCHES = (() => {
+    const manifestContentScripts = chrome.runtime.getManifest()?.content_scripts || [];
+    return manifestContentScripts
+        .filter((entry) => Array.isArray(entry?.js) && entry.js.includes('content.js'))
+        .flatMap((entry) => Array.isArray(entry?.matches) ? entry.matches : []);
+})();
 
 let dropBridgeV2PollInFlight = false;
 let dropBridgeV2QueuedPollReason = null;
@@ -120,6 +130,51 @@ function normalizeExtensionSettings(rawSettings) {
 async function getExtensionSettings() {
     const stored = await chrome.storage.local.get(['settings']);
     return normalizeExtensionSettings(stored.settings);
+}
+
+function permissionsContains(permissions) {
+    return new Promise((resolve) => {
+        chrome.permissions.contains(permissions, (granted) => {
+            resolve(Boolean(granted));
+        });
+    });
+}
+
+function permissionsGetAll() {
+    return new Promise((resolve) => {
+        chrome.permissions.getAll((granted) => {
+            resolve(granted || {});
+        });
+    });
+}
+
+function getAllowedFileSchemeAccess() {
+    return new Promise((resolve) => {
+        chrome.extension.isAllowedFileSchemeAccess((isAllowed) => {
+            resolve(Boolean(isAllowed));
+        });
+    });
+}
+
+async function getGrantedPdfViewerOverlayWebsiteOrigins() {
+    return [...PDF_VIEWER_OVERLAY_WEBSITE_ORIGINS];
+}
+
+function isStaticallySupportedLmsHost(hostname) {
+    const host = String(hostname || '').toLowerCase();
+    if (!host) return false;
+    return isCanvasHost(host) || isBrightspaceHost(host);
+}
+
+function isTabUrlEligibleForPdfViewerOverlay(rawUrl) {
+    try {
+        const parsed = new URL(rawUrl);
+        if (parsed.protocol === 'file:') return true;
+        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
+        return !isStaticallySupportedLmsHost(parsed.hostname);
+    } catch {
+        return false;
+    }
 }
 
 function isUuid(value) {
@@ -188,6 +243,16 @@ function parseErrorMessage(error) {
     if (typeof error === 'string') return error;
     if (typeof error.message === 'string' && error.message) return error.message;
     return String(error);
+}
+
+function pdfViewerDebug(message, details = undefined) {
+    if (!PDF_VIEWER_DEBUG) return;
+    const prefix = '[Canvascope PDF Viewer][BG]';
+    if (details === undefined) {
+        console.log(prefix, message);
+        return;
+    }
+    console.log(prefix, message, details);
 }
 
 function summarizeDownloadUrl(downloadUrl) {
@@ -1306,6 +1371,365 @@ const PDF_CONFIDENCE_RANK = {
 // Dynamically detected LMS domains (stored in chrome.storage)
 let customDomains = [];
 
+async function getPdfViewerOverlayRegistrationMatches() {
+    const matches = [...PDF_VIEWER_OVERLAY_WEBSITE_ORIGINS];
+    pdfViewerDebug('Website overlay origins enabled', matches);
+
+    const fileAccessAllowed = await getAllowedFileSchemeAccess();
+    pdfViewerDebug('File scheme access allowed', fileAccessAllowed);
+    if (fileAccessAllowed) {
+        matches.push(PDF_VIEWER_OVERLAY_FILE_MATCH);
+    }
+
+    pdfViewerDebug('Computed overlay registration matches', matches);
+    return matches;
+}
+
+async function unregisterPdfViewerOverlayContentScript() {
+    try {
+        await chrome.scripting.unregisterContentScripts({
+            ids: [PDF_VIEWER_OVERLAY_CONTENT_SCRIPT_ID]
+        });
+        pdfViewerDebug('Unregistered overlay content script');
+    } catch (error) {
+        const message = parseErrorMessage(error);
+        if (!/nonexistent|unknown|not found/i.test(message)) {
+            console.warn('[Canvascope PDF Viewer] Failed to unregister overlay content script:', message);
+        }
+    }
+}
+
+async function injectPdfViewerOverlayIntoOpenTabs(reason = 'manual', matches = []) {
+    const allowFile = matches.includes(PDF_VIEWER_OVERLAY_FILE_MATCH);
+    const tabs = await chrome.tabs.query({});
+    pdfViewerDebug('Attempting open-tab overlay injection pass', {
+        reason,
+        matches,
+        tabCount: tabs.length
+    });
+    const injections = tabs
+        .map(async (tab) => {
+            try {
+                if (!Number.isFinite(tab?.id) || !isTabUrlEligibleForPdfViewerOverlay(tab?.url)) {
+                    pdfViewerDebug('Skipping tab during injection eligibility check', {
+                        tabId: tab?.id || null,
+                        url: tab?.url || null,
+                        eligible: false
+                    });
+                    return;
+                }
+
+                const protocol = new URL(tab.url).protocol;
+                if (protocol === 'file:' && !allowFile) {
+                    pdfViewerDebug('Skipping file tab due to missing file access', {
+                        tabId: tab.id,
+                        url: tab.url
+                    });
+                    return;
+                }
+
+                pdfViewerDebug('Injecting overlay content script into tab', {
+                    tabId: tab.id,
+                    url: tab.url,
+                    reason
+                });
+                await chrome.scripting.executeScript({
+                    target: { tabId: tab.id },
+                    files: ['pdf-viewer-content.js']
+                });
+                pdfViewerDebug('Overlay injection succeeded', {
+                    tabId: tab.id,
+                    url: tab.url
+                });
+            } catch (error) {
+                const message = parseErrorMessage(error);
+                pdfViewerDebug('Overlay injection threw', {
+                    tabId: tab?.id || null,
+                    url: tab?.url || null,
+                    error: message
+                });
+                if (!/cannot access|missing host permission|cannot be scripted|frame with id 0 was removed/i.test(message.toLowerCase())) {
+                    console.warn('[Canvascope PDF Viewer] Failed to inject overlay into tab', {
+                        reason,
+                        tabId: tab.id,
+                        error: message
+                    });
+                }
+            }
+        });
+
+    await Promise.all(injections);
+}
+
+async function syncPdfViewerOverlayRegistration(reason = 'manual') {
+    const settings = await getExtensionSettings();
+    pdfViewerDebug('syncPdfViewerOverlayRegistration start', {
+        reason,
+        enableSendToLectra: settings.enableSendToLectra
+    });
+    if (!settings.enableSendToLectra) {
+        await unregisterPdfViewerOverlayContentScript();
+        pdfViewerDebug('syncPdfViewerOverlayRegistration end: feature disabled');
+        return {
+            success: true,
+            enabled: false,
+            matches: [],
+            reason: 'feature_disabled'
+        };
+    }
+
+    const matches = await getPdfViewerOverlayRegistrationMatches();
+    if (matches.length === 0) {
+        await unregisterPdfViewerOverlayContentScript();
+        pdfViewerDebug('syncPdfViewerOverlayRegistration end: no registration matches');
+        return {
+            success: true,
+            enabled: false,
+            matches: [],
+            reason: 'no_registration_matches'
+        };
+    }
+
+    await unregisterPdfViewerOverlayContentScript();
+    await chrome.scripting.registerContentScripts([{
+        id: PDF_VIEWER_OVERLAY_CONTENT_SCRIPT_ID,
+        js: ['pdf-viewer-content.js'],
+        matches,
+        excludeMatches: STATIC_LMS_CONTENT_SCRIPT_MATCHES,
+        runAt: 'document_idle',
+        persistAcrossSessions: true
+    }]);
+    pdfViewerDebug('Registered overlay content script', {
+        matches,
+        excludeMatches: STATIC_LMS_CONTENT_SCRIPT_MATCHES
+    });
+    await injectPdfViewerOverlayIntoOpenTabs(reason, matches);
+    pdfViewerDebug('syncPdfViewerOverlayRegistration end: enabled', {
+        matches,
+        reason
+    });
+
+    return {
+        success: true,
+        enabled: true,
+        matches,
+        reason
+    };
+}
+
+function supportsPdfViewerHostAccessRequests() {
+    return typeof chrome.permissions?.addHostAccessRequest === 'function'
+        && typeof chrome.permissions?.removeHostAccessRequest === 'function';
+}
+
+function resolvePdfViewerHostAccessUrl(rawUrl) {
+    return parsePdfViewerSrcFromTabUrl(rawUrl) || rawUrl || '';
+}
+
+function buildPdfViewerHostAccessPattern(rawUrl) {
+    try {
+        const parsed = new URL(resolvePdfViewerHostAccessUrl(rawUrl));
+        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+            return null;
+        }
+        return `${parsed.origin}/*`;
+    } catch {
+        return null;
+    }
+}
+
+async function hasPdfViewerOriginAccess(rawUrl) {
+    const pattern = buildPdfViewerHostAccessPattern(rawUrl);
+    if (!pattern) return false;
+    const hasAccess = await permissionsContains({ origins: [pattern] });
+    pdfViewerDebug('Origin access check', {
+        url: rawUrl,
+        pattern,
+        hasAccess
+    });
+    return hasAccess;
+}
+
+function isLikelyPdfViewerCandidateUrl(rawUrl) {
+    const targetUrl = resolvePdfViewerHostAccessUrl(rawUrl);
+    return Boolean(parsePdfViewerSrcFromTabUrl(rawUrl) || isLikelyPdfHint(targetUrl));
+}
+
+async function clearPdfViewerHostAccessRequest(tabId) {
+    if (!supportsPdfViewerHostAccessRequests() || !Number.isFinite(tabId)) return;
+    try {
+        await chrome.permissions.removeHostAccessRequest({ tabId });
+        pdfViewerDebug('Cleared host access request', { tabId });
+    } catch {
+        // Ignore; the request may not exist anymore.
+    }
+}
+
+async function syncPdfViewerHostAccessRequestForTab(tab) {
+    const tabId = tab?.id;
+    if (!supportsPdfViewerHostAccessRequests() || !Number.isFinite(tabId)) return;
+
+    const settings = await getExtensionSettings();
+    pdfViewerDebug('syncPdfViewerHostAccessRequestForTab start', {
+        tabId,
+        url: tab?.url || null,
+        enableSendToLectra: settings.enableSendToLectra
+    });
+    if (!settings.enableSendToLectra) {
+        await clearPdfViewerHostAccessRequest(tabId);
+        return;
+    }
+
+    if (!isTabUrlEligibleForPdfViewerOverlay(tab?.url) || !isLikelyPdfViewerCandidateUrl(tab?.url)) {
+        pdfViewerDebug('Tab not eligible for host access request', {
+            tabId,
+            url: tab?.url || null
+        });
+        await clearPdfViewerHostAccessRequest(tabId);
+        return;
+    }
+
+    if (await hasPdfViewerOriginAccess(tab.url)) {
+        pdfViewerDebug('Tab already has host access', {
+            tabId,
+            url: tab.url
+        });
+        await clearPdfViewerHostAccessRequest(tabId);
+        return;
+    }
+
+    const pattern = buildPdfViewerHostAccessPattern(tab.url);
+    if (!pattern) {
+        pdfViewerDebug('No host access pattern could be built for tab', {
+            tabId,
+            url: tab?.url || null
+        });
+        await clearPdfViewerHostAccessRequest(tabId);
+        return;
+    }
+
+    try {
+        pdfViewerDebug('Adding host access request', {
+            tabId,
+            url: tab.url,
+            pattern
+        });
+        await chrome.permissions.addHostAccessRequest({
+            tabId,
+            pattern
+        });
+        pdfViewerDebug('Host access request added', {
+            tabId,
+            pattern
+        });
+    } catch (error) {
+        pdfViewerDebug('Host access request failed', {
+            tabId,
+            url: tab?.url || null,
+            error: parseErrorMessage(error)
+        });
+        console.warn('[Canvascope PDF Viewer] Failed to add host access request:', parseErrorMessage(error));
+    }
+}
+
+async function syncPdfViewerHostAccessRequestsForOpenTabs() {
+    const tabs = await chrome.tabs.query({});
+    await Promise.all(tabs.map((tab) => syncPdfViewerHostAccessRequestForTab(tab)));
+}
+
+async function runPdfViewerActiveTabDiagnostics() {
+    const tab = await resolveTargetTabForPdfMode('active_tab', null);
+    const settings = await getExtensionSettings();
+    const websiteOrigins = await getGrantedPdfViewerOverlayWebsiteOrigins();
+    const fileAccessAllowed = await getAllowedFileSchemeAccess();
+    const registeredContentScripts = await chrome.scripting.getRegisteredContentScripts()
+        .catch((error) => {
+            pdfViewerDebug('getRegisteredContentScripts failed', parseErrorMessage(error));
+            return [];
+        });
+
+    const diagnostics = {
+        tab: tab ? {
+            id: tab.id ?? null,
+            url: tab.url || null,
+            title: tab.title || null
+        } : null,
+        enableSendToLectra: settings.enableSendToLectra,
+        websiteOrigins,
+        fileAccessAllowed,
+        registrationMatches: await getPdfViewerOverlayRegistrationMatches(),
+        registeredContentScripts: registeredContentScripts.map((entry) => ({
+            id: entry.id,
+            matches: entry.matches || [],
+            js: entry.js || [],
+            runAt: entry.runAt || null
+        })),
+        tabEligible: isTabUrlEligibleForPdfViewerOverlay(tab?.url),
+        likelyPdfViewerCandidate: isLikelyPdfViewerCandidateUrl(tab?.url),
+        overlayContext: tab ? await resolvePdfViewerOverlayContextForTab(tab) : null,
+        initialPing: null,
+        directInjectionProbe: null,
+        postInjectionPing: null
+    };
+
+    if (!tab?.id) {
+        return diagnostics;
+    }
+
+    diagnostics.initialPing = await sendMessageToTab(tab.id, {
+        action: 'canvascopePdfViewerDebugPing'
+    });
+
+    try {
+        const results = await chrome.scripting.executeScript({
+            target: { tabId: tab.id },
+            func: () => {
+                const payload = {
+                    href: window.location.href,
+                    title: document.title,
+                    contentType: document.contentType || null
+                };
+                console.log('[Canvascope PDF Viewer][Probe] bare executeScript ran', payload);
+                return payload;
+            }
+        });
+        diagnostics.directInjectionProbe = {
+            success: true,
+            results: Array.isArray(results) ? results.map((entry) => ({
+                frameId: entry.frameId,
+                result: entry.result
+            })) : []
+        };
+    } catch (error) {
+        diagnostics.directInjectionProbe = {
+            success: false,
+            error: parseErrorMessage(error)
+        };
+    }
+
+    try {
+        await chrome.scripting.executeScript({
+            target: { tabId: tab.id },
+            files: ['pdf-viewer-content.js']
+        });
+        diagnostics.directOverlayInjection = {
+            success: true
+        };
+    } catch (error) {
+        diagnostics.directOverlayInjection = {
+            success: false,
+            error: parseErrorMessage(error)
+        };
+    }
+
+    await sleep(120);
+    diagnostics.postInjectionPing = await sendMessageToTab(tab.id, {
+        action: 'canvascopePdfViewerDebugPing'
+    });
+    pdfViewerDebug('Active tab diagnostics snapshot', diagnostics);
+    return diagnostics;
+}
+
 // Minimum time between scans (in milliseconds) - 5 minutes
 const MIN_SCAN_INTERVAL = 5 * 60 * 1000;
 
@@ -1379,6 +1803,29 @@ chrome.runtime.onInstalled.addListener((details) => {
 
     // Set up deadline reminder alarm (every 60 min)
     chrome.alarms.create('deadlineReminder', { periodInMinutes: 60 });
+
+    syncPdfViewerOverlayRegistration(`runtime-installed-${details.reason}`).catch((error) => {
+        console.warn('[Canvascope PDF Viewer] Failed to sync overlay registration on install:', parseErrorMessage(error));
+    });
+});
+
+chrome.storage.onChanged.addListener((changes, areaName) => {
+    if (areaName !== 'local' || !changes.settings) return;
+    syncPdfViewerOverlayRegistration('settings-changed').catch((error) => {
+        console.warn('[Canvascope PDF Viewer] Failed to sync overlay registration after settings change:', parseErrorMessage(error));
+    });
+});
+
+chrome.permissions.onAdded.addListener(() => {
+    syncPdfViewerOverlayRegistration('permissions-added').catch((error) => {
+        console.warn('[Canvascope PDF Viewer] Failed to sync overlay registration after permission grant:', parseErrorMessage(error));
+    });
+});
+
+chrome.permissions.onRemoved.addListener(() => {
+    syncPdfViewerOverlayRegistration('permissions-removed').catch((error) => {
+        console.warn('[Canvascope PDF Viewer] Failed to sync overlay registration after permission removal:', parseErrorMessage(error));
+    });
 });
 
 // ============================================
@@ -3459,7 +3906,7 @@ function isHttpsUrl(rawUrl) {
 }
 
 function isPdfSupportedFetchProtocol(protocol) {
-    return protocol === 'https:' || protocol === 'file:';
+    return protocol === 'https:' || protocol === 'http:' || protocol === 'file:';
 }
 
 function decodePossiblyEncodedUrl(value) {
@@ -3949,6 +4396,126 @@ async function probePdfCandidate(candidateUrl) {
             contentType
         };
     }
+}
+
+function normalizePdfViewerTitleHint(rawTitle) {
+    const cleaned = cleanTitle(rawTitle);
+    if (!cleaned) return '';
+
+    const explicitPdf = cleaned.match(/([^|]+?\.pdf)\b/i);
+    if (explicitPdf?.[1]) {
+        return cleanTitle(explicitPdf[1]);
+    }
+
+    return cleanTitle(cleaned.replace(/\s*:\s*\d+\s*$/i, ''));
+}
+
+function derivePdfViewerOverlayTitleHint(tabTitle, candidateUrl) {
+    const tabHint = normalizePdfViewerTitleHint(tabTitle);
+    if (!isGenericPdfTitleHint(tabHint)) {
+        return tabHint;
+    }
+
+    const urlHint = cleanTitle(extractFilenameHintFromUrl(candidateUrl));
+    if (urlHint && !isGenericPdfFilenameHint(urlHint)) {
+        return urlHint;
+    }
+
+    return tabHint || urlHint || '';
+}
+
+async function resolvePdfViewerOverlayContextForTab(tab) {
+    if (!tab?.url) {
+        pdfViewerDebug('resolvePdfViewerOverlayContextForTab: no tab url');
+        return {
+            success: true,
+            showButton: false,
+            candidateUrl: null,
+            sourcePageUrl: null,
+            titleHint: null,
+            reason: 'no_tab_url'
+        };
+    }
+
+    const viewerSrcUrl = parsePdfViewerSrcFromTabUrl(tab.url);
+    const normalizedTabUrl = normalizePdfCandidateUrl(tab.url, tab.url);
+    pdfViewerDebug('Resolving overlay context for tab', {
+        tabId: tab.id || null,
+        tabUrl: tab.url,
+        title: tab.title || null,
+        viewerSrcUrl,
+        normalizedTabUrl
+    });
+    const attempts = [];
+    const seen = new Set();
+    const queueAttempt = (url, sourcePageUrl, reason) => {
+        const normalized = normalizePdfCandidateUrl(url, tab.url);
+        const normalizedSource = normalizePdfCandidateUrl(sourcePageUrl || normalized, tab.url);
+        if (!normalized || seen.has(normalized)) return;
+        seen.add(normalized);
+        attempts.push({
+            url: normalized,
+            sourcePageUrl: normalizedSource || normalized,
+            reason
+        });
+    };
+
+    if (viewerSrcUrl) {
+        queueAttempt(viewerSrcUrl, viewerSrcUrl, 'viewer_src');
+    }
+
+    if (normalizedTabUrl) {
+        queueAttempt(normalizedTabUrl, normalizedTabUrl, 'tab_url');
+    }
+
+    if (attempts.length === 0) {
+        pdfViewerDebug('Overlay context: no candidate attempts');
+        return {
+            success: true,
+            showButton: false,
+            candidateUrl: null,
+            sourcePageUrl: null,
+            titleHint: null,
+            reason: 'unsupported_tab_scheme'
+        };
+    }
+
+    for (const attempt of attempts) {
+        const probe = await probePdfCandidate(attempt.url);
+        pdfViewerDebug('Overlay probe result', {
+            tabUrl: tab.url,
+            attempt,
+            probe
+        });
+        if (probe.ok && PDF_CONFIDENCE_RANK[probe.confidence] >= PDF_CONFIDENCE_RANK.strong) {
+            const resolved = {
+                success: true,
+                showButton: true,
+                candidateUrl: attempt.url,
+                sourcePageUrl: attempt.sourcePageUrl,
+                titleHint: derivePdfViewerOverlayTitleHint(tab.title || '', attempt.url) || null,
+                reason: probe.reason || attempt.reason
+            };
+            pdfViewerDebug('Overlay context resolved: show button', resolved);
+            return {
+                ...resolved
+            };
+        }
+    }
+
+    const fallback = attempts[0];
+    const rejected = {
+        success: true,
+        showButton: false,
+        candidateUrl: fallback?.url || null,
+        sourcePageUrl: fallback?.sourcePageUrl || null,
+        titleHint: fallback ? (derivePdfViewerOverlayTitleHint(tab.title || '', fallback.url) || null) : null,
+        reason: 'top_level_not_pdf'
+    };
+    pdfViewerDebug('Overlay context resolved: hide button', rejected);
+    return {
+        ...rejected
+    };
 }
 
 async function buildPdfContextForTab(tab) {
@@ -5112,6 +5679,73 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return true;
     }
 
+    if (message.action === 'resolvePdfViewerOverlayContext') {
+        (async () => {
+            try {
+                const tab = sender?.tab
+                    ? sender.tab
+                    : await resolveTargetTabForPdfMode('active_tab', sender);
+                pdfViewerDebug('Message: resolvePdfViewerOverlayContext', {
+                    senderTabId: sender?.tab?.id || null,
+                    resolvedTabId: tab?.id || null,
+                    resolvedTabUrl: tab?.url || null
+                });
+                const payload = await resolvePdfViewerOverlayContextForTab(tab);
+                sendResponse(payload);
+            } catch (error) {
+                pdfViewerDebug('Message: resolvePdfViewerOverlayContext failed', parseErrorMessage(error));
+                sendResponse({
+                    success: false,
+                    showButton: false,
+                    candidateUrl: null,
+                    sourcePageUrl: null,
+                    titleHint: null,
+                    reason: parseErrorMessage(error)
+                });
+            }
+        })();
+        return true;
+    }
+
+    if (message.action === 'syncPdfViewerOverlayRegistration') {
+        (async () => {
+            try {
+                pdfViewerDebug('Message: syncPdfViewerOverlayRegistration', {
+                    reason: message.reason || 'message'
+                });
+                const payload = await syncPdfViewerOverlayRegistration(message.reason || 'message');
+                sendResponse(payload);
+            } catch (error) {
+                pdfViewerDebug('Message: syncPdfViewerOverlayRegistration failed', parseErrorMessage(error));
+                sendResponse({
+                    success: false,
+                    enabled: false,
+                    matches: [],
+                    reason: parseErrorMessage(error)
+                });
+            }
+        })();
+        return true;
+    }
+
+    if (message.action === 'debugPdfViewerOverlayActiveTab') {
+        (async () => {
+            try {
+                const payload = await runPdfViewerActiveTabDiagnostics();
+                sendResponse({
+                    success: true,
+                    diagnostics: payload
+                });
+            } catch (error) {
+                sendResponse({
+                    success: false,
+                    error: parseErrorMessage(error)
+                });
+            }
+        })();
+        return true;
+    }
+
     if (message.action === 'sendPdfToLectra') {
         (async () => {
             try {
@@ -5366,9 +6000,15 @@ chrome.runtime.onStartup.addListener(() => {
     bootstrapDropBridgeV2FromWorkerStart('runtime-startup').catch((error) => {
         console.error('[DropBridge v2] Runtime startup failure:', parseErrorMessage(error));
     });
+    syncPdfViewerOverlayRegistration('runtime-startup').catch((error) => {
+        console.warn('[Canvascope PDF Viewer] Failed to sync overlay registration on startup:', parseErrorMessage(error));
+    });
 });
 
 dropBridgeDebug('service worker immediate bootstrap call');
 bootstrapDropBridgeV2FromWorkerStart('service-worker-start').catch((error) => {
     console.error('[DropBridge v2] Service worker bootstrap failure:', parseErrorMessage(error));
+});
+syncPdfViewerOverlayRegistration('service-worker-start').catch((error) => {
+    console.warn('[Canvascope PDF Viewer] Failed to sync overlay registration on worker start:', parseErrorMessage(error));
 });

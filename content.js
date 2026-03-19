@@ -43,13 +43,22 @@ const DEFAULT_EXTENSION_SETTINGS = Object.freeze({
     enableSendToLectra: false,
     selectedCourseFilters: []
 });
+const LECTRA_BUTTON_POSITION_STORAGE_KEY = 'lectraSendButtonPositions';
+const LECTRA_BUTTON_POSITION_SLOT = 'canvas';
+const LECTRA_BUTTON_HOLD_TO_DRAG_MS = 350;
+const LECTRA_BUTTON_DRAG_CANCEL_DISTANCE_PX = 12;
+const LECTRA_BUTTON_DEFAULT_RIGHT_PX = 20;
+const LECTRA_BUTTON_DEFAULT_BOTTOM_PX = 96;
+const LECTRA_BUTTON_EDGE_PADDING_PX = 12;
+const LECTRA_BUTTON_DEFAULT_TRANSITION = 'transform 0.15s ease, opacity 0.2s ease';
 let contentExtensionSettings = { ...DEFAULT_EXTENSION_SETTINGS };
 
 // Load custom domains from storage so domain checks work for user-added domains
 try {
-    chrome.storage.local.get(['customDomains', 'settings']).then(data => {
+    chrome.storage.local.get(['customDomains', 'settings', LECTRA_BUTTON_POSITION_STORAGE_KEY]).then(data => {
         contentCustomDomains = data.customDomains || [];
         contentExtensionSettings = normalizeExtensionSettings(data.settings);
+        lectraSendButtonPosition = normalizeLectraButtonPosition(data?.[LECTRA_BUTTON_POSITION_STORAGE_KEY]?.[LECTRA_BUTTON_POSITION_SLOT]);
         scheduleLectraPdfContextRefresh(0);
     });
 } catch (e) { /* ignore if storage unavailable */ }
@@ -65,6 +74,15 @@ try {
         if (changes.settings) {
             contentExtensionSettings = normalizeExtensionSettings(changes.settings.newValue);
             scheduleLectraPdfContextRefresh(0);
+        }
+
+        if (changes[LECTRA_BUTTON_POSITION_STORAGE_KEY]) {
+            lectraSendButtonPosition = normalizeLectraButtonPosition(
+                changes[LECTRA_BUTTON_POSITION_STORAGE_KEY]?.newValue?.[LECTRA_BUTTON_POSITION_SLOT]
+            );
+            if (lectraSendButton && lectraSendButton.isConnected) {
+                applyLectraSendButtonPosition(lectraSendButton);
+            }
         }
     });
 } catch (e) { /* ignore if storage unavailable */ }
@@ -312,6 +330,9 @@ let lectraSendButton = null;
 let lectraSendButtonBusy = false;
 let lectraPdfRefreshTimer = null;
 let lectraHooksInstalled = false;
+let lectraSendButtonPosition = null;
+let lectraSendButtonDragState = null;
+let lectraSuppressNextSendButtonClick = false;
 
 function normalizeExtensionSettings(rawSettings) {
     const source = rawSettings && typeof rawSettings === 'object' ? rawSettings : {};
@@ -323,6 +344,185 @@ function normalizeExtensionSettings(rawSettings) {
 
 function isSendToLectraEnabled() {
     return Boolean(contentExtensionSettings.enableSendToLectra);
+}
+
+function normalizeLectraButtonPosition(rawValue) {
+    if (!rawValue || typeof rawValue !== 'object') return null;
+    const left = Number(rawValue.left);
+    const top = Number(rawValue.top);
+    if (!Number.isFinite(left) || !Number.isFinite(top)) {
+        return null;
+    }
+    return {
+        left: Math.round(left),
+        top: Math.round(top)
+    };
+}
+
+function clampLectraButtonPosition(position, button = lectraSendButton) {
+    if (!position || !button) return null;
+    const rect = button.getBoundingClientRect();
+    const maxLeft = Math.max(LECTRA_BUTTON_EDGE_PADDING_PX, window.innerWidth - rect.width - LECTRA_BUTTON_EDGE_PADDING_PX);
+    const maxTop = Math.max(LECTRA_BUTTON_EDGE_PADDING_PX, window.innerHeight - rect.height - LECTRA_BUTTON_EDGE_PADDING_PX);
+    return {
+        left: Math.min(Math.max(LECTRA_BUTTON_EDGE_PADDING_PX, Math.round(position.left)), Math.round(maxLeft)),
+        top: Math.min(Math.max(LECTRA_BUTTON_EDGE_PADDING_PX, Math.round(position.top)), Math.round(maxTop))
+    };
+}
+
+function applyLectraSendButtonPosition(button = lectraSendButton) {
+    if (!button) return;
+
+    if (!lectraSendButtonPosition) {
+        button.style.left = 'auto';
+        button.style.top = 'auto';
+        button.style.right = `${LECTRA_BUTTON_DEFAULT_RIGHT_PX}px`;
+        button.style.bottom = `${LECTRA_BUTTON_DEFAULT_BOTTOM_PX}px`;
+        return;
+    }
+
+    const clamped = clampLectraButtonPosition(lectraSendButtonPosition, button);
+    if (!clamped) return;
+    lectraSendButtonPosition = clamped;
+    button.style.left = `${clamped.left}px`;
+    button.style.top = `${clamped.top}px`;
+    button.style.right = 'auto';
+    button.style.bottom = 'auto';
+}
+
+async function persistLectraSendButtonPosition(position) {
+    try {
+        const stored = await chrome.storage.local.get([LECTRA_BUTTON_POSITION_STORAGE_KEY]);
+        const positions = stored?.[LECTRA_BUTTON_POSITION_STORAGE_KEY] && typeof stored[LECTRA_BUTTON_POSITION_STORAGE_KEY] === 'object'
+            ? { ...stored[LECTRA_BUTTON_POSITION_STORAGE_KEY] }
+            : {};
+        positions[LECTRA_BUTTON_POSITION_SLOT] = position;
+        await chrome.storage.local.set({ [LECTRA_BUTTON_POSITION_STORAGE_KEY]: positions });
+    } catch {
+        // Ignore storage failures; dragging should still work for the current page.
+    }
+}
+
+function clearLectraDragHoldTimer() {
+    if (lectraSendButtonDragState?.holdTimer) {
+        clearTimeout(lectraSendButtonDragState.holdTimer);
+        lectraSendButtonDragState.holdTimer = null;
+    }
+}
+
+function beginLectraSendButtonDrag() {
+    if (!lectraSendButton || !lectraSendButtonDragState || lectraSendButtonBusy) return;
+
+    const rect = lectraSendButton.getBoundingClientRect();
+    lectraSendButtonDragState.dragging = true;
+    lectraSendButtonDragState.startLeft = rect.left;
+    lectraSendButtonDragState.startTop = rect.top;
+    lectraSuppressNextSendButtonClick = true;
+
+    lectraSendButton.style.transition = 'none';
+    lectraSendButton.style.transform = 'translateY(0)';
+    lectraSendButton.style.cursor = 'grabbing';
+    lectraSendButton.style.left = `${Math.round(rect.left)}px`;
+    lectraSendButton.style.top = `${Math.round(rect.top)}px`;
+    lectraSendButton.style.right = 'auto';
+    lectraSendButton.style.bottom = 'auto';
+    document.documentElement.style.userSelect = 'none';
+}
+
+function finishLectraSendButtonDrag({ persist = true } = {}) {
+    if (!lectraSendButtonDragState) return;
+    clearLectraDragHoldTimer();
+
+    if (lectraSendButton && lectraSendButtonDragState.dragging) {
+        const finalPosition = clampLectraButtonPosition({
+            left: lectraSendButtonDragState.currentLeft,
+            top: lectraSendButtonDragState.currentTop
+        }, lectraSendButton);
+        if (finalPosition) {
+            lectraSendButtonPosition = finalPosition;
+            applyLectraSendButtonPosition(lectraSendButton);
+            if (persist) {
+                void persistLectraSendButtonPosition(finalPosition);
+            }
+        }
+        lectraSendButton.style.transition = LECTRA_BUTTON_DEFAULT_TRANSITION;
+        lectraSendButton.style.cursor = lectraSendButtonBusy ? 'default' : 'pointer';
+    }
+
+    document.documentElement.style.userSelect = '';
+    lectraSendButtonDragState = null;
+}
+
+function handleLectraSendButtonPointerDown(event) {
+    if (!lectraSendButton || lectraSendButtonBusy) return;
+    if (event.pointerType === 'mouse' && event.button !== 0) return;
+
+    const rect = lectraSendButton.getBoundingClientRect();
+    lectraSendButtonDragState = {
+        pointerId: event.pointerId,
+        startClientX: event.clientX,
+        startClientY: event.clientY,
+        startLeft: rect.left,
+        startTop: rect.top,
+        currentLeft: rect.left,
+        currentTop: rect.top,
+        dragging: false,
+        holdTimer: null
+    };
+
+    lectraSendButtonDragState.holdTimer = setTimeout(() => {
+        beginLectraSendButtonDrag();
+    }, LECTRA_BUTTON_HOLD_TO_DRAG_MS);
+
+    try {
+        lectraSendButton.setPointerCapture(event.pointerId);
+    } catch {
+        // Ignore browsers that reject pointer capture for this element.
+    }
+}
+
+function handleLectraSendButtonPointerMove(event) {
+    if (!lectraSendButton || !lectraSendButtonDragState || lectraSendButtonDragState.pointerId !== event.pointerId) {
+        return;
+    }
+
+    const deltaX = event.clientX - lectraSendButtonDragState.startClientX;
+    const deltaY = event.clientY - lectraSendButtonDragState.startClientY;
+    if (!lectraSendButtonDragState.dragging) {
+        if (Math.hypot(deltaX, deltaY) > LECTRA_BUTTON_DRAG_CANCEL_DISTANCE_PX) {
+            clearLectraDragHoldTimer();
+        }
+        return;
+    }
+
+    event.preventDefault();
+    const nextPosition = clampLectraButtonPosition({
+        left: lectraSendButtonDragState.startLeft + deltaX,
+        top: lectraSendButtonDragState.startTop + deltaY
+    }, lectraSendButton);
+    if (!nextPosition) return;
+    lectraSendButtonDragState.currentLeft = nextPosition.left;
+    lectraSendButtonDragState.currentTop = nextPosition.top;
+    lectraSendButton.style.left = `${nextPosition.left}px`;
+    lectraSendButton.style.top = `${nextPosition.top}px`;
+}
+
+function handleLectraSendButtonPointerEnd(event) {
+    if (!lectraSendButtonDragState || lectraSendButtonDragState.pointerId !== event.pointerId) {
+        return;
+    }
+
+    if (lectraSendButtonDragState.dragging) {
+        event.preventDefault();
+    }
+
+    try {
+        lectraSendButton?.releasePointerCapture?.(event.pointerId);
+    } catch {
+        // Ignore pointer-capture cleanup failures.
+    }
+
+    finishLectraSendButtonDrag({ persist: true });
 }
 
 function normalizePdfCandidateUrl(rawUrl, baseUrl = window.location.href) {
@@ -482,20 +682,29 @@ function ensureLectraSendButton() {
         font-weight: 600;
         box-shadow: 0 10px 24px rgba(0, 0, 0, 0.32);
         cursor: pointer;
-        transition: transform 0.15s ease, opacity 0.2s ease;
+        transition: ${LECTRA_BUTTON_DEFAULT_TRANSITION};
+        touch-action: none;
     `;
+    button.title = 'Send to Lectra. Press and hold to move.';
     button.addEventListener('mouseenter', () => {
-        if (!lectraSendButtonBusy) {
+        if (!lectraSendButtonBusy && !lectraSendButtonDragState?.dragging) {
             button.style.transform = 'translateY(-1px)';
         }
     });
     button.addEventListener('mouseleave', () => {
-        button.style.transform = 'translateY(0)';
+        if (!lectraSendButtonDragState?.dragging) {
+            button.style.transform = 'translateY(0)';
+        }
     });
+    button.addEventListener('pointerdown', handleLectraSendButtonPointerDown);
+    button.addEventListener('pointermove', handleLectraSendButtonPointerMove);
+    button.addEventListener('pointerup', handleLectraSendButtonPointerEnd);
+    button.addEventListener('pointercancel', handleLectraSendButtonPointerEnd);
     button.addEventListener('click', handleLectraSendButtonClick);
 
     document.body.appendChild(button);
     lectraSendButton = button;
+    applyLectraSendButtonPosition(button);
     return button;
 }
 
@@ -503,8 +712,11 @@ function removeLectraSendButton() {
     if (lectraSendButton && lectraSendButton.parentNode) {
         lectraSendButton.parentNode.removeChild(lectraSendButton);
     }
+    clearLectraDragHoldTimer();
+    document.documentElement.style.userSelect = '';
     lectraSendButton = null;
     lectraSendButtonBusy = false;
+    lectraSendButtonDragState = null;
 }
 
 function setLectraSendButtonState(text, state = 'idle') {
@@ -570,6 +782,10 @@ function refreshLectraPdfContext() {
 }
 
 function handleLectraSendButtonClick() {
+    if (lectraSuppressNextSendButtonClick) {
+        lectraSuppressNextSendButtonClick = false;
+        return;
+    }
     if (lectraSendButtonBusy) return;
     if (!isSendToLectraEnabled()) {
         removeLectraSendButton();
@@ -661,6 +877,11 @@ function initializeLectraPdfSendUi() {
     installLectraNavigationHooks();
     scheduleLectraPdfContextRefresh(0);
     setTimeout(() => scheduleLectraPdfContextRefresh(120), 120);
+    window.addEventListener('resize', () => {
+        if (lectraSendButton && lectraSendButton.isConnected && lectraSendButtonPosition) {
+            applyLectraSendButtonPosition(lectraSendButton);
+        }
+    });
 }
 
 // ============================================
