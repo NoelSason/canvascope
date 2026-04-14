@@ -53,11 +53,99 @@ if (!supabaseClient) {
     console.error('[Canvascope] Supabase client failed to initialize (ensure lib/supabase.js is loaded)');
 }
 
+const AUTH_STATUS_SNAPSHOT_KEY = 'canvascopeAuthStatusSnapshot';
+
+function buildAuthStatusUser(session) {
+    if (!session?.user) return null;
+    return {
+        email: session.user.email,
+        name: session.user.user_metadata?.full_name || session.user.user_metadata?.name || 'User',
+        avatar_url: session.user.user_metadata?.avatar_url
+    };
+}
+
+async function persistAuthStatusSnapshot(session) {
+    const payload = session?.user
+        ? {
+            signedIn: true,
+            user: buildAuthStatusUser(session),
+            userId: session.user.id,
+            updatedAt: Date.now()
+        }
+        : {
+            signedIn: false,
+            user: null,
+            userId: null,
+            updatedAt: Date.now()
+        };
+
+    try {
+        await chrome.storage.local.set({ [AUTH_STATUS_SNAPSHOT_KEY]: payload });
+    } catch (error) {
+        console.warn('[Canvascope Auth] Failed to persist auth snapshot:', parseErrorMessage(error));
+    }
+}
+
+async function readAuthStatusSnapshot() {
+    try {
+        const data = await chrome.storage.local.get([AUTH_STATUS_SNAPSHOT_KEY]);
+        const snapshot = data?.[AUTH_STATUS_SNAPSHOT_KEY];
+        if (!snapshot || typeof snapshot !== 'object') return null;
+        return snapshot;
+    } catch (error) {
+        console.warn('[Canvascope Auth] Failed to read auth snapshot:', parseErrorMessage(error));
+        return null;
+    }
+}
+
+async function resolveAuthStatus() {
+    if (!supabaseClient) {
+        const snapshot = await readAuthStatusSnapshot();
+        return snapshot?.signedIn
+            ? { signedIn: true, user: snapshot.user || null, source: 'snapshot' }
+            : { signedIn: false, source: 'none' };
+    }
+
+    try {
+        const { data: { session }, error } = await supabaseClient.auth.getSession();
+        if (error) {
+            console.error('[Canvascope Auth] Error checking session:', error);
+        }
+
+        if (session?.user) {
+            await persistAuthStatusSnapshot(session);
+            return {
+                signedIn: true,
+                user: buildAuthStatusUser(session),
+                source: 'session'
+            };
+        }
+    } catch (error) {
+        console.error('[Canvascope Auth] Unhandled session lookup error:', error);
+    }
+
+    const snapshot = await readAuthStatusSnapshot();
+    if (snapshot?.signedIn && snapshot.user) {
+        return {
+            signedIn: true,
+            user: snapshot.user,
+            source: 'snapshot'
+        };
+    }
+
+    await persistAuthStatusSnapshot(null);
+    return { signedIn: false, source: 'none' };
+}
+
 if (supabaseClient) {
     supabaseClient.auth.onAuthStateChange((event, session) => {
         dropBridgeDebug('auth state change', {
             event,
             userId: session?.user?.id || null
+        });
+
+        persistAuthStatusSnapshot(session).catch((error) => {
+            console.warn('[Canvascope Auth] Failed to sync auth snapshot after state change:', parseErrorMessage(error));
         });
 
         if (event === 'SIGNED_OUT') {
@@ -461,6 +549,39 @@ async function getDropBridgeV2AccessToken() {
 
     dropBridgeDebug('get access token: returning existing access token');
     return session.access_token || null;
+}
+
+async function getSupabaseAccessToken() {
+    return getDropBridgeV2AccessToken();
+}
+
+async function callCanvascopeSupabaseFunction(functionName, body = {}) {
+    if (!supabaseClient) {
+        throw new Error('Supabase client unavailable');
+    }
+
+    const accessToken = await getSupabaseAccessToken();
+    if (!accessToken) {
+        throw new Error('Not signed in');
+    }
+
+    const endpoint = `${supabaseUrl.replace(/\/+$/, '')}/functions/v1/${functionName}`;
+    const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            apikey: supabaseKey,
+            Authorization: `Bearer ${accessToken}`
+        },
+        body: JSON.stringify(body)
+    });
+
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || payload?.error) {
+        throw new Error(payload?.error || `${functionName} failed (${response.status})`);
+    }
+
+    return payload;
 }
 
 async function getOrCreateDropBridgeV2DeviceId() {
@@ -2607,6 +2728,15 @@ function buildCanvasFolderHtmlUrl(baseUrl, courseId, folder) {
             return parsed.toString();
         } catch {
             return existingUrl;
+        }
+    }
+
+    // Try path-based routing first since bare IDs often fail on Canvas
+    if (folder?.full_name) {
+        const path = String(folder.full_name).replace(/^course files\/?/i, '').trim();
+        if (path) {
+            const encodedPath = path.split('/').map(encodeURIComponent).join('/');
+            return `${baseUrl}/courses/${courseId}/files/folder/${encodedPath}`;
         }
     }
 
@@ -5515,7 +5645,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                                 supabaseClient.auth.setSession({
                                     access_token: accessToken,
                                     refresh_token: refreshToken
-                                }).then(({ error: sessionError }) => {
+                                }).then(async ({ error: sessionError }) => {
                                     if (sessionError) {
                                         console.error('[Canvascope Auth] Error setting session:', sessionError);
                                         dropBridgeDebug('auth: setSession failed after OAuth', {
@@ -5524,6 +5654,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                                         sendResponse({ success: false, error: sessionError.message });
                                     } else {
                                         console.log('[Canvascope Auth] Successfully authenticated!');
+                                        const { data: { session } } = await supabaseClient.auth.getSession();
+                                        await persistAuthStatusSnapshot(session || null);
                                         dropBridgeDebug('auth: OAuth success, starting DropBridge loop');
                                         startDropBridgeV2Loop('post-login').catch((error) => {
                                             console.error('[DropBridge v2] Post-login bootstrap failure:', parseErrorMessage(error));
@@ -5552,35 +5684,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             }
         })();
 
-    }
+        return true;
 
-    return true; // Keep message channel open for async response
+    }
 });
 
 // Add message handler to check auth status on popup load
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.type === 'checkAuthStatus') {
         (async () => {
-            try {
-                const { data: { session }, error } = await supabaseClient.auth.getSession();
-                if (error) throw error;
-
-                if (session && session.user) {
-                    sendResponse({
-                        signedIn: true,
-                        user: {
-                            email: session.user.email,
-                            name: session.user.user_metadata?.full_name || session.user.user_metadata?.name || 'User',
-                            avatar_url: session.user.user_metadata?.avatar_url
-                        }
-                    });
-                } else {
-                    sendResponse({ signedIn: false });
-                }
-            } catch (err) {
-                console.error('[Canvascope Auth] Error checking session:', err);
-                sendResponse({ signedIn: false });
-            }
+            const status = await resolveAuthStatus();
+            sendResponse({
+                signedIn: Boolean(status?.signedIn),
+                user: status?.user || null
+            });
         })();
         return true;
     } else if (message.type === 'fetchUserData') {
@@ -5636,6 +5753,101 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             }
         })();
         return true;
+    } else if (message.type === 'recordAdaptiveSearchEvent') {
+        (async () => {
+            try {
+                if (!message.event || typeof message.event !== 'object') {
+                    sendResponse({ success: false, error: 'Missing adaptive search event payload' });
+                    return;
+                }
+
+                const payload = await callCanvascopeSupabaseFunction('record-search-event', message.event);
+                sendResponse({
+                    success: true,
+                    pattern: payload?.pattern || null
+                });
+            } catch (err) {
+                console.error('[Canvascope Adaptive Search] Error recording event:', err);
+                sendResponse({ success: false, error: err.message });
+            }
+        })();
+        return true;
+    } else if (message.type === 'fetchAdaptiveSearchSuggestions') {
+        (async () => {
+            try {
+                const slotContext = message.context && typeof message.context === 'object' ? message.context : {};
+                const payload = await callCanvascopeSupabaseFunction('get-search-suggestions', slotContext);
+                sendResponse({
+                    success: true,
+                    suggestions: Array.isArray(payload?.suggestions) ? payload.suggestions : []
+                });
+            } catch (err) {
+                console.error('[Canvascope Adaptive Search] Error fetching suggestions:', err);
+                sendResponse({ success: false, error: err.message, suggestions: [] });
+            }
+        })();
+        return true;
+    } else if (message.type === 'syncAdaptiveSearchState') {
+        (async () => {
+            try {
+                const { data: { session } } = await supabaseClient.auth.getSession();
+                if (!session) {
+                    sendResponse({ success: false, error: 'Not signed in' });
+                    return;
+                }
+                const { data, error } = await supabaseClient.from('synced_items')
+                    .select('id')
+                    .eq('user_id', session.user.id)
+                    .eq('item_type', 'adaptive_search_habits')
+                    .single();
+                
+                const payload = {
+                    user_id: session.user.id,
+                    item_type: 'adaptive_search_habits',
+                    item_data: message.state,
+                    sync_status: 'synced'
+                };
+
+                if (data) {
+                    const { error: updateError } = await supabaseClient.from('synced_items')
+                        .update(payload).eq('id', data.id);
+                    if (updateError) throw updateError;
+                } else {
+                    const { error: insertError } = await supabaseClient.from('synced_items')
+                        .insert([payload]);
+                    if (insertError) throw insertError;
+                }
+                sendResponse({ success: true });
+            } catch (err) {
+                console.error('[Canvascope Sync] Error syncing adaptive habits:', err);
+                sendResponse({ success: false, error: err.message });
+            }
+        })();
+        return true;
+    } else if (message.type === 'fetchAdaptiveSearchState') {
+        (async () => {
+            try {
+                const { data: { session } } = await supabaseClient.auth.getSession();
+                if (!session) {
+                    sendResponse({ success: false, error: 'Not signed in' });
+                    return;
+                }
+                const { data, error } = await supabaseClient.from('synced_items')
+                    .select('item_data')
+                    .eq('user_id', session.user.id)
+                    .eq('item_type', 'adaptive_search_habits')
+                    .single();
+                
+                if (error && error.code !== 'PGRST116') {
+                    throw error;
+                }
+                sendResponse({ success: true, state: data ? data.item_data : null });
+            } catch (err) {
+                console.error('[Canvascope Sync] Error fetching adaptive habits:', err);
+                sendResponse({ success: false, error: err.message });
+            }
+        })();
+        return true;
     }
 });
 
@@ -5646,7 +5858,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
  */
 function isExtensionOwnedSyncedRow(row, legacyItemTypes) {
     const itemType = String(row?.item_type || '').toLowerCase();
-    if (!itemType || itemType === 'pdf_document' || itemType.startsWith('course_brain_')) {
+    if (!itemType || itemType === 'pdf_document' || itemType.startsWith('course_brain_') || itemType === 'adaptive_search_habits') {
         return false;
     }
 

@@ -200,6 +200,11 @@ function assert(condition, message) {
   }
 }
 
+function dueTs(result) {
+  const ts = Date.parse(result?.dueAt || '');
+  return Number.isFinite(ts) ? ts : 0;
+}
+
 if (!fs.existsSync(EXPORT_PATH)) {
   throw new Error(`Missing export file: ${EXPORT_PATH}`);
 }
@@ -231,11 +236,96 @@ assert(chemTypoResults[0].title === 'PreLab G', 'Expected "chem prelqb" to recov
 
 const chemLabResults = harness.run('chem lab');
 assert(Array.isArray(chemLabResults) && chemLabResults.slice(0, 5).some(r => r.title === 'PreLab G'), 'Expected "PreLab G" to remain visible near the top for "chem lab".');
+const chemLabDueWindow = chemLabResults
+  .slice(0, 7)
+  .map(dueTs)
+  .filter(ts => ts > 0);
+assert(chemLabDueWindow.length >= 5, 'Expected multiple dated chemistry lab results near the top.');
+assert(chemLabDueWindow.every((ts, index) => index === 0 || chemLabDueWindow[index - 1] <= ts), 'Expected "chem lab" to prioritize nearer due dates before later ones.');
+const preLabGIndex = chemLabResults.findIndex(r => r.title === 'PreLab G');
+const futureLabGIndex = chemLabResults.findIndex(r => /Lab G\.[A-Z]/.test(r.title));
+assert(preLabGIndex !== -1 && futureLabGIndex !== -1 && preLabGIndex < futureLabGIndex, 'Expected current-week "PreLab G" to rank ahead of later Lab G analysis variants.');
 
 const chemLabWeekResults = harness.run('chem lab this week');
 assert(Array.isArray(chemLabWeekResults) && chemLabWeekResults.length > 0, 'Expected weekly chemistry lab results.');
 assert(chemLabWeekResults[0].course.includes('Chem'), 'Expected "chem lab this week" to rank a chemistry course first.');
 assert(chemLabWeekResults.slice(0, 5).every(r => r.course.includes('Chem')), 'Expected top weekly chemistry lab results to stay within chemistry courses.');
+
+const syntheticBioLabHarness = createSearchHarness([
+  {
+    title: 'Lab 9 Pre-Lab Assessment',
+    url: 'https://example.edu/courses/1/assignments/1',
+    type: 'assignment',
+    courseName: '2026 Spring Biology 1AL',
+    dueAt: '2026-03-16T06:59:59Z'
+  },
+  {
+    title: 'Lab 9 Vertebrate Anatomy Report',
+    url: 'https://example.edu/courses/1/assignments/2',
+    type: 'assignment',
+    courseName: '2026 Spring Biology 1AL',
+    dueAt: '2026-03-17T06:59:59Z'
+  },
+  {
+    title: 'Lab 9A - Vertebrate Anatomy Introduction',
+    url: 'https://example.edu/courses/1/pages/lab-9a',
+    type: 'page',
+    courseName: '2026 Spring Biology 1AL'
+  },
+  {
+    title: 'Lab 9B - Rodent Dissection: External Features',
+    url: 'https://example.edu/courses/1/pages/lab-9b',
+    type: 'page',
+    courseName: '2026 Spring Biology 1AL'
+  },
+  {
+    title: 'Lab 9C - Rodent Dissection: Subcutaneous Anatomy',
+    url: 'https://example.edu/courses/1/pages/lab-9c',
+    type: 'page',
+    courseName: '2026 Spring Biology 1AL'
+  }
+]);
+const syntheticBioLabResults = syntheticBioLabHarness.run('bio lab');
+assert(Array.isArray(syntheticBioLabResults) && syntheticBioLabResults.length >= 5, 'Expected synthetic "bio lab" results.');
+assert(syntheticBioLabResults.slice(0, 5).some(r => /Lab 9A/.test(r.title)), 'Expected synthetic "bio lab" to surface Lab 9A pages without typing the suffix.');
+assert(syntheticBioLabResults.slice(0, 5).some(r => /Lab 9B/.test(r.title)), 'Expected synthetic "bio lab" to surface Lab 9B pages without typing the suffix.');
+assert(syntheticBioLabResults.slice(0, 5).some(r => /Lab 9C/.test(r.title)), 'Expected synthetic "bio lab" to surface Lab 9C pages without typing the suffix.');
+
+const syntheticChemQuizHarness = createSearchHarness([
+  {
+    title: 'Quiz 7',
+    url: 'https://example.edu/courses/2/quizzes/7',
+    type: 'quiz',
+    courseName: 'Chem 3B (Spring 2026)',
+    dueAt: '2026-03-16T18:00:00Z'
+  },
+  {
+    title: 'Quiz 8',
+    url: 'https://example.edu/courses/2/quizzes/8',
+    type: 'quiz',
+    courseName: 'Chem 3B (Spring 2026)',
+    dueAt: '2026-03-18T18:00:00Z'
+  },
+  {
+    title: 'Quiz 9',
+    url: 'https://example.edu/courses/2/quizzes/9',
+    type: 'quiz',
+    courseName: 'Chem 3B (Spring 2026)',
+    dueAt: '2026-03-27T18:00:00Z'
+  },
+  {
+    title: 'Quiz 10',
+    url: 'https://example.edu/courses/2/quizzes/10',
+    type: 'quiz',
+    courseName: 'Chem 3B (Spring 2026)',
+    dueAt: '2026-04-03T18:00:00Z'
+  }
+]);
+const syntheticChemQuizResults = syntheticChemQuizHarness.run('chem quiz');
+assert(Array.isArray(syntheticChemQuizResults) && syntheticChemQuizResults.length >= 4, 'Expected synthetic "chem quiz" results.');
+assert(syntheticChemQuizResults[0].title === 'Quiz 7', 'Expected broad "chem quiz" to surface the earliest current-week quiz first.');
+assert(syntheticChemQuizResults[1].title === 'Quiz 8', 'Expected broad "chem quiz" to keep the rest of the current-week quiz cluster ahead of later quizzes.');
+assert(dueTs(syntheticChemQuizResults[1]) < dueTs(syntheticChemQuizResults[2]), 'Expected later quizzes to trail the current-week quiz cluster.');
 
 const completedBioLab = harness.describeTask('Lab 5 Post-Lab Assessment', '2026 Spring Biology 1AL');
 assert(completedBioLab?.completed === true, 'Expected Lab 5 Post-Lab Assessment to be detected as completed.');

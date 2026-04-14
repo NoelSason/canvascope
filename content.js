@@ -1824,13 +1824,23 @@ function checkForLtiPage() {
 // Run LTI check on load
 checkForLtiPage();
 
+function isCmdKEvent(e) {
+    if (!e || !(e.metaKey || e.ctrlKey)) return false;
+    if (e.altKey) return false;
+    const key = String(e.key || '').toLowerCase();
+    return e.code === 'KeyK' || key === 'k';
+}
+
 // Listen for Command+K (Mac) or Ctrl+K (Windows)
 document.addEventListener('keydown', (e) => {
     // Check for Cmd+K (Mac) or Ctrl+K (Windows/Linux)
-    if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+    if (isCmdKEvent(e)) {
         console.log('[Canvascope] Cmd+K pressed! activeElement:', document.activeElement?.tagName, document.activeElement?.id);
         e.preventDefault();
         e.stopPropagation();
+        if (typeof e.stopImmediatePropagation === 'function') {
+            e.stopImmediatePropagation();
+        }
 
         // Ensure we are on a valid page (double check)
         if (isSupportedLmsDomain() || detectCanvasPage() || detectBrightspacePage()) {
@@ -1846,7 +1856,7 @@ document.addEventListener('keydown', (e) => {
             hideOverlay();
         }
     }
-});
+}, true);
 
 // Listen for messages from the iframe/popup (strict origin + source check)
 window.addEventListener('message', (event) => {

@@ -1,4 +1,10 @@
 {
+  "scripts": {
+    "test": "npm run test:release",
+    "test:node": "node --experimental-transform-types --test tests/backend-search-habits.test.mjs tests/legacy-regressions.test.mjs",
+    "test:supabase": "supabase start && sleep 10 && supabase db reset --local --yes && supabase test db --local supabase/tests",
+    "test:release": "node scripts/run-release-tests.js"
+  },
   "dependencies": {
     "@supabase/supabase-js": "^2.97.0"
   }

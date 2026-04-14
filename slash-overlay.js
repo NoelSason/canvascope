@@ -242,7 +242,30 @@
       score += 0.3;
     }
 
-    // ── 6. Prefer shorter titles (Occam's razor) ─────
+    // ── 6. Semantic Type Aliasing & Recency ──────────
+    const itType = String(item?.type || '').toLowerCase();
+    
+    // Recency words
+    const recencyKeys = ['latest', 'newest', 'recent', 'last', 'current'];
+    const wantsRecency = recencyKeys.some(r => qTokens.includes(r));
+    if (wantsRecency) {
+      let fileTs = null;
+      if (item.createdAt || item.updatedAt) fileTs = new Date(item.updatedAt || item.createdAt).getTime();
+      else if (item.dueAt) fileTs = new Date(item.dueAt).getTime();
+      
+      if (fileTs && fileTs > 0 && fileTs <= Date.now()) {
+        const daysAgo = (Date.now() - fileTs) / (1000 * 60 * 60 * 24);
+        if (daysAgo <= 7) score += 0.50 + Math.max(0, 0.40 * (1 - daysAgo / 7));
+        else if (daysAgo <= 30) score += 0.20 + Math.max(0, 0.30 * (1 - (daysAgo - 7) / 23));
+      }
+    }
+
+    // Type checking
+    if (qTokens.includes('worksheet') && ['file', 'assignment', 'pdf', 'document'].includes(itType)) score += 0.20;
+    if ((qTokens.includes('lecture') || qTokens.includes('slide') || qTokens.includes('slides')) && ['file', 'page', 'pdf', 'slides', 'video'].includes(itType)) score += 0.20;
+    if ((qTokens.includes('midterm') || qTokens.includes('exam')) && ['quiz', 'assignment', 'file', 'pdf'].includes(itType)) score += 0.20;
+
+    // ── 7. Prefer shorter titles (Occam's razor) ─────
     if (title.length < 30) score += 0.05;
     if (title.length > 80) score -= 0.05;
 
@@ -309,7 +332,11 @@
   async function fetchAuthStatus() {
     try {
       const res = await chrome.runtime.sendMessage({ type: 'checkAuthStatus' });
-      return res || { signedIn: false };
+      if (res?.signedIn) return res;
+
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      const retry = await chrome.runtime.sendMessage({ type: 'checkAuthStatus' });
+      return retry || res || { signedIn: false };
     } catch { return { signedIn: false }; }
   }
 
@@ -1222,7 +1249,10 @@
 
   function executeEntry(entry) {
     if (entry && typeof entry.onSelect === 'function') {
-      entry.onSelect();
+      Promise.resolve(entry.onSelect()).catch((error) => {
+        console.error('[Canvascope Slash] Command execution failed:', error);
+        setFeedbackMsg('Command failed. Try again.', 'error');
+      });
     }
   }
 
@@ -1242,7 +1272,7 @@
   }
 
   async function executeGradescope() {
-    await chrome.tabs.create({ url: 'https://www.gradescope.com/', active: true });
+    window.open('https://www.gradescope.com/', '_blank', 'noopener,noreferrer');
     closeOverlay();
   }
 

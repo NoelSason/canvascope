@@ -180,7 +180,7 @@ function extractLabSequenceNumbers(item) {
   const B = '[\\s_|/.:;,#=-]';
 
   const directPatterns = [
-    () => new RegExp(`(?:^|${B})(?:[a-z0-9]{0,8})?(?:pre[\\s-]*lab|prelab|lab(?:oratory)?)\\s*#?\\s*0*(\\d{1,3})(?=$|${B})`, 'ig'),
+    () => new RegExp(`(?:^|${B})(?:[a-z0-9]{0,8})?(?:pre[\\s-]*lab|prelab|lab(?:oratory)?)\\s*#?\\s*0*(\\d{1,3})(?:[a-z](?:\\.\\d+)?)?(?=$|${B})`, 'ig'),
     () => new RegExp(`(?:^|${B})#?0*(\\d{1,3})\\s*(?:pre[\\s-]*lab|prelab|lab(?:oratory)?)(?=$|${B})`, 'ig')
   ];
 
@@ -411,6 +411,55 @@ for (const r of berkBioNew) {
   console.log(`    ✓ "${r.item.title}" → lab#[${nums}]`);
 }
 
+console.log('\n── Test: synthetic "bio lab" pulls Lab 9 page siblings ──');
+const syntheticBioLab9 = {
+  indexedContent: [
+    {
+      title: 'Lab 9 Vertebrate Anatomy Report',
+      courseName: '2026 Spring Biology 1AL',
+      type: 'assignment',
+      url: 'https://example.edu/courses/1/assignments/91',
+      dueAt: '2026-03-17T06:59:59Z'
+    },
+    {
+      title: 'Lab 9 Pre-Lab Assessment',
+      courseName: '2026 Spring Biology 1AL',
+      type: 'assignment',
+      url: 'https://example.edu/courses/1/assignments/92',
+      dueAt: '2026-03-16T06:59:59Z'
+    },
+    {
+      title: 'Lab 9A - Vertebrate Anatomy Introduction',
+      courseName: '2026 Spring Biology 1AL',
+      type: 'page',
+      url: 'https://example.edu/courses/1/pages/lab-9a'
+    },
+    {
+      title: 'Lab 9B - Rodent Dissection: External Features',
+      courseName: '2026 Spring Biology 1AL',
+      type: 'page',
+      url: 'https://example.edu/courses/1/pages/lab-9b'
+    },
+    {
+      title: 'Lab 9C - Rodent Dissection: Subcutaneous Anatomy',
+      courseName: '2026 Spring Biology 1AL',
+      type: 'page',
+      url: 'https://example.edu/courses/1/pages/lab-9c'
+    }
+  ]
+};
+resetState(syntheticBioLab9);
+const syntheticBioAnchors = makeTemporalAnchors('Biology 1AL', t => t.includes('lab') || t.includes('laboratory') || t.includes('pre'));
+const syntheticBioExpanded = expandTemporalLabSiblings(syntheticBioAnchors, expandAbbreviations('bio lab'), null);
+const syntheticBioNewTitles = syntheticBioExpanded
+  .filter(r => r.temporalLabExpansion)
+  .map(r => r.item.title);
+assert(syntheticBioNewTitles.some(title => /Lab 9A/i.test(title)), 'Synthetic Bio Lab 9A page expands from broad "bio lab" query');
+assert(syntheticBioNewTitles.some(title => /Lab 9B/i.test(title)), 'Synthetic Bio Lab 9B page expands from broad "bio lab" query');
+assert(syntheticBioNewTitles.some(title => /Lab 9C/i.test(title)), 'Synthetic Bio Lab 9C page expands from broad "bio lab" query');
+
+resetState(berkeleyData);
+
 // Test 6: CRITICAL — Berkeley Chem 3BL uses LETTER-based labs ("PreLab B", "Lab A")
 console.log('\n── Test: "chem lab this week" (Berkeley Chem 3BL - LETTER-based labs) ──');
 
@@ -508,6 +557,9 @@ const berkeleyPatternTests = [
   { title: 'Lab 5 Pre-Lab Assessment ', expected: ['5'], desc: 'Bio 1AL standard numbering' },
   { title: 'Lab 1 Safety, Graphing & Stats Report', expected: ['1'], desc: 'Bio 1AL report' },
   { title: 'Lab 3 Cells Report', expected: ['3'], desc: 'Bio 1AL cells report' },
+  { title: 'Lab 9A - Vertebrate Anatomy Introduction', expected: ['9'], desc: 'letter suffix maps to base lab number' },
+  { title: 'Lab 9B - Rodent Dissection: External Features', expected: ['9'], desc: 'letter suffix B maps to base lab number' },
+  { title: 'Lab 9A.1 - Optional Review Video', expected: ['9'], desc: 'letter suffix with dotted subsection maps to base lab number' },
   // Numbered with colon (Chem 1AL) — colon is now a valid boundary
   { title: 'Lab 1: Airbags Prelab Quiz', expected: ['1'], desc: 'colon after number (Chem 1AL)' },
   { title: 'Lab 2: Smells Prelab Quiz', expected: ['2'], desc: 'colon after number (Chem 1AL)' },

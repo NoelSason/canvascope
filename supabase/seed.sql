@@ -1,0 +1,2 @@
+-- Intentionally empty.
+-- Keeping a committed seed file makes `supabase db reset --local` deterministic in release tests.

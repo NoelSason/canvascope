@@ -180,7 +180,8 @@ const INTENT_PATTERNS = {
   assignment: /\b(hw|homework|pset|problem\s*set|project|lab|worksheet|due|assn|assign|proj)\b/,
   quiz: /\b(quiz|midterm|exam|final|mt|test)\b/,
   page: /\b(lecture|notes|slides|reading|chapter|lec|ch|chap)\b/,
-  file: /\b(pdf|doc|file|handout|document)\b/
+  file: /\b(pdf|doc|file|handout|document|worksheet|lecture|exam)\b/,
+  recency: /\b(latest|newest|recent|last|current)\b/
 };
 
 // Intent ↔ item.type mapping
@@ -188,17 +189,18 @@ const INTENT_TYPE_MAP = {
   assignment: ['assignment'],
   quiz: ['quiz'],
   page: ['page', 'video', 'slides'],
-  file: ['file', 'pdf', 'document']
+  file: ['file', 'pdf', 'document'],
+  recency: [] // Handled separately in score calculation
 };
 
-const INTENT_MAX_BOOST = { assignment: 0.22, quiz: 0.22, page: 0.16, file: 0.16 };
-const INTENT_CAP = 0.25;
+const INTENT_MAX_BOOST = { assignment: 0.22, quiz: 0.22, page: 0.16, file: 0.20 };
+const INTENT_CAP = 0.40;
 
 /**
- * Detect query intent — returns { assignment, quiz, page, file } confidences [0..1]
+ * Detect query intent — returns { assignment, quiz, page, file, recency } confidences [0..1]
  */
 function detectQueryIntent(normalizedQuery) {
-  const intent = { assignment: 0, quiz: 0, page: 0, file: 0 };
+  const intent = { assignment: 0, quiz: 0, page: 0, file: 0, recency: 0 };
   for (const [key, re] of Object.entries(INTENT_PATTERNS)) {
     intent[key] = re.test(normalizedQuery) ? 1.0 : 0;
   }
@@ -312,10 +314,17 @@ function applyTemporalFilter(results, temporalKind) {
 
   return results.filter(r => {
     const item = r?.item;
-    if (!item || !isTemporalTask(item) || !item.dueAt) return false;
-    const dueTs = new Date(item.dueAt).getTime();
-    if (!Number.isFinite(dueTs) || dueTs <= 0) return false;
-    return Math.abs(dueTs - anchorTs) <= radiusMs;
+    if (!item) return false;
+    
+    let ts = null;
+    if (isTemporalTask(item) && item.dueAt) {
+      ts = new Date(item.dueAt).getTime();
+    } else if (item.createdAt || item.updatedAt) {
+      ts = new Date(item.updatedAt || item.createdAt).getTime();
+    }
+    
+    if (!ts || !Number.isFinite(ts) || ts <= 0) return false;
+    return Math.abs(ts - anchorTs) <= radiusMs;
   });
 }
 
@@ -323,10 +332,15 @@ function filterItemsByTemporalWindow(items, temporalKind) {
   if (!temporalKind) return items;
   const { anchorTs, radiusMs } = getTemporalWindow(temporalKind);
   return (items || []).filter(item => {
-    if (!isTemporalTask(item) || !item.dueAt) return false;
-    const dueTs = new Date(item.dueAt).getTime();
-    if (!Number.isFinite(dueTs) || dueTs <= 0) return false;
-    return Math.abs(dueTs - anchorTs) <= radiusMs;
+    let ts = null;
+    if (isTemporalTask(item) && item.dueAt) {
+      ts = new Date(item.dueAt).getTime();
+    } else if (item.createdAt || item.updatedAt) {
+      ts = new Date(item.updatedAt || item.createdAt).getTime();
+    }
+    
+    if (!ts || !Number.isFinite(ts) || ts <= 0) return false;
+    return Math.abs(ts - anchorTs) <= radiusMs;
   });
 }
 
@@ -384,26 +398,490 @@ function computeTokenCoverage(normalizedQuery, titleText, contextText) {
 // ============================================
 // CLICK FEEDBACK
 // ============================================
+// ADAPTIVE LEARNING & SEARCH HABITS
+// ============================================
 
-let clickFeedbackMap = {}; // keyed by canonical path, { openCount, lastOpenedAt }
+let clickFeedbackMap = {}; // Legacy fallback
+const WEEKLY_HABIT_SLOT_HOURS = 2;
+const WEEKLY_HABIT_MIN_STREAK = 3;
+const WEEKLY_HABIT_MAX_LOOKAHEAD_WEEKS = 4;
+const BACKEND_SUGGESTION_STALE_MS = 60 * 1000;
+const ADAPTIVE_SEARCH_TASK_TOKENS = new Set(['lab', 'prelab', 'quiz', 'assignment', 'homework', 'discussion']);
+
+function createEmptySearchHabits() {
+  return {
+    globalClicks: {},
+    queryAffinity: {},
+    weeklyQueryPatterns: {}
+  };
+}
+
+function normalizeSearchHabits(rawHabits) {
+  const source = rawHabits && typeof rawHabits === 'object' ? rawHabits : {};
+  return {
+    ...createEmptySearchHabits(),
+    ...source,
+    globalClicks: source.globalClicks && typeof source.globalClicks === 'object' ? source.globalClicks : {},
+    queryAffinity: source.queryAffinity && typeof source.queryAffinity === 'object' ? source.queryAffinity : {},
+    weeklyQueryPatterns: source.weeklyQueryPatterns && typeof source.weeklyQueryPatterns === 'object' ? source.weeklyQueryPatterns : {}
+  };
+}
+
+function getWeeklyHabitSlotKey(timestamp = Date.now()) {
+  const { localDayOfWeek, localHourBucket } = getAdaptiveSearchSlotContext(timestamp);
+  return `${localDayOfWeek}:${localHourBucket}`;
+}
+
+function getContinuousWeekIndex(timestamp = Date.now()) {
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  const date = new Date(timestamp);
+  const localMidnight = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+  const mondayOffset = (date.getDay() + 6) % 7; // Monday = 0
+  const mondayStart = localMidnight - (mondayOffset * DAY_MS);
+  return Math.floor(mondayStart / (7 * DAY_MS));
+}
+
+function containsAdaptiveSearchTaskToken(tokens) {
+  return (tokens || []).some(token => ADAPTIVE_SEARCH_TASK_TOKENS.has(token));
+}
+
+function deriveAdaptiveBaseQuery(normalizedQuery) {
+  const cleanQuery = normalizeText(normalizedQuery || '');
+  if (!cleanQuery) return '';
+  const tokens = cleanQuery.split(/\s+/).filter(Boolean);
+  if (tokens.length < 2 || !containsAdaptiveSearchTaskToken(tokens)) return '';
+  return cleanQuery;
+}
+
+function extractAdaptiveSearchPattern(query) {
+  const normalized = normalizeText(query || '');
+  if (!normalized) return null;
+
+  const tokens = normalized.split(/\s+/).filter(Boolean);
+  if (tokens.length < 3) return null;
+
+  const lastToken = tokens[tokens.length - 1];
+  if (!/^\d{1,3}$/.test(lastToken)) return null;
+
+  const baseTokens = tokens.slice(0, -1);
+  if (baseTokens.length < 2 || !containsAdaptiveSearchTaskToken(baseTokens)) return null;
+
+  return {
+    baseQuery: baseTokens.join(' '),
+    weekNumber: Number(lastToken)
+  };
+}
+
+function extractWeeklyHabitPattern(query) {
+  return extractAdaptiveSearchPattern(query);
+}
+
+function getAdaptiveSearchSlotContext(timestamp = Date.now()) {
+  const date = new Date(timestamp);
+  const localDayOfWeek = date.getDay();
+  const localHourBucket = Math.floor(date.getHours() / WEEKLY_HABIT_SLOT_HOURS) * WEEKLY_HABIT_SLOT_HOURS;
+  let localTimezone = 'UTC';
+
+  try {
+    localTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  } catch (e) { /* ignore timezone lookup errors */ }
+
+  return {
+    localTimezone,
+    localDayOfWeek,
+    localHourBucket,
+    localWeekIndex: getContinuousWeekIndex(timestamp),
+    slotKey: `${localDayOfWeek}:${localHourBucket}`
+  };
+}
+
+function buildWeeklyHabitQuery(baseQuery, weekNumber) {
+  const normalizedBase = normalizeText(baseQuery || '');
+  const normalizedWeek = Number(weekNumber);
+  if (!normalizedBase || !Number.isFinite(normalizedWeek) || normalizedWeek <= 0) return '';
+  return `${normalizedBase} ${normalizedWeek}`.trim();
+}
+
+function recordWeeklyHabitQueryClick(query, timestamp = Date.now()) {
+  const pattern = extractAdaptiveSearchPattern(query);
+  if (!pattern || !state.searchHabits) return;
+
+  const patternKey = pattern.baseQuery;
+  const slotKey = getWeeklyHabitSlotKey(timestamp);
+  const currentWeekIndex = getContinuousWeekIndex(timestamp);
+
+  if (!state.searchHabits.weeklyQueryPatterns[patternKey]) {
+    state.searchHabits.weeklyQueryPatterns[patternKey] = {
+      baseQuery: pattern.baseQuery,
+      lastClickedAt: 0,
+      slots: {}
+    };
+  }
+
+  const entry = state.searchHabits.weeklyQueryPatterns[patternKey];
+  const slotEntry = entry.slots[slotKey] || {
+    totalClicks: 0,
+    distinctWeekCount: 0,
+    streakCount: 0,
+    lastWeekIndex: null,
+    lastWeekNumber: null,
+    lastClickedAt: 0
+  };
+
+  slotEntry.totalClicks += 1;
+
+  if (slotEntry.lastWeekIndex !== currentWeekIndex) {
+    slotEntry.distinctWeekCount += 1;
+    const expectedNextWeekNumber = Number.isFinite(slotEntry.lastWeekNumber)
+      ? slotEntry.lastWeekNumber + 1
+      : pattern.weekNumber;
+    const isConsecutiveWeek = slotEntry.lastWeekIndex !== null && currentWeekIndex === slotEntry.lastWeekIndex + 1;
+    const followsWeeklyProgression = pattern.weekNumber === expectedNextWeekNumber;
+
+    if (isConsecutiveWeek && followsWeeklyProgression) {
+      slotEntry.streakCount += 1;
+    } else {
+      slotEntry.streakCount = 1;
+    }
+
+    slotEntry.lastWeekIndex = currentWeekIndex;
+  } else if (slotEntry.streakCount === 0) {
+    slotEntry.streakCount = 1;
+  }
+
+  slotEntry.lastWeekNumber = pattern.weekNumber;
+  slotEntry.lastClickedAt = timestamp;
+
+  entry.baseQuery = pattern.baseQuery;
+  entry.lastClickedAt = timestamp;
+  entry.slots[slotKey] = slotEntry;
+}
+
+function getWeeklyHabitSuggestions(nowTs = Date.now()) {
+  if (!state.extensionSettings?.enableAdaptiveLearning || !state.searchHabits?.weeklyQueryPatterns) return [];
+
+  const slotKey = getWeeklyHabitSlotKey(nowTs);
+  const currentWeekIndex = getContinuousWeekIndex(nowTs);
+  const suggestions = [];
+
+  for (const entry of Object.values(state.searchHabits.weeklyQueryPatterns)) {
+    const baseQuery = normalizeText(entry?.baseQuery || '');
+    const slotEntry = entry?.slots?.[slotKey];
+    if (!baseQuery || !slotEntry) continue;
+    if ((slotEntry.streakCount || 0) < WEEKLY_HABIT_MIN_STREAK) continue;
+    if (!Number.isFinite(slotEntry.lastWeekIndex) || !Number.isFinite(slotEntry.lastWeekNumber)) continue;
+
+    const weeksSinceLast = currentWeekIndex - slotEntry.lastWeekIndex;
+    if (weeksSinceLast < 1 || weeksSinceLast > WEEKLY_HABIT_MAX_LOOKAHEAD_WEEKS) continue;
+
+    const predictedWeekNumber = slotEntry.lastWeekNumber + weeksSinceLast;
+    const query = buildWeeklyHabitQuery(baseQuery, predictedWeekNumber);
+    if (!query) continue;
+
+    const confidence = Math.min(
+      10,
+      (slotEntry.streakCount * 1.4)
+      + Math.min(2, slotEntry.distinctWeekCount * 0.25)
+      + Math.min(2, slotEntry.totalClicks * 0.15)
+    );
+
+    suggestions.push({
+      query,
+      baseQuery,
+      predictedWeekNumber,
+      confidence,
+      slotKey,
+      lastClickedAt: slotEntry.lastClickedAt || entry.lastClickedAt || 0,
+      source: 'local'
+    });
+  }
+
+  const seen = new Set();
+  return suggestions
+    .sort((a, b) => {
+      if (b.confidence !== a.confidence) return b.confidence - a.confidence;
+      if ((b.lastClickedAt || 0) !== (a.lastClickedAt || 0)) return (b.lastClickedAt || 0) - (a.lastClickedAt || 0);
+      return a.query.localeCompare(b.query);
+    })
+    .filter((suggestion) => {
+      if (seen.has(suggestion.query)) return false;
+      seen.add(suggestion.query);
+      return true;
+    });
+}
+
+function normalizeBackendAdaptiveSuggestions(rawSuggestions) {
+  if (!Array.isArray(rawSuggestions)) return [];
+  const seen = new Set();
+  const normalized = [];
+
+  for (const entry of rawSuggestions) {
+    const query = normalizeText(entry?.query || '');
+    const baseQuery = normalizeText(entry?.baseQuery || '');
+    if (!query || !baseQuery || seen.has(query)) continue;
+    seen.add(query);
+    normalized.push({
+      query,
+      baseQuery,
+      predictedWeekNumber: Number.isFinite(Number(entry?.predictedSequenceNumber))
+        ? Number(entry.predictedSequenceNumber)
+        : null,
+      confidence: Number.isFinite(Number(entry?.confidence)) ? Number(entry.confidence) : 0,
+      slotMatch: entry?.slotMatch !== false,
+      source: 'backend'
+    });
+  }
+
+  return normalized.sort((a, b) => {
+    if (b.confidence !== a.confidence) return b.confidence - a.confidence;
+    if (a.slotMatch !== b.slotMatch) return a.slotMatch ? -1 : 1;
+    return a.query.localeCompare(b.query);
+  });
+}
+
+function getAdaptiveSuggestionEntries(nowTs = Date.now()) {
+  const currentSlotKey = getWeeklyHabitSlotKey(nowTs);
+  const hasFreshBackendSuggestions = Array.isArray(state.backendAdaptiveSuggestions)
+    && state.backendAdaptiveSuggestions.length > 0
+    && state.backendAdaptiveSuggestionsSlotKey === currentSlotKey;
+
+  if (hasFreshBackendSuggestions) {
+    return state.backendAdaptiveSuggestions;
+  }
+
+  return getWeeklyHabitSuggestions(nowTs);
+}
+
+function getWeeklyHabitBoostQuery(normalizedQuery) {
+  const cleanQuery = normalizeText(normalizedQuery || '');
+  if (!cleanQuery) return null;
+
+  const suggestions = getAdaptiveSuggestionEntries();
+  const match = suggestions.find((suggestion) => suggestion.baseQuery === cleanQuery);
+  return match ? match.query : null;
+}
+
+function buildAdaptiveSearchEventPayload(eventKind, rawQuery, overrides = {}) {
+  const raw = String(rawQuery || '').trim().slice(0, 240);
+  const normalizedQuery = normalizeText(overrides.normalizedQuery || raw);
+  const detectedPattern = extractAdaptiveSearchPattern(overrides.baseQuery || normalizedQuery);
+  const baseQuery = normalizeText(
+    overrides.baseQuery
+      || detectedPattern?.baseQuery
+      || deriveAdaptiveBaseQuery(normalizedQuery)
+  );
+  const explicitSequenceNumber = Number(overrides.sequenceNumber);
+  const sequenceNumber = Number.isFinite(explicitSequenceNumber)
+    ? Math.max(1, Math.trunc(explicitSequenceNumber))
+    : (detectedPattern?.weekNumber ?? null);
+  const slotContext = getAdaptiveSearchSlotContext(overrides.timestamp || Date.now());
+
+  return {
+    eventKind,
+    rawQuery: raw,
+    normalizedQuery,
+    baseQuery,
+    sequenceNumber,
+    localTimezone: slotContext.localTimezone,
+    localDayOfWeek: slotContext.localDayOfWeek,
+    localHourBucket: slotContext.localHourBucket,
+    localWeekIndex: slotContext.localWeekIndex,
+    clickedItemId: overrides.clickedItemId || null,
+    clickedItemType: overrides.clickedItemType || null
+  };
+}
+
+function recordAdaptiveSearchEvent(eventKind, rawQuery, overrides = {}) {
+  if (!state.extensionSettings?.enableAdaptiveLearning) return Promise.resolve(false);
+  if (!chrome?.runtime?.sendMessage) return Promise.resolve(false);
+
+  const payload = buildAdaptiveSearchEventPayload(eventKind, rawQuery, overrides);
+  if (!payload.normalizedQuery) return Promise.resolve(false);
+
+  return new Promise((resolve) => {
+    try {
+      chrome.runtime.sendMessage({ type: 'recordAdaptiveSearchEvent', event: payload }, (response) => {
+        if (chrome.runtime?.lastError) {
+          resolve(false);
+          return;
+        }
+        resolve(Boolean(response?.success));
+      });
+    } catch (e) {
+      resolve(false);
+    }
+  });
+}
+
+async function loadBackendAdaptiveSuggestions({ prefix = '', force = false } = {}) {
+  if (!state.extensionSettings?.enableAdaptiveLearning || !chrome?.runtime?.sendMessage) {
+    state.backendAdaptiveSuggestions = [];
+    return [];
+  }
+
+  const slotContext = getAdaptiveSearchSlotContext();
+  const now = Date.now();
+  const normalizedPrefix = normalizeText(prefix || '');
+  const cacheIsFresh = !force
+    && state.backendAdaptiveSuggestionsLoadedAt
+    && (now - state.backendAdaptiveSuggestionsLoadedAt) < BACKEND_SUGGESTION_STALE_MS
+    && state.backendAdaptiveSuggestionsSlotKey === slotContext.slotKey
+    && state.backendAdaptiveSuggestionsPrefix === normalizedPrefix;
+
+  if (cacheIsFresh) {
+    return state.backendAdaptiveSuggestions;
+  }
+
+  if (state.backendAdaptiveSuggestionsPending) {
+    return state.backendAdaptiveSuggestions || [];
+  }
+
+  state.backendAdaptiveSuggestionsPending = true;
+
+  return new Promise((resolve) => {
+    try {
+      chrome.runtime.sendMessage({
+        type: 'fetchAdaptiveSearchSuggestions',
+        context: {
+          localTimezone: slotContext.localTimezone,
+          localDayOfWeek: slotContext.localDayOfWeek,
+          localHourBucket: slotContext.localHourBucket,
+          prefix: normalizedPrefix || undefined
+        }
+      }, (response) => {
+        state.backendAdaptiveSuggestionsPending = false;
+
+        if (chrome.runtime?.lastError || !response?.success) {
+          if (force) {
+            state.backendAdaptiveSuggestions = [];
+            state.backendAdaptiveSuggestionsSlotKey = slotContext.slotKey;
+            state.backendAdaptiveSuggestionsPrefix = normalizedPrefix;
+            state.backendAdaptiveSuggestionsLoadedAt = now;
+          }
+          resolve(state.backendAdaptiveSuggestions || []);
+          return;
+        }
+
+        state.backendAdaptiveSuggestions = normalizeBackendAdaptiveSuggestions(response.suggestions);
+        state.backendAdaptiveSuggestionsSlotKey = slotContext.slotKey;
+        state.backendAdaptiveSuggestionsPrefix = normalizedPrefix;
+        state.backendAdaptiveSuggestionsLoadedAt = now;
+        resolve(state.backendAdaptiveSuggestions);
+      });
+    } catch (e) {
+      state.backendAdaptiveSuggestionsPending = false;
+      resolve(state.backendAdaptiveSuggestions || []);
+    }
+  });
+}
+
+function reportBackendSuggestionImpressions(suggestions, timestamp = Date.now()) {
+  if (!Array.isArray(suggestions) || suggestions.length === 0) return;
+  if (!state.reportedAdaptiveSuggestionKeys) {
+    state.reportedAdaptiveSuggestionKeys = new Set();
+  }
+
+  const slotKey = getWeeklyHabitSlotKey(timestamp);
+  for (const suggestion of suggestions) {
+    if (!suggestion || suggestion.source !== 'backend') continue;
+    const impressionKey = `${slotKey}:${suggestion.query}`;
+    if (state.reportedAdaptiveSuggestionKeys.has(impressionKey)) continue;
+    state.reportedAdaptiveSuggestionKeys.add(impressionKey);
+    void recordAdaptiveSearchEvent('suggestion_shown', suggestion.query, {
+      baseQuery: suggestion.baseQuery,
+      sequenceNumber: suggestion.predictedWeekNumber,
+      timestamp
+    });
+  }
+}
+
+function trackAdaptiveQuerySubmission(rawQuery, normalizedQuery) {
+  const cleanRawQuery = String(rawQuery || '').trim();
+  const cleanNormalizedQuery = normalizeText(normalizedQuery || cleanRawQuery);
+  if (!cleanNormalizedQuery) return;
+
+  const now = Date.now();
+  const lastSubmission = state.lastAdaptiveSearchSubmission || { query: '', at: 0 };
+  if (lastSubmission.query === cleanNormalizedQuery && (now - lastSubmission.at) < 4000) {
+    return;
+  }
+
+  state.lastAdaptiveSearchSubmission = { query: cleanNormalizedQuery, at: now };
+  void recordAdaptiveSearchEvent('query_submitted', cleanRawQuery, {
+    normalizedQuery: cleanNormalizedQuery,
+    timestamp: now
+  });
+}
 
 async function loadClickFeedbackMap() {
   try {
-    const data = await chrome.storage.local.get(['clickFeedback']);
-    clickFeedbackMap = data.clickFeedback || {};
-  } catch (e) { clickFeedbackMap = {}; }
+    const data = await chrome.storage.local.get(['searchHabits', 'clickFeedback']);
+    state.searchHabits = normalizeSearchHabits(data.searchHabits);
+    // Migrate old click feedback local cache
+    if (data.clickFeedback && Object.keys(data.clickFeedback).length > 0) {
+      state.searchHabits.globalClicks = { ...data.clickFeedback, ...state.searchHabits.globalClicks };
+      await chrome.storage.local.remove('clickFeedback');
+    }
+
+    // Pull legacy fallback state from backend for existing users.
+    chrome.runtime.sendMessage({ type: 'fetchAdaptiveSearchState' }, (response) => {
+      if (chrome.runtime.lastError) return;
+      if (response && response.success && response.state) {
+        if (response.state.habits) {
+          state.searchHabits = normalizeSearchHabits(response.state.habits);
+        }
+        if (response.state.enabled !== undefined && state.extensionSettings) {
+          state.extensionSettings.enableAdaptiveLearning = response.state.enabled;
+          const toggle = document.getElementById('enable-adaptive-learning');
+          if (toggle) toggle.checked = state.extensionSettings.enableAdaptiveLearning;
+        }
+        chrome.storage.local.set({ searchHabits: state.searchHabits });
+      }
+    });
+
+  } catch (e) {
+    state.searchHabits = createEmptySearchHabits();
+  }
 }
 
-async function updateClickFeedback(item) {
+function debouncedSyncSearchHabits() {
+  // Search-habit authority now lives in Supabase event + pattern tables.
+  // Keep local fallback state on-device only during rollout.
+}
+
+async function updateSearchHabits(item, query = '') {
+  if (!state.extensionSettings?.enableAdaptiveLearning) return;
   const key = getClickKey(item);
   if (!key) return;
-  const entry = clickFeedbackMap[key] || { openCount: 0, lastOpenedAt: 0 };
-  entry.openCount++;
-  entry.lastOpenedAt = Date.now();
-  clickFeedbackMap[key] = entry;
+
+  if (!state.searchHabits) state.searchHabits = createEmptySearchHabits();
+
+  // 1. Update Global Clicks
+  const globalEntry = state.searchHabits.globalClicks[key] || { openCount: 0, lastOpenedAt: 0 };
+  globalEntry.openCount++;
+  globalEntry.lastOpenedAt = Date.now();
+  state.searchHabits.globalClicks[key] = globalEntry;
+
+  // 2. Update Query Affinity
+  const cleanQ = (query || '').toLowerCase().trim();
+  if (cleanQ) {
+    if (!state.searchHabits.queryAffinity[cleanQ]) state.searchHabits.queryAffinity[cleanQ] = {};
+    const currentAffinity = state.searchHabits.queryAffinity[cleanQ][key] || 0;
+    state.searchHabits.queryAffinity[cleanQ][key] = currentAffinity + 1;
+    recordWeeklyHabitQueryClick(cleanQ, globalEntry.lastOpenedAt);
+  }
+
+  // Constrain storage size (keep top 500 queries)
+  const queryKeys = Object.keys(state.searchHabits.queryAffinity);
+  if (queryKeys.length > 500) {
+    const toRemove = queryKeys.slice(0, 100); // Remove oldest
+    for (const q of toRemove) delete state.searchHabits.queryAffinity[q];
+  }
+
   try {
-    await chrome.storage.local.set({ clickFeedback: clickFeedbackMap });
-  } catch (e) { /* ignore */ }
+    await chrome.storage.local.set({ searchHabits: state.searchHabits });
+    debouncedSyncSearchHabits();
+  } catch (e) { /* ignore quota errors */ }
 }
 
 function getClickKey(item) {
@@ -414,16 +892,34 @@ function getClickKey(item) {
   } catch { return null; }
 }
 
-function getClickBoost(item) {
+function getAdaptiveLearningBoost(item, query = '') {
+  if (!state.extensionSettings?.enableAdaptiveLearning || !state.searchHabits) return 0;
   const key = getClickKey(item);
-  if (!key || !clickFeedbackMap[key]) return 0;
-  const { openCount, lastOpenedAt } = clickFeedbackMap[key];
-  // Frequency boost: log-scaled, max ~0.15
-  const freqBoost = Math.min(0.15, Math.log2(1 + openCount) * 0.05);
-  // Recency boost: decays over 14 days, max 0.10
-  const daysSinceOpen = (Date.now() - lastOpenedAt) / (1000 * 60 * 60 * 24);
-  const recencyBoost = Math.max(0, 0.10 - daysSinceOpen * (0.10 / 14));
-  return Math.min(0.25, freqBoost + recencyBoost);
+  if (!key) return 0;
+
+  let boost = 0;
+
+  // 1. Query-Specific Affinity (Massive Boost)
+  const cleanQ = (query || '').toLowerCase().trim();
+  if (cleanQ && state.searchHabits.queryAffinity[cleanQ]) {
+    const affinityHits = state.searchHabits.queryAffinity[cleanQ][key] || 0;
+    if (affinityHits > 0) {
+      // Strong behavioral reinflation (e.g., 1 click = +0.6, 3 clicks = +1.2)
+      boost += Math.min(2.0, 0.4 + (affinityHits * 0.3));
+    }
+  }
+
+  // 2. Global Baseline Recency
+  const globalEntry = state.searchHabits.globalClicks[key];
+  if (globalEntry) {
+    const { openCount, lastOpenedAt } = globalEntry;
+    const freqBoost = Math.min(0.20, Math.log2(1 + openCount) * 0.05);
+    const daysSinceOpen = (Date.now() - lastOpenedAt) / (1000 * 60 * 60 * 24);
+    const recencyBoost = Math.max(0, 0.15 - daysSinceOpen * (0.15 / 14));
+    boost += Math.min(0.35, freqBoost + recencyBoost);
+  }
+
+  return boost;
 }
 
 // ============================================
@@ -1390,6 +1886,12 @@ function itemMatchesCourseScope(item, courseScope) {
   return new RegExp(`^${courseScope.coursePrefix}(\\s|$)`).test(itemCourse);
 }
 
+function itemMatchesCourseContext(item, courseScope, courseHintSignals) {
+  if (courseScope) return itemMatchesCourseScope(item, courseScope);
+  if (courseHintSignals?.hasHint) return itemMatchesCourseHints(item, courseHintSignals);
+  return true;
+}
+
 function isLabLikeQuery(normalizedQuery) {
   const q = String(normalizedQuery || '').toLowerCase();
   return q.includes('lab') || q.includes('laboratory');
@@ -1425,8 +1927,8 @@ function extractLabSequenceNumbers(item) {
   const B = '[\\s_|/.:;,#=-]';
 
   const directPatterns = [
-    // "Lab 5", "prelab5", "1BLprelab5", "Lab #05", "Lab 1: Airbags", "laboratory 3", etc.
-    () => new RegExp(`(?:^|${B})(?:[a-z0-9]{0,8})?(?:pre[\\s-]*lab|prelab|lab(?:oratory)?)\\s*#?\\s*0*(\\d{1,3})(?=$|${B})`, 'ig'),
+    // "Lab 5", "Lab 9A", "Lab 9A.1", "prelab5", "1BLprelab5", "Lab #05", "Lab 1: Airbags", etc.
+    () => new RegExp(`(?:^|${B})(?:[a-z0-9]{0,8})?(?:pre[\\s-]*lab|prelab|lab(?:oratory)?)\\s*#?\\s*0*(\\d{1,3})(?:[a-z](?:\\.\\d+)?)?(?=$|${B})`, 'ig'),
     // Reverse: "5 Lab", "#5 lab" — number before the lab keyword
     () => new RegExp(`(?:^|${B})#?0*(\\d{1,3})\\s*(?:pre[\\s-]*lab|prelab|lab(?:oratory)?)(?=$|${B})`, 'ig')
   ];
@@ -1527,6 +2029,340 @@ function expandTemporalLabSiblings(results, normalizedQuery, courseScope) {
   }
 
   return expanded;
+}
+
+function getLabSequenceGroupKey(item) {
+  const courseKey = normalizeText(item?.courseName || '');
+  const sequenceNumbers = extractLabSequenceNumbers(item)
+    .map(value => String(value || '').trim())
+    .filter(Boolean)
+    .sort((a, b) => Number(a) - Number(b));
+
+  if (!courseKey || sequenceNumbers.length === 0) return '';
+  return `${courseKey}::${sequenceNumbers.join('|')}`;
+}
+
+const IMPLICIT_CURRENT_WEEK_TASK_TOKENS = new Set([
+  'lab',
+  'laboratory',
+  'prelab',
+  'quiz',
+  'assignment',
+  'homework',
+  'discussion'
+]);
+const IMPLICIT_CURRENT_WEEK_EXCLUDED_SUBJECT_TOKENS = new Set([
+  'latest',
+  'newest',
+  'recent',
+  'current',
+  'today',
+  'yesterday',
+  'week',
+  'last',
+  'module',
+  'page',
+  'file',
+  'folder'
+]);
+
+function getImplicitCurrentWeekTaskFamily(token) {
+  if (token === 'lab' || token === 'laboratory' || token === 'prelab') return 'lab';
+  if (token === 'quiz') return 'quiz';
+  if (token === 'discussion') return 'discussion';
+  if (token === 'assignment' || token === 'homework') return 'assignment';
+  return null;
+}
+
+function tokenMatchesCourseHint(token, hintSignals) {
+  if (!hintSignals?.hasHint || !token) return false;
+
+  const subjectIndex = getSubjectKeywordIndex();
+  const expanded = expandAbbreviations(token);
+  const variants = expanded !== token ? [token, ...expanded.split(/\s+/)] : [token];
+
+  for (const variant of variants) {
+    const matchingCourses = subjectIndex.get(variant);
+    if (!matchingCourses || matchingCourses.size === 0) continue;
+    for (const courseKey of hintSignals.matchedCourseKeys) {
+      if (matchingCourses.has(courseKey)) return true;
+    }
+  }
+
+  return false;
+}
+
+function detectImplicitCurrentWeekMode(normalizedQuery, queryNums, courseScope, courseHintSignals, temporalKind) {
+  if (temporalKind || (queryNums && queryNums.length > 0)) {
+    return { enabled: false, taskFamily: null, tokens: [] };
+  }
+
+  const tokens = getMeaningfulQueryTokens(normalizedQuery);
+  if (tokens.length === 0 || tokens.length > 3) {
+    return { enabled: false, taskFamily: null, tokens };
+  }
+
+  const nonTaskTokens = tokens.filter(token => !IMPLICIT_CURRENT_WEEK_TASK_TOKENS.has(token));
+  const broadSubjectTaskFallback = !courseScope
+    && !courseHintSignals?.hasHint
+    && tokens.length === 2
+    && nonTaskTokens.length === 1
+    && !IMPLICIT_CURRENT_WEEK_EXCLUDED_SUBJECT_TOKENS.has(nonTaskTokens[0]);
+
+  if (!courseScope && !courseHintSignals?.hasHint && !broadSubjectTaskFallback) {
+    return { enabled: false, taskFamily: null, tokens };
+  }
+
+  const taskFamilies = new Set();
+  for (const token of tokens) {
+    if (!IMPLICIT_CURRENT_WEEK_TASK_TOKENS.has(token)) continue;
+    const family = getImplicitCurrentWeekTaskFamily(token);
+    if (family) taskFamilies.add(family);
+  }
+
+  if (taskFamilies.size !== 1) {
+    return { enabled: false, taskFamily: null, tokens };
+  }
+
+  const taskFamily = [...taskFamilies][0];
+  if (tokens.includes('prelab') && !tokens.includes('lab') && !tokens.includes('laboratory')) {
+    return { enabled: false, taskFamily: null, tokens, specificTokens: [] };
+  }
+  const specificTokens = tokens.filter((token) => {
+    if (IMPLICIT_CURRENT_WEEK_TASK_TOKENS.has(token)) return false;
+    if (courseScope) return true;
+    if (broadSubjectTaskFallback && token === nonTaskTokens[0]) return false;
+    if (courseHintSignals?.hasHint && tokens.length <= 2) return false;
+    return !tokenMatchesCourseHint(token, courseHintSignals);
+  });
+
+  if (specificTokens.length > 0) {
+    return { enabled: false, taskFamily: null, tokens, specificTokens };
+  }
+
+  return { enabled: true, taskFamily, tokens, specificTokens: [] };
+}
+
+function getItemSearchContext(item) {
+  return normalizeText([
+    item?.searchTitleNormalized || normalizeText(item?.title || ''),
+    item?.searchPathNormalized || normalizeText(item?.folderPath || ''),
+    item?.moduleName || '',
+    item?.courseName || '',
+    item?.type || ''
+  ].join(' '));
+}
+
+function matchesImplicitCurrentWeekTask(item, implicitMode) {
+  if (!implicitMode?.enabled || !isTaskType(item)) return false;
+
+  const searchable = getItemSearchContext(item);
+  switch (implicitMode.taskFamily) {
+    case 'lab':
+      return isLabContextItem(item);
+    case 'quiz':
+      return String(item?.type || '').toLowerCase() === 'quiz' || /\bquiz\b/.test(searchable);
+    case 'discussion':
+      return String(item?.type || '').toLowerCase() === 'discussion' || /\bdiscussion\b/.test(searchable);
+    case 'assignment':
+      return String(item?.type || '').toLowerCase() === 'assignment' || /\b(homework|assignment|problem set)\b/.test(searchable);
+    default:
+      return false;
+  }
+}
+
+function mergeResultMetadata(existing, incoming) {
+  if (!incoming) return existing;
+
+  existing.score = Math.min(
+    Number.isFinite(existing.score) ? existing.score : 1,
+    Number.isFinite(incoming.score) ? incoming.score : 1
+  );
+  existing.prePass = existing.prePass || incoming.prePass;
+  existing.implicitCurrentWeekAnchor = existing.implicitCurrentWeekAnchor || incoming.implicitCurrentWeekAnchor;
+  existing.implicitCurrentWeekSibling = existing.implicitCurrentWeekSibling || incoming.implicitCurrentWeekSibling;
+  existing.implicitCurrentWeekRelatedTask = existing.implicitCurrentWeekRelatedTask || incoming.implicitCurrentWeekRelatedTask;
+  existing.implicitCurrentWeekGroupKey = existing.implicitCurrentWeekGroupKey || incoming.implicitCurrentWeekGroupKey || '';
+  return existing;
+}
+
+function mergeSearchResults(results, additions) {
+  const merged = new Map();
+
+  for (const result of results || []) {
+    if (!result?.item?.url) continue;
+    merged.set(result.item.url, { ...result });
+  }
+
+  for (const addition of additions || []) {
+    if (!addition?.item?.url) continue;
+    if (merged.has(addition.item.url)) {
+      mergeResultMetadata(merged.get(addition.item.url), addition);
+    } else {
+      merged.set(addition.item.url, { ...addition });
+    }
+  }
+
+  return Array.from(merged.values());
+}
+
+function buildImplicitCurrentWeekContext(searchCorpus, rankingQuery, courseScope, courseHintSignals, implicitMode) {
+  if (!implicitMode?.enabled) {
+    return { enabled: false, extraResults: [], anchorGroupOrder: new Map(), anchorGroupMeta: new Map() };
+  }
+
+  const weeklyCandidates = filterItemsByTemporalWindow(searchCorpus, 'this_week');
+  const anchorResults = [];
+
+  for (const item of weeklyCandidates) {
+    if (!itemMatchesCourseContext(item, courseScope, courseHintSignals)) continue;
+    if (!matchesImplicitCurrentWeekTask(item, implicitMode)) continue;
+
+    const groupKey = getLabSequenceGroupKey(item) || `task::${canonicalTaskId(item)}`;
+    anchorResults.push({
+      item,
+      score: 0.24,
+      prePass: false,
+      implicitCurrentWeekAnchor: true,
+      implicitCurrentWeekGroupKey: groupKey
+    });
+  }
+
+  if (anchorResults.length === 0) {
+    return { enabled: false, extraResults: [], anchorGroupOrder: new Map(), anchorGroupMeta: new Map() };
+  }
+
+  const groupMeta = new Map();
+  const nowTs = Date.now();
+  for (const result of anchorResults) {
+    const groupKey = result.implicitCurrentWeekGroupKey;
+    const dueTs = parseDueTs(result.item);
+    if (!groupMeta.has(groupKey)) {
+      groupMeta.set(groupKey, {
+        earliestFutureDueTs: Number.MAX_SAFE_INTEGER,
+        latestOverdueDueTs: 0,
+        hasFutureAnchor: false
+      });
+    }
+
+    const meta = groupMeta.get(groupKey);
+    if (dueTs > 0 && dueTs >= nowTs) {
+      meta.hasFutureAnchor = true;
+      meta.earliestFutureDueTs = Math.min(meta.earliestFutureDueTs, dueTs);
+    } else if (dueTs > 0) {
+      meta.latestOverdueDueTs = Math.max(meta.latestOverdueDueTs, dueTs);
+    }
+  }
+
+  const anchorGroupOrder = new Map(
+    Array.from(groupMeta.entries())
+      .sort((a, b) => {
+        const left = a[1];
+        const right = b[1];
+        if (left.hasFutureAnchor !== right.hasFutureAnchor) return left.hasFutureAnchor ? -1 : 1;
+        if (left.hasFutureAnchor && right.hasFutureAnchor) {
+          return left.earliestFutureDueTs - right.earliestFutureDueTs;
+        }
+        return right.latestOverdueDueTs - left.latestOverdueDueTs;
+      })
+      .map(([groupKey], index) => [groupKey, index])
+  );
+
+  let extraResults = anchorResults.slice();
+
+  if (implicitMode.taskFamily === 'lab') {
+    const anchorUrls = new Set(anchorResults.map(result => result.item.url));
+    const expandedResults = expandTemporalLabSiblings(anchorResults, rankingQuery, courseScope);
+    const expandedAdditions = [];
+
+    for (const result of expandedResults) {
+      if (!result?.item?.url || anchorUrls.has(result.item.url)) continue;
+
+      const groupKey = getLabSequenceGroupKey(result.item);
+      if (!groupKey || !anchorGroupOrder.has(groupKey)) continue;
+
+      expandedAdditions.push({
+        ...result,
+        score: 0.28,
+        prePass: false,
+        implicitCurrentWeekGroupKey: groupKey,
+        implicitCurrentWeekSibling: !isTaskType(result.item),
+        implicitCurrentWeekRelatedTask: isTaskType(result.item)
+      });
+    }
+
+    extraResults = mergeSearchResults(extraResults, expandedAdditions);
+  }
+
+  return { enabled: true, extraResults, anchorGroupOrder, anchorGroupMeta: groupMeta };
+}
+
+function applyImplicitCurrentWeekOrdering(results, implicitContext) {
+  if (!implicitContext?.enabled) return results;
+
+  const nowTs = Date.now();
+  const groupOrder = implicitContext.anchorGroupOrder || new Map();
+  const groupMeta = implicitContext.anchorGroupMeta || new Map();
+
+  const descriptorFor = (result) => {
+    const item = result?.item || {};
+    const dueTs = parseDueTs(item);
+    const hasDue = dueTs > 0;
+    const completed = isCompletedTask(item);
+    const future = hasDue && dueTs >= nowTs;
+    const groupKey = result?.implicitCurrentWeekGroupKey || '';
+    const grouped = groupKey && groupOrder.has(groupKey);
+    const groupIdx = grouped ? groupOrder.get(groupKey) : Number.MAX_SAFE_INTEGER;
+    const groupInfo = grouped ? groupMeta.get(groupKey) : null;
+    const groupIsFuture = Boolean(groupInfo?.hasFutureAnchor);
+
+    if (completed) {
+      return [5, groupIdx, dueTs || Number.MAX_SAFE_INTEGER, 0];
+    }
+
+    if (result?.implicitCurrentWeekAnchor && future) {
+      return [0, groupIdx, dueTs || Number.MAX_SAFE_INTEGER, 0];
+    }
+
+    if (result?.implicitCurrentWeekSibling && grouped && groupIsFuture) {
+      return [0, groupIdx, Number.MAX_SAFE_INTEGER, 1];
+    }
+
+    if (future) {
+      return [1, groupIdx, dueTs, result?.implicitCurrentWeekRelatedTask ? 0 : 1];
+    }
+
+    if (!hasDue) {
+      return [2, groupIdx, Number.MAX_SAFE_INTEGER, result?.implicitCurrentWeekRelatedTask ? 0 : 1];
+    }
+
+    if (result?.implicitCurrentWeekAnchor && grouped && !groupIsFuture) {
+      return [3, groupIdx, -dueTs, 0];
+    }
+
+    if (result?.implicitCurrentWeekSibling && grouped && !groupIsFuture) {
+      return [3, groupIdx, Number.MAX_SAFE_INTEGER, 1];
+    }
+
+    return [3, groupIdx, -dueTs, 0];
+  };
+
+  return [...results].sort((left, right) => {
+    const leftDescriptor = descriptorFor(left);
+    const rightDescriptor = descriptorFor(right);
+
+    for (let index = 0; index < leftDescriptor.length; index++) {
+      if (leftDescriptor[index] !== rightDescriptor[index]) {
+        return leftDescriptor[index] - rightDescriptor[index];
+      }
+    }
+
+    if ((right.finalScore || 0) !== (left.finalScore || 0)) {
+      return (right.finalScore || 0) - (left.finalScore || 0);
+    }
+
+    return String(left.item?.title || '').localeCompare(String(right.item?.title || ''));
+  });
 }
 
 /**
@@ -1912,6 +2748,7 @@ const PDF_VIEWER_DEBUG = true;
 const POPUP_UI_STORAGE_KEY = 'popupUi';
 const DEFAULT_EXTENSION_SETTINGS = Object.freeze({
   enableSendToLectra: false,
+  enableAdaptiveLearning: true,
   selectedCourseFilters: [],
   customAlgorithm: DEFAULT_CUSTOM_ALGORITHM
 });
@@ -1947,7 +2784,14 @@ let state = {
   slashMode: createDefaultSlashModeState(),
   _courseCandidatesCache: null,
   _courseCandidatesVersion: 0,
-  dismissedTasks: []
+  dismissedTasks: [],
+  backendAdaptiveSuggestions: [],
+  backendAdaptiveSuggestionsLoadedAt: 0,
+  backendAdaptiveSuggestionsSlotKey: '',
+  backendAdaptiveSuggestionsPrefix: '',
+  backendAdaptiveSuggestionsPending: false,
+  lastAdaptiveSearchSubmission: { query: '', at: 0 },
+  reportedAdaptiveSuggestionKeys: new Set()
 };
 let selectedCourseFilterWritePromise = Promise.resolve();
 
@@ -1961,6 +2805,8 @@ function normalizeExtensionSettings(rawSettings) {
   return {
     ...DEFAULT_EXTENSION_SETTINGS,
     ...source,
+    enableSendToLectra: Boolean(source.enableSendToLectra),
+    enableAdaptiveLearning: source.enableAdaptiveLearning !== false,
     selectedCourseFilters,
     customAlgorithm: normalizeCustomAlgorithm(source.customAlgorithm)
   };
@@ -2013,6 +2859,10 @@ function applyExtensionSettingsUi() {
     elements.enableSendToLectraToggle.checked = Boolean(state.extensionSettings.enableSendToLectra);
   }
 
+  if (elements.enableAdaptiveLearningToggle) {
+    elements.enableAdaptiveLearningToggle.checked = Boolean(state.extensionSettings.enableAdaptiveLearning);
+  }
+
   const customAlgorithm = getStoredCustomAlgorithm();
 
   if (elements.enableCustomAlgorithmToggle) {
@@ -2055,7 +2905,6 @@ function updateAuthButtonUi({ label = null, disabled = false } = {}) {
   if (accountIcon) accountIcon.classList.toggle('hidden', !state.isSignedIn);
 
   elements.googleSignInBtn.style.backgroundColor = '';
-  elements.googleSignInBtn.style.color = '';
   elements.googleSignInBtn.style.borderColor = 'var(--glass-border)';
 }
 
@@ -2064,6 +2913,7 @@ function updateSettingsAccountUi() {
     elements.settingsProfile.classList.toggle('hidden', !state.isSignedIn);
   }
 
+  // Hide the setting-accounts card if the user is already signed in.
   if (elements.settingsAccountState) {
     elements.settingsAccountState.classList.toggle('hidden', state.isSignedIn);
   }
@@ -2305,6 +3155,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   const urlParams = new URLSearchParams(window.location.search);
   state.isOverlayMode = urlParams.get('mode') === 'overlay';
 
+  // Apply overlay mode IMMEDIATELY, before any rendering
+  if (state.isOverlayMode || window.self !== window.top) {
+    state.isOverlayMode = true;
+    document.body.classList.add('in-overlay');
+  }
+
   // Pre-load elements into cache
   elements.searchInput = document.getElementById('search-input');
   elements.clearSearchBtn = document.getElementById('clear-search');
@@ -2333,6 +3189,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   await loadSearchHistory();
   await loadRecentlyOpened();
   await loadClickFeedbackMap();
+  void loadBackendAdaptiveSuggestions({ force: true });
   await detectActiveCourseContext();
   initializeFuse();
   updateUI();
@@ -2352,8 +3209,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (response && response.signedIn) {
       handleSignedInState(response.user);
     } else {
-      updateAuthButtonUi();
-      updateSettingsModalContent();
+      handleSignedOutState();
     }
   });
 
@@ -2423,8 +3279,8 @@ function checkOverlayMode() {
     const footer = document.createElement('div');
     footer.className = 'overlay-footer';
     footer.innerHTML = `
-      <span class="overlay-footer-left" id="overlay-result-count"></span>
-      <span class="overlay-footer-right"><kbd>↵</kbd> to open</span>
+      <span class="overlay-footer-left"><span id="overlay-result-count"></span>Canvascope</span>
+      <span class="overlay-footer-right"><kbd>↑↓</kbd> navigate <kbd>↵</kbd> select <kbd>esc</kbd> close</span>
     `;
     document.querySelector('.container').appendChild(footer);
     elements.overlayResultCount = document.getElementById('overlay-result-count');
@@ -2510,6 +3366,9 @@ function initializeElements() {
   elements.accountEmailDisplay = document.getElementById('account-email-display');
   elements.accountAvatarPlaceholder = document.getElementById('account-avatar-placeholder');
   elements.enableSendToLectraToggle = document.getElementById('enable-send-to-lectra');
+  elements.enableAdaptiveLearningToggle = document.getElementById('enable-adaptive-learning');
+  elements.adaptiveLearningPanel = document.getElementById('adaptive-learning-panel');
+  elements.clearSearchHabitsBtn = document.getElementById('clear-search-habits');
   elements.enableCustomAlgorithmToggle = document.getElementById('enable-custom-algorithm');
   elements.customAlgorithmPanel = document.getElementById('custom-algorithm-panel');
   elements.resetCustomAlgorithmBtn = document.getElementById('reset-custom-algorithm');
@@ -3445,6 +4304,79 @@ async function executeSlashHighlightedEntry() {
   await executeSlashEntry(entry);
 }
 
+function handleSearchInputKeydown(e) {
+  if (state.slashMode.active && !state.isOverlayMode) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      void executeSlashHighlightedEntry();
+      return;
+    }
+
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      moveSlashHighlight(e.key === 'ArrowDown' ? 1 : -1);
+      return;
+    }
+  }
+
+  if (e.key === 'Enter') {
+    e.preventDefault();
+
+    // ADMIN COMMAND: Export local storage state
+    if (elements.searchInput.value.trim() === '[ADMIN]EXPORTALLDATA') {
+      elements.searchInput.value = '';
+      chrome.storage.local.get(null, (allData) => {
+        const sanitized = sanitizeAdminExport(allData);
+        const dataStr = JSON.stringify(sanitized, null, 2);
+        const blob = new Blob([dataStr], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `canvascope_data_export_sanitized_${new Date().toISOString().slice(0, 10)}.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        console.log('[Canvascope] Admin export generated (sanitized)');
+      });
+      return;
+    }
+
+    if (state.isOverlayMode) {
+      // Open the currently highlighted result
+      const items = elements.resultsContainer.querySelectorAll('.result-item');
+      if (items.length > 0 && items[state.overlayHighlightIndex]) {
+        items[state.overlayHighlightIndex].click();
+      }
+    } else {
+      const firstResult = elements.resultsContainer.querySelector('.result-item');
+      if (firstResult) {
+        firstResult.click();
+      }
+    }
+  }
+
+  // Arrow key navigation (overlay mode)
+  if (state.isOverlayMode && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+    e.preventDefault();
+    const items = elements.resultsContainer.querySelectorAll('.result-item');
+    if (items.length === 0) return;
+
+    // Remove current highlight
+    items[state.overlayHighlightIndex]?.classList.remove('overlay-highlighted');
+
+    if (e.key === 'ArrowDown') {
+      state.overlayHighlightIndex = Math.min(state.overlayHighlightIndex + 1, items.length - 1);
+    } else {
+      state.overlayHighlightIndex = Math.max(state.overlayHighlightIndex - 1, 0);
+    }
+
+    // Apply new highlight and scroll into view
+    items[state.overlayHighlightIndex]?.classList.add('overlay-highlighted');
+    items[state.overlayHighlightIndex]?.scrollIntoView({ block: 'nearest' });
+  }
+}
+
 function handleSlashCommandPaletteSelect(command) {
   if (!command) return;
 
@@ -3534,7 +4466,7 @@ function beginGoogleSignIn() {
           handleSignedInState(statusRes.user);
           return;
         }
-        updateAuthButtonUi();
+        handleSignedOutState();
       });
       return;
     }
@@ -3637,6 +4569,64 @@ function setupEventListeners() {
     });
   }
 
+  if (elements.enableAdaptiveLearningToggle) {
+    elements.enableAdaptiveLearningToggle.addEventListener('change', async (event) => {
+      const toggle = event.currentTarget;
+      const enabled = Boolean(toggle.checked);
+      toggle.disabled = true;
+
+      try {
+        await updateExtensionSettings({ enableAdaptiveLearning: enabled });
+        if (typeof debouncedSyncSearchHabits === 'function') {
+          debouncedSyncSearchHabits();
+        }
+        if (typeof rerunSearchWithCurrentQuery === 'function') {
+          rerunSearchWithCurrentQuery();
+        }
+      } catch (error) {
+        console.error('[Canvascope] Failed to update adaptive learning setting:', error);
+        applyExtensionSettingsUi();
+      } finally {
+        toggle.disabled = false;
+      }
+    });
+  }
+
+  if (elements.clearSearchHabitsBtn) {
+    elements.clearSearchHabitsBtn.addEventListener('click', async (event) => {
+      const btn = event.currentTarget;
+      const prevText = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = 'Clearing...';
+
+      try {
+        const emptyHabits = createEmptySearchHabits();
+        await chrome.storage.local.set({ searchHabits: emptyHabits });
+        if (typeof state !== 'undefined' && state) {
+          state.searchHabits = emptyHabits;
+        }
+        btn.textContent = 'Habits Cleared!';
+        if (typeof debouncedSyncSearchHabits === 'function') {
+          debouncedSyncSearchHabits();
+        }
+        if (typeof rerunSearchWithCurrentQuery === 'function') {
+          rerunSearchWithCurrentQuery();
+        }
+        setTimeout(() => {
+          btn.textContent = prevText;
+          btn.disabled = false;
+        }, 1500);
+      } catch (error) {
+        console.error('[Canvascope] Failed to wipe habits:', error);
+        btn.textContent = 'Failed';
+        setTimeout(() => {
+          btn.textContent = prevText;
+          btn.disabled = false;
+        }, 1500);
+      }
+    });
+  }
+
   if (elements.enableCustomAlgorithmToggle) {
     elements.enableCustomAlgorithmToggle.addEventListener('change', async (event) => {
       const toggle = event.currentTarget;
@@ -3727,65 +4717,7 @@ function setupEventListeners() {
   }
 
   // Keyboard navigation for search results
-  elements.searchInput.addEventListener('keydown', (e) => {
-
-    if (e.key === 'Enter') {
-      e.preventDefault();
-
-      // ADMIN COMMAND: Export local storage state
-      if (elements.searchInput.value.trim() === '[ADMIN]EXPORTALLDATA') {
-        elements.searchInput.value = '';
-        chrome.storage.local.get(null, (allData) => {
-          const sanitized = sanitizeAdminExport(allData);
-          const dataStr = JSON.stringify(sanitized, null, 2);
-          const blob = new Blob([dataStr], { type: 'application/json' });
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = `canvascope_data_export_sanitized_${new Date().toISOString().slice(0, 10)}.json`;
-          document.body.appendChild(a);
-          a.click();
-          document.body.removeChild(a);
-          URL.revokeObjectURL(url);
-          console.log('[Canvascope] Admin export generated (sanitized)');
-        });
-        return;
-      }
-
-      if (state.isOverlayMode) {
-        // Open the currently highlighted result
-        const items = elements.resultsContainer.querySelectorAll('.result-item');
-        if (items.length > 0 && items[state.overlayHighlightIndex]) {
-          items[state.overlayHighlightIndex].click();
-        }
-      } else {
-        const firstResult = elements.resultsContainer.querySelector('.result-item');
-        if (firstResult) {
-          firstResult.click();
-        }
-      }
-    }
-
-    // Arrow key navigation (overlay mode)
-    if (state.isOverlayMode && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
-      e.preventDefault();
-      const items = elements.resultsContainer.querySelectorAll('.result-item');
-      if (items.length === 0) return;
-
-      // Remove current highlight
-      items[state.overlayHighlightIndex]?.classList.remove('overlay-highlighted');
-
-      if (e.key === 'ArrowDown') {
-        state.overlayHighlightIndex = Math.min(state.overlayHighlightIndex + 1, items.length - 1);
-      } else {
-        state.overlayHighlightIndex = Math.max(state.overlayHighlightIndex - 1, 0);
-      }
-
-      // Apply new highlight and scroll into view
-      items[state.overlayHighlightIndex]?.classList.add('overlay-highlighted');
-      items[state.overlayHighlightIndex]?.scrollIntoView({ block: 'nearest' });
-    }
-  });
+  elements.searchInput.addEventListener('keydown', handleSearchInputKeydown);
 
   // Close search history when clicking outside
   document.addEventListener('click', (e) => {
@@ -4543,11 +5475,15 @@ function performSearch(query) {
   const typoTolerantQuery = buildTypoTolerantQuery(normalizedQuery);
   const rankingQuery = typoTolerantQuery.corrections.length ? typoTolerantQuery.correctedQuery : normalizedQuery;
   const rawEffectiveQuery = normalizeText(effectiveQuery).toLowerCase();
+  const weeklyHabitBoostQuery = !temporalIntent.kind ? getWeeklyHabitBoostQuery(rankingQuery) : null;
   const searchQueries = Array.from(new Set([
+    weeklyHabitBoostQuery ? weeklyHabitBoostQuery.toLowerCase() : '',
     rankingQuery.toLowerCase(),
     normalizedQuery.toLowerCase(),
     rawEffectiveQuery
   ].filter(Boolean)));
+  trackAdaptiveQuerySubmission(query, rankingQuery);
+  void loadBackendAdaptiveSuggestions();
   if (typoTolerantQuery.corrections.length > 0) {
     const correctionSummary = typoTolerantQuery.corrections.map(c => `${c.from}->${c.to}`).join(', ');
     console.log(`[Canvascope] Typo-tolerant query rewrite: "${normalizedQuery}" => "${rankingQuery}" (${correctionSummary})`);
@@ -4557,6 +5493,13 @@ function performSearch(query) {
   const intent = detectQueryIntent(rankingQuery);
   const queryNums = extractNumericTokens(rankingQuery);
   const courseHintSignals = courseScope ? null : getCourseHintSignals(rankingQuery);
+  const implicitCurrentWeekMode = detectImplicitCurrentWeekMode(
+    rankingQuery,
+    queryNums,
+    courseScope,
+    courseHintSignals,
+    temporalIntent.kind
+  );
 
   // Temporal-first retrieval: when query has a time intent, scope the corpus
   // before lexical ranking so relevant due items are never dropped by early truncation.
@@ -4605,10 +5548,6 @@ function performSearch(query) {
         score = 0.0;
       } else if (nt.startsWith(q + ' ') || nt.startsWith(q)) {
         score = 0.05;
-      } else if (exactWordRe.test(nt)) {
-        score = 0.1;
-      } else if (nt.includes(q)) {
-        score = 0.15;
       }
 
       if (score !== null && (bestBaseScore === null || score < bestBaseScore)) {
@@ -4627,7 +5566,8 @@ function performSearch(query) {
   const seenFuseUrls = new Set();
   const appendFuseResults = (fuseInstance) => {
     for (const q of searchQueries) {
-      const nextResults = fuseInstance.search(q, { limit: MAX_RESULTS * 3 });
+      // Pull heavily from Fuse so generic tie-breaker collisions don't arbitrarily truncate upcoming dates
+      const nextResults = fuseInstance.search(q, { limit: MAX_RESULTS * 20 });
       for (const r of nextResults) {
         if (!seenFuseUrls.has(r.item.url)) {
           fuseResults.push(r);
@@ -4774,6 +5714,14 @@ function performSearch(query) {
     }
   }
 
+  const implicitCurrentWeekContext = !temporalIntent.kind
+    ? buildImplicitCurrentWeekContext(searchCorpus, rankingQuery, courseScope, courseHintSignals, implicitCurrentWeekMode)
+    : { enabled: false, extraResults: [], anchorGroupOrder: new Map() };
+
+  if (implicitCurrentWeekContext.enabled) {
+    results = mergeSearchResults(results, implicitCurrentWeekContext.extraResults);
+  }
+
   if (temporalIntent.kind) {
     let temporalResults = applyTemporalFilter(results, temporalIntent.kind);
 
@@ -4872,15 +5820,18 @@ function performSearch(query) {
     results = [...withDue.map(x => x.r), ...noDue];
   }
 
-  // General-query recency mode (no explicit assignment number/specifier):
-  // prefer the most recent assignment-like item first.
-  // BUT: skip if the top result is an exact/prefix match (pre-pass hit)
-  // so that exact matches like "PreLab E" don't get overridden by "PreLab F".
   const generalTokens = (rankingQuery || '').split(/\s+/).filter(t => t.length > 0 && !STOP_TOKENS.has(t));
-  const isGeneralQuery = !temporalIntent.kind && queryNums.length === 0 && generalTokens.length <= 3;
+  const hasExplicitTaskQualifier = /\b(pre[\s-]*lab|post[\s-]*lab|quiz|assignment|discussion|homework|worksheet|exam)\b/i.test(rankingQuery || '');
+  const isGeneralQuery = !temporalIntent.kind
+    && queryNums.length === 0
+    && generalTokens.length <= 3
+    && !hasExplicitTaskQualifier;
   const topIsExactMatch = results.length > 0 && results[0].prePass;
 
-  if (isGeneralQuery && !topIsExactMatch) {
+  if (implicitCurrentWeekContext.enabled) {
+    results = applyImplicitCurrentWeekOrdering(results, implicitCurrentWeekContext);
+  } else if (isGeneralQuery && !topIsExactMatch) {
+    // Preserve the older broad-query sort for non-implicit searches.
     const recencyCandidates = [];
     const otherResults = [];
 
@@ -4915,7 +5866,7 @@ function performSearch(query) {
   updateOverlayFooter(results.length, searchTimeMs);
 
   // Single-line diagnostic
-  console.log(`[Canvascope] query="${query}" intent=${JSON.stringify(intent)} nums=[${queryNums}] results=${results.length} ${searchTimeMs}ms`);
+  console.log(`[Canvascope] query="${query}" intent=${JSON.stringify(intent)} nums=[${queryNums}] implicitWeek=${implicitCurrentWeekContext.enabled} weeklyBoost="${weeklyHabitBoostQuery || ''}" results=${results.length} ${searchTimeMs}ms`);
 
   // Save to history (original query, not normalized)
   saveSearchToHistory(query);
@@ -4954,7 +5905,7 @@ function calculateScore(item, fuseScore, normalizedQuery, intent, queryNums, isP
   score += (TYPE_BOOST[item.type] || 0) * typeMultiplier;
 
   // ── Recency boost (scannedAt) ───────────────────
-  const ts = item.scannedAt ? new Date(item.scannedAt).getTime() : 0;
+  const ts = item.scannedAt ? Date.parse(item.scannedAt) : 0;
   if (ts > 0) {
     const daysAgo = (Date.now() - ts) / (1000 * 60 * 60 * 24);
     score += Math.max(0, 0.15 - (daysAgo * 0.005)) * recencyMultiplier;
@@ -4981,16 +5932,39 @@ function calculateScore(item, fuseScore, normalizedQuery, intent, queryNums, isP
     }
   }
 
-  // ── Intent boost (capped at INTENT_CAP = 0.25) ──
+  // ── Intent boost (capped at INTENT_CAP = 0.40) ──
   if (intent) {
     let intentBoost = 0;
     for (const [key, confidence] of Object.entries(intent)) {
+      if (key === 'recency') continue;
       if (confidence > 0 && INTENT_TYPE_MAP[key]) {
         const matches = INTENT_TYPE_MAP[key].includes(item.type);
         if (matches) intentBoost += INTENT_MAX_BOOST[key] * confidence;
       }
     }
     score += Math.min(intentBoost, INTENT_CAP);
+
+    // ── Explicit Recency Boost ("latest", "newest") ──
+    if (intent.recency > 0) {
+      let fileTs = null;
+      if (item.createdAt || item.updatedAt) {
+        fileTs = Date.parse(item.updatedAt || item.createdAt);
+      } else if (item.dueAt) {
+        fileTs = Date.parse(item.dueAt);
+      }
+
+      if (fileTs && fileTs > 0 && fileTs <= Date.now()) {
+        const daysAgo = (Date.now() - fileTs) / (1000 * 60 * 60 * 24);
+        // Aggressive curve: files under 7 days old get massive boost
+        if (daysAgo <= 7) {
+          score += 0.50 + Math.max(0, 0.40 * (1 - daysAgo / 7));
+        } else if (daysAgo <= 30) {
+          score += 0.20 + Math.max(0, 0.30 * (1 - (daysAgo - 7) / 23));
+        } else {
+          score += Math.max(0, 0.20 * (365 - daysAgo) / 365);
+        }
+      }
+    }
   }
 
   // ── Numeric alignment ───────────────────────────
@@ -5069,8 +6043,15 @@ function calculateScore(item, fuseScore, normalizedQuery, intent, queryNums, isP
     }
   }
 
-  // ── Click-feedback boost ────────────────────────
-  score += getClickBoost(item);
+  // ── Un-clicked Files/Folders Penalty ────────────
+  // Penalize folders and documents by default so interactive elements (assignments/quizzes) stay on top,
+  // until the adaptive algorithm's query behavior provides enough boost (2+ clicks).
+  if (['folder', 'file', 'pdf', 'video', 'externalurl'].includes(item.type)) {
+    score -= 0.65;
+  }
+
+  // ── Adaptive Learning ML & Click-Feedback ────────
+  score += getAdaptiveLearningBoost(item, normalizedQuery);
 
   // ── Dismissed Tasks penalty ─────────────────────
   if (state.dismissedTasks && state.dismissedTasks.includes(item.url)) {
@@ -5083,13 +6064,13 @@ function calculateScore(item, fuseScore, normalizedQuery, intent, queryNums, isP
   }
 
   // ── Due-date-aware freshness (future > overdue) ────────────────────
-  if (item.dueAt && (intent?.assignment > 0 || intent?.quiz > 0)) {
-    const dueTs = new Date(item.dueAt).getTime();
+  if (item.dueAt) {
+    const dueTs = Date.parse(item.dueAt);
     if (dueTs > 0) {
       const daysUntilDue = (dueTs - Date.now()) / (1000 * 60 * 60 * 24);
       if (daysUntilDue >= 0 && daysUntilDue <= 21) {
-        // Upcoming: strong boost, especially near-term
-        score += Math.max(0.08, 0.34 - daysUntilDue * 0.015) * dueDateMultiplier;
+        // Upcoming: overwhelming boost so generic queries show actionable items first (up to 1.4 for today)
+        score += Math.max(0.20, 1.4 - daysUntilDue * 0.08) * dueDateMultiplier;
       } else if (daysUntilDue < 0 && daysUntilDue > -30) {
         // Overdue: explicit penalty so future tasks sort above overdue ones
         score -= Math.min(0.55, 0.22 + Math.abs(daysUntilDue) * 0.03) * dueDateMultiplier;
@@ -5148,12 +6129,75 @@ async function saveSearchToHistory(query) {
   }
 }
 
+function appendSearchHistoryEntry(container, query, { badgeText = '', suggestionMeta = null } = {}) {
+  const historyItem = document.createElement('div');
+  historyItem.className = 'history-item';
+  historyItem.setAttribute('tabindex', '0');
+  historyItem.setAttribute('role', 'button');
+
+  if (badgeText) {
+    const label = document.createElement('span');
+    label.textContent = query;
+    historyItem.appendChild(label);
+
+    const badge = document.createElement('span');
+    badge.className = 'history-badge';
+    badge.textContent = badgeText;
+    historyItem.appendChild(badge);
+  } else {
+    historyItem.textContent = query;
+  }
+
+  const runQuery = () => {
+    if (suggestionMeta) {
+      void recordAdaptiveSearchEvent('suggestion_clicked', query, {
+        baseQuery: suggestionMeta.baseQuery,
+        sequenceNumber: suggestionMeta.predictedWeekNumber
+      });
+    }
+    elements.searchInput.value = query;
+    hideSearchHistory();
+    performSearch(query);
+  };
+
+  historyItem.addEventListener('click', runQuery);
+  historyItem.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      runQuery();
+    }
+  });
+
+  container.appendChild(historyItem);
+}
+
 function showSearchHistory() {
   if (state.slashMode.active) return;
   if (!state.isOverlayMode) return;
 
   const query = elements.searchInput.value.trim();
-  if (query.length > 0 || state.searchHistory.length === 0) {
+  const slotKey = getWeeklyHabitSlotKey();
+  const shouldRefreshBackendSuggestions = query.length === 0
+    && !state.backendAdaptiveSuggestionsPending
+    && (
+      !state.backendAdaptiveSuggestionsLoadedAt
+      || (Date.now() - state.backendAdaptiveSuggestionsLoadedAt) > BACKEND_SUGGESTION_STALE_MS
+      || state.backendAdaptiveSuggestionsSlotKey !== slotKey
+    );
+
+  if (shouldRefreshBackendSuggestions) {
+    void loadBackendAdaptiveSuggestions().then(() => {
+      if (elements.searchInput && elements.searchInput.value.trim() === '') {
+        showSearchHistory();
+      }
+    });
+  }
+
+  const suggestionEntries = getAdaptiveSuggestionEntries()
+    .filter((entry, index, all) => entry && all.findIndex(candidate => candidate.query === entry.query) === index);
+  const suggestedQueries = suggestionEntries.map((entry) => entry.query);
+
+  if (query.length > 0 || (state.searchHistory.length === 0 && suggestedQueries.length === 0)) {
     hideSearchHistory();
     return;
   }
@@ -5164,29 +6208,30 @@ function showSearchHistory() {
   header.className = 'history-header';
   header.innerHTML = '<span>Recent Searches</span><button class="history-clear">Clear</button>';
   header.querySelector('.history-clear').addEventListener('click', clearSearchHistory);
+
+  if (suggestedQueries.length > 0) {
+    const suggestionHeader = document.createElement('div');
+    suggestionHeader.className = 'history-header';
+    suggestionHeader.innerHTML = '<span>Suggested This Week</span>';
+    elements.searchHistory.appendChild(suggestionHeader);
+
+    for (const suggestion of suggestionEntries.slice(0, 4)) {
+      appendSearchHistoryEntry(elements.searchHistory, suggestion.query, {
+        badgeText: 'Suggested',
+        suggestionMeta: suggestion.source === 'backend' ? suggestion : null
+      });
+    }
+  }
+
   elements.searchHistory.appendChild(header);
 
+  const seenHistoryQueries = new Set(suggestedQueries);
   state.searchHistory.forEach(item => {
-    const historyItem = document.createElement('div');
-    historyItem.className = 'history-item';
-    historyItem.textContent = item.query;
-    historyItem.setAttribute('tabindex', '0');
-    historyItem.setAttribute('role', 'button');
-    historyItem.addEventListener('click', () => {
-      elements.searchInput.value = item.query;
-      hideSearchHistory();
-      performSearch(item.query);
-    });
-    historyItem.addEventListener('keydown', (event) => {
-      if (event.key === 'Enter' || event.key === ' ') {
-        event.preventDefault();
-        elements.searchInput.value = item.query;
-        hideSearchHistory();
-        performSearch(item.query);
-      }
-    });
-    elements.searchHistory.appendChild(historyItem);
+    if (!item?.query || seenHistoryQueries.has(item.query)) return;
+    appendSearchHistoryEntry(elements.searchHistory, item.query);
   });
+
+  reportBackendSuggestionImpressions(suggestionEntries);
 
   // Hide empty state and planner, show history in its place
   if (elements.emptyState) elements.emptyState.classList.add('hidden');
@@ -5365,18 +6410,21 @@ function formatOverlayType(type) {
  */
 function updateOverlayFooter(count, timeMs) {
   if (!state.isOverlayMode || !elements.overlayResultCount) return;
-  if (count === 0) {
-    elements.overlayResultCount.textContent = '';
-  } else {
-    elements.overlayResultCount.textContent = `${count} result${count !== 1 ? 's' : ''} in ${timeMs}ms`;
-  }
+  // Intentionally blank to save space in the Command K footer
+  elements.overlayResultCount.textContent = '';
 }
 
 function openResult(item, event) {
   if (item.url && isValidLmsUrl(item.url)) {
     // Save to recently opened + update click feedback
     saveToRecents(item);
-    updateClickFeedback(item);
+    const currentQuery = elements.searchInput ? elements.searchInput.value : '';
+    updateSearchHabits(item, currentQuery);
+    void recordAdaptiveSearchEvent('result_clicked', currentQuery, {
+      clickedItemId: getClickKey(item),
+      clickedItemType: item.type || '',
+      timestamp: Date.now()
+    });
 
     const isNewTab = event && (event.metaKey || event.ctrlKey);
     if (isNewTab) {

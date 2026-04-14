@@ -85,5 +85,18 @@ console.log("Expanded Q:", expandAbbreviations(query));
 const title1 = "Lab 3 - Lecture Recordings";
 const title2 = "Lab B Lecture - Alpha Pinene Oxide.pdf";
 
-console.log("Title 1 Prepass Score:", simulatePrepass(query, title1));
-console.log("Title 2 Prepass Score:", simulatePrepass(query, title2));
+const title1Score = simulatePrepass(query, title1);
+const title2Score = simulatePrepass(query, title2);
+
+console.log("Title 1 Prepass Score:", title1Score);
+console.log("Title 2 Prepass Score:", title2Score);
+
+if (title1Score !== null) {
+    throw new Error('Expected "Lab 3 - Lecture Recordings" to miss the "lab b lecture" prepass.');
+}
+
+if (title2Score !== 0.05) {
+    throw new Error('Expected "Lab B Lecture - Alpha Pinene Oxide.pdf" to receive the prefix-match prepass score.');
+}
+
+console.log("PASS test_rank");

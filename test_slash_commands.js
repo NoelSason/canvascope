@@ -66,14 +66,59 @@ const functionNames = [
   'scoreSlashCommandMatch',
   'rankSlashCommands',
   'parseSlashCommandText',
-  'isSlashPdfEligibleItem'
+  'isSlashPdfEligibleItem',
+  'handleSearchInputKeydown'
 ];
 
 const context = {
   console,
   String,
   Array,
-  Map
+  Map,
+  state: {
+    slashMode: {
+      active: false,
+      results: [],
+      highlightedIndex: 0
+    },
+    isOverlayMode: false,
+    overlayHighlightIndex: 0
+  },
+  elements: {
+    searchInput: { value: '' },
+    resultsContainer: {
+      querySelector() { return null; },
+      querySelectorAll() { return []; }
+    }
+  },
+  executeSlashHighlightedEntry() {},
+  moveSlashHighlight() {},
+  chrome: {
+    storage: {
+      local: {
+        get() {}
+      }
+    }
+  },
+  sanitizeAdminExport() {
+    return {};
+  },
+  Blob: class Blob {},
+  URL: {
+    createObjectURL() { return 'blob:test'; },
+    revokeObjectURL() {}
+  },
+  document: {
+    body: {
+      appendChild() {},
+      removeChild() {}
+    },
+    createElement() {
+      return {
+        click() {}
+      };
+    }
+  }
 };
 
 vm.createContext(context);
@@ -130,6 +175,35 @@ assert(parsedResults.argumentText === 'organic chemistry', 'Expected slash parse
 const parsedPrefix = context.parseSlashCommandText('/g', lookup);
 assert(parsedPrefix.mode === 'commands', 'Expected /g to stay in command mode until the command is exact.');
 assert(parsedPrefix.exactCommand === null, 'Expected /g to have no exact command yet.');
+
+let highlightedExecutions = 0;
+let highlightDelta = null;
+context.executeSlashHighlightedEntry = () => {
+  highlightedExecutions += 1;
+};
+context.moveSlashHighlight = (delta) => {
+  highlightDelta = delta;
+};
+
+context.state.slashMode.active = true;
+context.state.isOverlayMode = false;
+context.handleSearchInputKeydown({
+  key: 'Enter',
+  preventDefault() {}
+});
+assert(highlightedExecutions === 1, 'Expected Enter to execute the highlighted slash entry when slash mode is active.');
+
+context.handleSearchInputKeydown({
+  key: 'ArrowDown',
+  preventDefault() {}
+});
+assert(highlightDelta === 1, 'Expected ArrowDown to move the slash highlight when slash mode is active.');
+
+context.handleSearchInputKeydown({
+  key: 'ArrowUp',
+  preventDefault() {}
+});
+assert(highlightDelta === -1, 'Expected ArrowUp to move the slash highlight upward when slash mode is active.');
 
 const rankedByAlias = context.rankSlashCommands(commands, 'gr');
 assert(rankedByAlias[0]?.id === 'gradescope', 'Expected Gradescope to rank first for a /gr query.');
