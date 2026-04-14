@@ -2,6 +2,9 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 
+// Keep this legacy popup regression deterministic in CI, which runs in UTC.
+process.env.TZ = 'America/Los_Angeles';
+
 const Fuse = require('./lib/fuse.min.js');
 
 function makeElement() {
