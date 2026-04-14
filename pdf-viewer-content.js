@@ -1,6 +1,7 @@
 (() => {
     const initKey = '__canvascopePdfViewerOverlayInitialized';
     const DEBUG = true;
+    const VIEWER_CHANGE_DEBOUNCE_MS = 40;
 
     function debug(message, details = undefined) {
         if (!DEBUG) return;
@@ -39,9 +40,13 @@
     let sendButton = null;
     let sendButtonBusy = false;
     let refreshTimer = null;
+    let viewerChangeTimer = null;
     let sendButtonPosition = null;
     let sendButtonDragState = null;
     let suppressNextSendButtonClick = false;
+    let latestOverlayRequestId = 0;
+    let latestViewerKey = '';
+    let navigationHooksInstalled = false;
 
     function normalizeExtensionSettings(rawSettings) {
         const source = rawSettings && typeof rawSettings === 'object' ? rawSettings : {};
@@ -53,6 +58,139 @@
 
     function isSendToLectraEnabled() {
         return Boolean(viewerExtensionSettings.enableSendToLectra);
+    }
+
+    function decodePossiblyEncodedUrl(value) {
+        let decoded = String(value || '');
+        for (let i = 0; i < 3; i += 1) {
+            try {
+                const next = decodeURIComponent(decoded);
+                if (next === decoded) break;
+                decoded = next;
+            } catch {
+                break;
+            }
+        }
+        return decoded;
+    }
+
+    function isPdfSupportedProtocol(protocol) {
+        return protocol === 'https:' || protocol === 'http:' || protocol === 'file:';
+    }
+
+    function normalizePdfCandidateUrl(rawUrl, baseUrl = window.location.href) {
+        if (!rawUrl) return null;
+        try {
+            const parsed = new URL(String(rawUrl), baseUrl || undefined);
+            if (!isPdfSupportedProtocol(parsed.protocol)) return null;
+            parsed.hash = '';
+            return parsed.toString();
+        } catch {
+            return null;
+        }
+    }
+
+    function cleanTitleHint(title) {
+        return String(title || '').replace(/\s+/g, ' ').trim();
+    }
+
+    function isGenericPdfTitleHint(title) {
+        const cleaned = cleanTitleHint(title);
+        if (!cleaned) return true;
+
+        const lowered = cleaned.toLowerCase();
+        if (lowered === 'file' || lowered === 'files') return true;
+        if (lowered === 'file preview' || lowered === 'preview') return true;
+        if (lowered === 'document' || lowered === 'pdf') return true;
+        if (lowered === 'download' || lowered === 'open file') return true;
+        return lowered === 'canvas';
+    }
+
+    function normalizeDocumentTitleForPdf(rawTitle) {
+        const cleaned = cleanTitleHint(rawTitle);
+        if (!cleaned) return '';
+
+        const explicitPdf = cleaned.match(/([^|]+?\.pdf)\b/i);
+        if (explicitPdf?.[1]) {
+            return cleanTitleHint(explicitPdf[1]);
+        }
+
+        return cleanTitleHint(
+            cleaned
+                .replace(/\s+[|:-]\s*(instructure|canvas)(?:\s+files?)?.*$/i, '')
+                .replace(/\s+-\s+files?$/i, '')
+        );
+    }
+
+    function resolvePdfTitleHint() {
+        const selectors = [
+            '.ef-name-col__text',
+            '.ef-name-col .ellipsible',
+            '.file-header h1',
+            '.ef-header h1',
+            '[data-testid="file-name"]',
+            'h1'
+        ];
+
+        for (const selector of selectors) {
+            const nodes = document.querySelectorAll(selector);
+            for (const node of nodes) {
+                const candidate = normalizeDocumentTitleForPdf(node?.textContent || '');
+                if (!isGenericPdfTitleHint(candidate)) {
+                    return candidate;
+                }
+            }
+        }
+
+        const docTitle = normalizeDocumentTitleForPdf(document.title || '');
+        if (!isGenericPdfTitleHint(docTitle)) {
+            return docTitle;
+        }
+
+        return '';
+    }
+
+    function getViewerSrcFromLocation() {
+        try {
+            const parsed = new URL(window.location.href);
+            const src = parsed.searchParams.get('src');
+            if (!src) return null;
+            return normalizePdfCandidateUrl(decodePossiblyEncodedUrl(src), window.location.href);
+        } catch {
+            return null;
+        }
+    }
+
+    function getEmbeddedPdfSources() {
+        const sources = [];
+        const seen = new Set();
+        const addSource = (rawUrl) => {
+            const normalized = normalizePdfCandidateUrl(rawUrl, window.location.href);
+            if (!normalized || seen.has(normalized)) return;
+            seen.add(normalized);
+            sources.push(normalized);
+        };
+
+        document.querySelectorAll('embed[src], object[data], iframe[src]').forEach((element) => {
+            addSource(element.getAttribute('src') || element.getAttribute('data'));
+        });
+
+        return sources.sort();
+    }
+
+    function buildViewerKey() {
+        const parts = [window.location.href];
+        const locationSrc = getViewerSrcFromLocation();
+        if (locationSrc) {
+            parts.push(`src:${locationSrc}`);
+        }
+        for (const embeddedSrc of getEmbeddedPdfSources()) {
+            parts.push(`embed:${embeddedSrc}`);
+        }
+        if (String(document.contentType || '').toLowerCase().includes('application/pdf')) {
+            parts.push('content-type:application/pdf');
+        }
+        return parts.join('|');
     }
 
     function normalizeStoredButtonPosition(rawValue) {
@@ -331,6 +469,59 @@
         button.style.background = 'linear-gradient(135deg, #d43c3c 0%, #b72c2c 100%)';
     }
 
+    function collectPdfCandidates() {
+        const candidates = [];
+        const seen = new Set();
+        const addCandidate = (rawUrl, source, hintConfidence = 'weak') => {
+            const normalized = normalizePdfCandidateUrl(rawUrl, window.location.href);
+            if (!normalized || seen.has(normalized)) return;
+            seen.add(normalized);
+            candidates.push({ url: normalized, source, hintConfidence });
+        };
+
+        const viewerSrc = getViewerSrcFromLocation();
+        if (viewerSrc) {
+            addCandidate(viewerSrc, 'viewer_src', 'strong');
+        }
+
+        document.querySelectorAll('embed[src], object[data], iframe[src]').forEach((element) => {
+            const rawUrl = element.getAttribute('src') || element.getAttribute('data');
+            const typeAttr = String(element.getAttribute('type') || '').toLowerCase();
+            const looksLikeFileRoute = String(rawUrl || '').includes('/files/') || String(rawUrl || '').includes('/download');
+            const hintConfidence = typeAttr.includes('pdf') ? 'definitive' : (looksLikeFileRoute ? 'strong' : 'weak');
+            addCandidate(rawUrl, `${element.tagName.toLowerCase()}_embed`, hintConfidence);
+        });
+
+        document.querySelectorAll('a[href]').forEach((link) => {
+            const rawHref = link.getAttribute('href');
+            if (!rawHref) return;
+            const linkText = `${link.textContent || ''} ${link.getAttribute('title') || ''}`.toLowerCase();
+            const classText = String(link.className || '').toLowerCase();
+            const hasPdfHint = linkText.includes('pdf') || classText.includes('pdf');
+            if (hasPdfHint || rawHref.includes('/files/') || rawHref.includes('/download')) {
+                addCandidate(rawHref, 'file_link', hasPdfHint ? 'strong' : 'weak');
+            }
+        });
+
+        if (String(document.contentType || '').toLowerCase().includes('application/pdf')) {
+            addCandidate(window.location.href, 'document_content_type', 'strong');
+        }
+
+        return {
+            success: true,
+            pageUrl: window.location.href,
+            titleHint: resolvePdfTitleHint(),
+            candidates
+        };
+    }
+
+    function clearOverlayState(reason) {
+        overlayContext = null;
+        latestOverlayRequestId += 1;
+        removeSendButton();
+        debug('Cleared overlay state', { reason });
+    }
+
     function scheduleOverlayRefresh(delayMs = 0) {
         if (refreshTimer) {
             clearTimeout(refreshTimer);
@@ -339,10 +530,40 @@
         refreshTimer = setTimeout(refreshOverlayContext, delayMs);
     }
 
+    function handleViewerContextChange(reason, { force = false } = {}) {
+        const nextViewerKey = buildViewerKey();
+        if (!force && nextViewerKey === latestViewerKey) {
+            return false;
+        }
+
+        latestViewerKey = nextViewerKey;
+        clearOverlayState(`viewer_change:${reason}`);
+        scheduleOverlayRefresh(VIEWER_CHANGE_DEBOUNCE_MS);
+        debug('Detected viewer context change', {
+            reason,
+            viewerKey: nextViewerKey
+        });
+        return true;
+    }
+
+    function scheduleViewerChangeCheck(delayMs = VIEWER_CHANGE_DEBOUNCE_MS) {
+        if (viewerChangeTimer) {
+            clearTimeout(viewerChangeTimer);
+        }
+        viewerChangeTimer = setTimeout(() => {
+            viewerChangeTimer = null;
+            handleViewerContextChange('navigation');
+        }, delayMs);
+    }
+
     function refreshOverlayContext() {
+        const requestId = ++latestOverlayRequestId;
+        latestViewerKey = buildViewerKey();
         debug('Refreshing overlay context', {
             enabled: isSendToLectraEnabled(),
-            href: window.location.href
+            href: window.location.href,
+            viewerKey: latestViewerKey,
+            requestId
         });
         if (!isSendToLectraEnabled()) {
             overlayContext = null;
@@ -352,6 +573,14 @@
         }
 
         chrome.runtime.sendMessage({ action: 'resolvePdfViewerOverlayContext' }, (response) => {
+            if (requestId !== latestOverlayRequestId) {
+                debug('Ignoring stale overlay response', {
+                    requestId,
+                    latestOverlayRequestId
+                });
+                return;
+            }
+
             if (chrome.runtime.lastError) {
                 debug('resolvePdfViewerOverlayContext runtime error', chrome.runtime.lastError.message || 'unknown');
                 overlayContext = null;
@@ -392,7 +621,7 @@
         }
 
         if (!overlayContext?.candidateUrl) {
-            scheduleOverlayRefresh(0);
+            handleViewerContextChange('send_without_context', { force: true });
             return;
         }
 
@@ -445,6 +674,38 @@
         });
     }
 
+    function installNavigationHooks() {
+        if (navigationHooksInstalled) return;
+        navigationHooksInstalled = true;
+
+        const schedule = () => scheduleViewerChangeCheck(VIEWER_CHANGE_DEBOUNCE_MS);
+        window.addEventListener('popstate', schedule);
+        window.addEventListener('hashchange', schedule);
+
+        ['pushState', 'replaceState'].forEach((method) => {
+            const original = history[method];
+            if (typeof original !== 'function') return;
+            history[method] = function wrappedHistoryState(...args) {
+                const result = original.apply(this, args);
+                schedule();
+                return result;
+            };
+        });
+
+        const observer = new MutationObserver(() => {
+            schedule();
+        });
+        observer.observe(document.documentElement || document.body, {
+            childList: true,
+            subtree: true,
+            attributes: true,
+            attributeFilter: ['src', 'data', 'href']
+        });
+    }
+
+    installNavigationHooks();
+    latestViewerKey = buildViewerKey();
+
     try {
         chrome.storage.local.get(['settings', BUTTON_POSITION_STORAGE_KEY]).then((data) => {
             viewerExtensionSettings = normalizeExtensionSettings(data.settings);
@@ -453,13 +714,13 @@
                 settings: viewerExtensionSettings,
                 buttonPosition: sendButtonPosition
             });
-            scheduleOverlayRefresh(0);
+            handleViewerContextChange('boot', { force: true });
             setTimeout(() => scheduleOverlayRefresh(0), 160);
             setTimeout(() => scheduleOverlayRefresh(0), 900);
         });
     } catch {
         debug('Storage.get failed during boot, refreshing anyway');
-        scheduleOverlayRefresh(0);
+        handleViewerContextChange('boot-storage-failed', { force: true });
     }
 
     try {
@@ -474,7 +735,7 @@
                     removeSendButton();
                     return;
                 }
-                scheduleOverlayRefresh(0);
+                handleViewerContextChange('settings-change', { force: true });
             }
 
             if (changes[BUTTON_POSITION_STORAGE_KEY]) {
@@ -491,7 +752,7 @@
         // Storage access can fail on teardown. Ignore and keep the current button state.
     }
 
-    window.addEventListener('pageshow', () => scheduleOverlayRefresh(0));
+    window.addEventListener('pageshow', () => handleViewerContextChange('pageshow', { force: true }));
     window.addEventListener('resize', () => {
         if (sendButton && sendButton.isConnected && sendButtonPosition) {
             applySendButtonPosition(sendButton);
@@ -500,11 +761,16 @@
     document.addEventListener('visibilitychange', () => {
         if (!document.hidden) {
             debug('Document became visible again, refreshing');
-            scheduleOverlayRefresh(0);
+            handleViewerContextChange('visibilitychange', { force: true });
         }
     });
 
     chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+        if (message?.action === 'collectPdfCandidates') {
+            sendResponse(collectPdfCandidates());
+            return true;
+        }
+
         if (message?.action !== 'canvascopePdfViewerDebugPing') {
             return false;
         }
@@ -513,6 +779,7 @@
             success: true,
             href: window.location.href,
             title: document.title,
+            viewerKey: latestViewerKey,
             sendButtonPresent: Boolean(sendButton && sendButton.isConnected),
             overlayContext,
             settings: viewerExtensionSettings

@@ -83,6 +83,9 @@ const DROPBRIDGE_V2_MODE = 'v2';
 const DROPBRIDGE_V2_POLL_LIMIT = 5;
 const DROPBRIDGE_V2_WAKE_EVENT = 'upload_queued';
 const DROPBRIDGE_V2_WAKE_POLL_DEBOUNCE_MS = 1000;
+const DROPBRIDGE_V2_RECEIVER_WARMUP_THROTTLE_MS = 15 * 1000;
+const DROPBRIDGE_V2_RECEIVER_RESTART_THROTTLE_MS = 5 * 1000;
+const DROPBRIDGE_V2_INTENTIONAL_CLOSE_GRACE_MS = 10 * 1000;
 const DROPBRIDGE_V2_FALLBACK_ALARM_NAME = 'dropBridgeV2FallbackPoll';
 const DROPBRIDGE_V2_FALLBACK_ALARM_MINUTES_MODERN = 0.5;
 const DROPBRIDGE_V2_FALLBACK_ALARM_MINUTES_LEGACY = 1;
@@ -113,6 +116,10 @@ let dropBridgeV2QueuedPollReason = null;
 let dropBridgeV2QueuedPollTimer = null;
 let dropBridgeV2LastPollStartedAt = 0;
 let dropBridgeV2EnsureOffscreenPromise = null;
+let dropBridgeV2WarmupPromise = null;
+let dropBridgeV2LastWarmupAt = 0;
+let dropBridgeV2LastRestartAt = 0;
+let dropBridgeV2IntentionalOffscreenCloseUntil = 0;
 let dropBridgeV2DiagnosticsState = null;
 let dropBridgeV2DiagnosticsWritePromise = Promise.resolve();
 const dropBridgeV2ActiveUploads = new Set();
@@ -569,6 +576,129 @@ function resolveDropBridgeUploadId(upload) {
     return upload?.uploadId || upload?.id || null;
 }
 
+async function claimDropBridgeV2UploadById({ accessToken, deviceId, uploadId }) {
+    return callDropBridgeV2Function('claim-upload-v2', {
+        deviceId,
+        uploadId,
+        clientKind: 'canvascope_extension'
+    }, accessToken);
+}
+
+async function tryClaimAndProcessDropBridgeV2UploadById({ uploadId, accessToken = null, deviceId = null, reason = 'targeted-claim' }) {
+    const normalizedUploadId = String(uploadId || '').trim();
+    if (!isUuid(normalizedUploadId)) {
+        dropBridgeDebug('targeted claim: skipped invalid uploadId', {
+            uploadId,
+            reason
+        });
+        return false;
+    }
+
+    const resolvedAccessToken = accessToken || await getDropBridgeV2AccessToken();
+    if (!resolvedAccessToken) {
+        dropBridgeDebug('targeted claim: skipped missing access token', {
+            uploadId: normalizedUploadId,
+            reason
+        });
+        return false;
+    }
+
+    const resolvedDeviceId = deviceId || await getOrCreateDropBridgeV2DeviceId();
+    try {
+        const payload = await claimDropBridgeV2UploadById({
+            accessToken: resolvedAccessToken,
+            deviceId: resolvedDeviceId,
+            uploadId: normalizedUploadId
+        });
+        const upload = payload?.upload || null;
+        if (!upload) {
+            dropBridgeDebug('targeted claim: no upload returned', {
+                uploadId: normalizedUploadId,
+                reason
+            });
+            return false;
+        }
+
+        dropBridgeDebug('targeted claim: processing claimed upload', {
+            uploadId: normalizedUploadId,
+            reason
+        });
+        await processDropBridgeV2Upload(upload, resolvedAccessToken, resolvedDeviceId);
+        return true;
+    } catch (error) {
+        dropBridgeDebug('targeted claim: failed', {
+            uploadId: normalizedUploadId,
+            reason,
+            error: parseErrorMessage(error)
+        });
+        return false;
+    }
+}
+
+function shouldRestartDropBridgeReceiverFromStatus(status, reason = null) {
+    const normalizedStatus = String(status || '').toLowerCase();
+    if (!['error', 'timed_out', 'closed'].includes(normalizedStatus)) {
+        return false;
+    }
+
+    const normalizedReason = String(reason || '').toLowerCase();
+    if (normalizedReason === 'no-context') {
+        return false;
+    }
+
+    if (Date.now() < dropBridgeV2IntentionalOffscreenCloseUntil) {
+        return false;
+    }
+
+    return true;
+}
+
+async function ensureDropBridgeV2LoopWarm(reason = 'manual', { force = false, restart = false } = {}) {
+    if (!DROPBRIDGE_V2_ENABLED || !supabaseClient) {
+        return {
+            success: false,
+            reason: 'disabled'
+        };
+    }
+
+    const now = Date.now();
+    const throttleWindowMs = restart
+        ? DROPBRIDGE_V2_RECEIVER_RESTART_THROTTLE_MS
+        : DROPBRIDGE_V2_RECEIVER_WARMUP_THROTTLE_MS;
+    const lastRunAt = restart ? dropBridgeV2LastRestartAt : dropBridgeV2LastWarmupAt;
+
+    if (!force && lastRunAt > 0 && (now - lastRunAt) < throttleWindowMs) {
+        return {
+            success: true,
+            throttled: true,
+            reason
+        };
+    }
+
+    if (dropBridgeV2WarmupPromise) {
+        return dropBridgeV2WarmupPromise;
+    }
+
+    if (restart) {
+        dropBridgeV2LastRestartAt = now;
+    } else {
+        dropBridgeV2LastWarmupAt = now;
+    }
+
+    dropBridgeV2WarmupPromise = (async () => {
+        await startDropBridgeV2Loop(reason);
+        return {
+            success: true,
+            throttled: false,
+            reason
+        };
+    })().finally(() => {
+        dropBridgeV2WarmupPromise = null;
+    });
+
+    return dropBridgeV2WarmupPromise;
+}
+
 function getDownloadItemById(downloadId) {
     return new Promise((resolve) => {
         chrome.downloads.search({ id: downloadId }, (results) => {
@@ -972,6 +1102,7 @@ async function closeDropBridgeV2OffscreenReceiver(reason = 'stop') {
         return false;
     }
 
+    dropBridgeV2IntentionalOffscreenCloseUntil = Date.now() + DROPBRIDGE_V2_INTENTIONAL_CLOSE_GRACE_MS;
     await chrome.offscreen.closeDocument();
     void updateDropBridgeV2Diagnostics({
         receiverStatus: 'closed',
@@ -1840,6 +1971,9 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
         const context = getLmsContext(tab.url);
         if (context) {
             console.log(`[Canvascope] ${context.platform} tab detected, checking if scan needed...`);
+            void ensureDropBridgeV2LoopWarm('tab-updated-lms').catch((error) => {
+                console.warn('[DropBridge v2] LMS tab warmup failed:', parseErrorMessage(error));
+            });
             triggerBackgroundScan(tab.url);
         }
     }
@@ -1852,6 +1986,9 @@ chrome.tabs.onActivated.addListener(async (activeInfo) => {
     try {
         const tab = await chrome.tabs.get(activeInfo.tabId);
         if (tab.url && getLmsContext(tab.url)) {
+            void ensureDropBridgeV2LoopWarm('tab-activated-lms').catch((error) => {
+                console.warn('[DropBridge v2] LMS tab activation warmup failed:', parseErrorMessage(error));
+            });
             triggerBackgroundScan(tab.url);
         }
     } catch (e) {
@@ -2411,6 +2548,94 @@ async function fetchCanvasPageDetail(baseUrl, courseId, pageSlugOrId) {
     return resp.json();
 }
 
+function normalizeIndexedTextValue(value) {
+    return String(value || '')
+        .replace(/[_/]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .toLowerCase();
+}
+
+function splitIndexedPathSegments(rawPath) {
+    return String(rawPath || '')
+        .split(/\s*>\s*|\//)
+        .map(segment => segment.trim())
+        .filter(Boolean);
+}
+
+function extractExplicitWeekHints(values) {
+    const hints = new Set();
+    const inputs = Array.isArray(values) ? values : [values];
+
+    for (const value of inputs) {
+        const text = String(value || '');
+        if (!text) continue;
+
+        const regex = /\bweek\s*#?\s*0*(\d{1,3})\b/ig;
+        let match = regex.exec(text);
+        while (match) {
+            const normalized = String(match[1] || '').replace(/^0+/, '') || '0';
+            hints.add(normalized);
+            match = regex.exec(text);
+        }
+    }
+
+    return Array.from(hints);
+}
+
+function buildIndexedPathMetadata(rawPath, fallbackTitle = '') {
+    const segments = splitIndexedPathSegments(rawPath);
+    if (segments.length === 0 && fallbackTitle) {
+        segments.push(String(fallbackTitle).trim());
+    }
+
+    const folderPath = segments.join(' > ');
+    return {
+        folderPath,
+        pathSegments: segments,
+        pathDepth: segments.length,
+        weekHints: extractExplicitWeekHints([folderPath, fallbackTitle])
+    };
+}
+
+function buildCanvasFolderHtmlUrl(baseUrl, courseId, folder) {
+    const existingUrl = String(folder?.html_url || '').trim();
+    if (existingUrl) {
+        try {
+            const parsed = new URL(existingUrl);
+            parsed.hash = '';
+            return parsed.toString();
+        } catch {
+            return existingUrl;
+        }
+    }
+
+    if (folder?.id !== undefined && folder?.id !== null && folder.id !== '') {
+        return `${baseUrl}/courses/${courseId}/files/folder/${folder.id}`;
+    }
+
+    return `${baseUrl}/courses/${courseId}/files`;
+}
+
+function buildCanvasSyllabusUrl(baseUrl, courseId) {
+    return `${baseUrl}/courses/${courseId}/assignments/syllabus`;
+}
+
+function buildCanvasSyllabusItem(baseUrl, course, sourceMeta, scanTimestamp, snapshot = null) {
+    const syllabusExcerpt = String(snapshot?.course?.syllabusText || '').trim();
+    return {
+        title: course?.name ? `${course.name} Syllabus` : 'Syllabus',
+        url: buildCanvasSyllabusUrl(baseUrl, course.id),
+        type: 'syllabus',
+        moduleName: 'Course Navigation',
+        courseName: course.name,
+        courseId: course.id,
+        syllabusExcerpt: syllabusExcerpt ? syllabusExcerpt.slice(0, 400) : '',
+        ...sourceMeta,
+        scannedAt: scanTimestamp
+    };
+}
+
 async function fetchFastEndpoints(baseUrl, course, sourceMeta, scanTimestamp, snapshot = null) {
     const content = [];
     const submissionByAssignmentId = new Map();
@@ -2467,6 +2692,16 @@ async function fetchFastEndpoints(baseUrl, course, sourceMeta, scanTimestamp, sn
 
     const promises = [
         assignmentProcessingPromise,
+        Promise.resolve().then(() => {
+            const lightweight = buildCanvasSyllabusItem(baseUrl, course, sourceMeta, scanTimestamp, snapshot);
+            content.push(lightweight);
+
+            if (snapshot) {
+                const richItem = buildSnapshotItemBase(course, sourceMeta, scanTimestamp, lightweight);
+                addRichTextField(richItem, 'body', snapshot?.course?.syllabusText || '', snapshot.scanStats);
+                recordSnapshotItem(snapshot, richItem);
+            }
+        }),
         // Fetch pages
         fetchAllPages(`${baseUrl}/api/v1/courses/${course.id}/pages?per_page=100`).then(items => {
             for (const item of items) {
@@ -2641,10 +2876,54 @@ async function fetchHeavyEndpoints(baseUrl, course, sourceMeta, scanTimestamp, s
         try {
             const folders = await fetchAllPages(`${baseUrl}/api/v1/courses/${course.id}/folders?per_page=100`);
             for (const f of folders) {
-                const fullName = (f.full_name || '')
+                const isRootFolder = /^course files?$/i.test(String(f.name || '').trim());
+                const fullName = String(f.full_name || '')
                     .replace(/^course files\/?/i, '')
-                    .replace(/\//g, ' > ');
-                folderMap.set(f.id, { name: f.name || '', fullName });
+                    .trim();
+                const pathMeta = buildIndexedPathMetadata(fullName, isRootFolder ? '' : (f.name || ''));
+                const folderUrl = buildCanvasFolderHtmlUrl(baseUrl, course.id, f);
+                const folderRecord = {
+                    id: f.id,
+                    name: isRootFolder ? 'Files' : (f.name || pathMeta.pathSegments[pathMeta.pathSegments.length - 1] || ''),
+                    fullName: pathMeta.folderPath,
+                    url: folderUrl,
+                    pathSegments: pathMeta.pathSegments,
+                    pathDepth: pathMeta.pathDepth,
+                    weekHints: pathMeta.weekHints,
+                    createdAt: f.created_at || null,
+                    updatedAt: f.updated_at || f.modified_at || null
+                };
+                folderMap.set(f.id, folderRecord);
+
+                if (!pathMeta.folderPath) continue;
+
+                const lightweight = {
+                    title: folderRecord.name || 'Folder',
+                    url: folderUrl,
+                    type: 'folder',
+                    moduleName: pathMeta.pathSegments[0] || 'Files',
+                    folderPath: pathMeta.folderPath,
+                    pathSegments: pathMeta.pathSegments.slice(),
+                    pathDepth: pathMeta.pathDepth,
+                    weekHints: pathMeta.weekHints.slice(),
+                    containerUrl: folderUrl,
+                    courseName: course.name,
+                    courseId: course.id,
+                    createdAt: folderRecord.createdAt,
+                    updatedAt: folderRecord.updatedAt,
+                    ...sourceMeta,
+                    scannedAt: scanTimestamp
+                };
+                content.push(lightweight);
+
+                if (snapshot) {
+                    const richItem = buildSnapshotItemBase(course, sourceMeta, scanTimestamp, {
+                        ...lightweight,
+                        lockedForUser: f.locked_for_user ?? null,
+                        hiddenForUser: f.hidden_for_user ?? null
+                    });
+                    recordSnapshotItem(snapshot, richItem);
+                }
             }
         } catch (e) { }
 
@@ -2668,8 +2947,14 @@ async function fetchHeavyEndpoints(baseUrl, course, sourceMeta, scanTimestamp, s
                     type,
                     moduleName: folderName,
                     folderPath,
+                    pathSegments: Array.isArray(folder?.pathSegments) ? folder.pathSegments.slice() : [],
+                    pathDepth: folder?.pathDepth || 0,
+                    weekHints: Array.isArray(folder?.weekHints) ? folder.weekHints.slice() : extractExplicitWeekHints([item.display_name || '', folderPath]),
+                    containerUrl: folder?.url || null,
                     courseName: course.name,
                     courseId: course.id,
+                    createdAt: item.created_at || null,
+                    updatedAt: item.updated_at || item.modified_at || null,
                     ...sourceMeta,
                     scannedAt: scanTimestamp
                 };
@@ -3666,14 +3951,17 @@ function mergeIndexedContentFields(winner, loser) {
         'assignmentGroupId',
         'assignmentGroupName',
         'contentType',
+        'containerUrl',
         'courseId',
         'courseName',
+        'createdAt',
         'dueAt',
         'folderPath',
         'hiddenForUser',
         'lockAt',
         'lockedForUser',
         'moduleName',
+        'pathDepth',
         'platform',
         'platformDomain',
         'pointsPossible',
@@ -3683,6 +3971,7 @@ function mergeIndexedContentFields(winner, loser) {
         'sourceApp',
         'submitted',
         'submissionStatus',
+        'syllabusExcerpt',
         'unlockAt',
         'updatedAt'
     ];
@@ -3711,6 +4000,14 @@ function mergeIndexedContentFields(winner, loser) {
 
     if ((!Array.isArray(winner.allowedExtensions) || winner.allowedExtensions.length === 0) && Array.isArray(loser.allowedExtensions)) {
         winner.allowedExtensions = loser.allowedExtensions.slice();
+    }
+
+    if ((!Array.isArray(winner.pathSegments) || winner.pathSegments.length === 0) && Array.isArray(loser.pathSegments)) {
+        winner.pathSegments = loser.pathSegments.slice();
+    }
+
+    if ((!Array.isArray(winner.weekHints) || winner.weekHints.length === 0) && Array.isArray(loser.weekHints)) {
+        winner.weekHints = loser.weekHints.slice();
     }
 
     if (!winner.submission && loser.submission) {
@@ -3809,6 +4106,28 @@ function getCanonicalId(item) {
     return `__hash__${raw}`;
 }
 
+function getIndexedTypeSpecificity(type) {
+    const priorities = {
+        syllabus: 0,
+        assignment: 1,
+        quiz: 2,
+        discussion: 3,
+        folder: 4,
+        page: 5,
+        file: 6,
+        pdf: 6,
+        document: 6,
+        slides: 6,
+        video: 7,
+        course: 8,
+        navigation: 9,
+        link: 10,
+        external: 10,
+        externalurl: 10
+    };
+    return priorities[String(type || '').toLowerCase()] ?? 50;
+}
+
 /**
  * Deduplicate content by canonical ID.
  * Prefers canonical URLs (e.g. /assignments/123) over module item URLs.
@@ -3842,7 +4161,10 @@ function deduplicateContent(content) {
             const newIsCanonical = isCanonical(item.url);
 
             let winner = existing;
-            if (newIsCanonical && !existingIsCanonical) {
+            if (getIndexedTypeSpecificity(item.type) < getIndexedTypeSpecificity(existing.type)) {
+                winner = item;
+                seen.set(key, item);
+            } else if (newIsCanonical && !existingIsCanonical) {
                 winner = item;
                 seen.set(key, item);
             } else if (newIsCanonical === existingIsCanonical &&
@@ -3867,12 +4189,18 @@ function deduplicateContent(content) {
  */
 function deduplicateCrossType(content) {
     const TYPE_PRIORITY = { assignment: 0, quiz: 1, discussion: 2 };
+    const MERGEABLE_TYPES = new Set(['assignment', 'quiz', 'discussion']);
     const groups = new Map();
 
     for (const item of content) {
         if (!item || !item.title) continue;
 
-        // Exact mapping to match popup.js logic
+        const normalizedType = String(item.type || '').toLowerCase();
+        if (!MERGEABLE_TYPES.has(normalizedType)) {
+            groups.set(`unique:${getCanonicalId(item)}`, item);
+            continue;
+        }
+
         const key = `${(item.title || '').trim().toLowerCase()}|${(item.courseName || '').trim().toLowerCase()}`;
 
         if (!groups.has(key)) {
@@ -4448,6 +4776,7 @@ async function resolvePdfViewerOverlayContextForTab(tab) {
     });
     const attempts = [];
     const seen = new Set();
+    const tabCandidates = await collectPdfCandidatesFromTab(tab.id);
     const queueAttempt = (url, sourcePageUrl, reason) => {
         const normalized = normalizePdfCandidateUrl(url, tab.url);
         const normalizedSource = normalizePdfCandidateUrl(sourcePageUrl || normalized, tab.url);
@@ -4466,6 +4795,16 @@ async function resolvePdfViewerOverlayContextForTab(tab) {
 
     if (normalizedTabUrl) {
         queueAttempt(normalizedTabUrl, normalizedTabUrl, 'tab_url');
+    }
+
+    if (tabCandidates.success) {
+        for (const candidate of tabCandidates.candidates) {
+            queueAttempt(
+                candidate?.url,
+                tabCandidates.pageUrl || candidate?.url || normalizedTabUrl || tab.url,
+                candidate?.source || 'content_script'
+            );
+        }
     }
 
     if (attempts.length === 0) {
@@ -4493,7 +4832,7 @@ async function resolvePdfViewerOverlayContextForTab(tab) {
                 showButton: true,
                 candidateUrl: attempt.url,
                 sourcePageUrl: attempt.sourcePageUrl,
-                titleHint: derivePdfViewerOverlayTitleHint(tab.title || '', attempt.url) || null,
+                titleHint: tabCandidates.titleHint || derivePdfViewerOverlayTitleHint(tab.title || '', attempt.url) || null,
                 reason: probe.reason || attempt.reason
             };
             pdfViewerDebug('Overlay context resolved: show button', resolved);
@@ -4509,7 +4848,7 @@ async function resolvePdfViewerOverlayContextForTab(tab) {
         showButton: false,
         candidateUrl: fallback?.url || null,
         sourcePageUrl: fallback?.sourcePageUrl || null,
-        titleHint: fallback ? (derivePdfViewerOverlayTitleHint(tab.title || '', fallback.url) || null) : null,
+        titleHint: fallback ? (tabCandidates.titleHint || derivePdfViewerOverlayTitleHint(tab.title || '', fallback.url) || null) : null,
         reason: 'top_level_not_pdf'
     };
     pdfViewerDebug('Overlay context resolved: hide button', rejected);
@@ -4834,6 +5173,49 @@ async function resolvePdfContextFromMessage({ mode, sender }) {
     };
 }
 
+function hasStrongPdfSendContext(context) {
+    const confidence = String(context?.confidence || 'none').toLowerCase();
+    return Boolean(context?.hasPdf) && (confidence === 'definitive' || confidence === 'strong');
+}
+
+function resolvePdfSendRequestPayload({ liveContext, fallbackCandidateUrl, fallbackSourcePageUrl, fallbackTitleHint }) {
+    const liveCandidateUrl = normalizePdfCandidateUrl(
+        liveContext?.candidateUrl,
+        liveContext?.sourcePageUrl || fallbackSourcePageUrl || undefined
+    );
+    const liveSourcePageUrl = normalizePdfCandidateUrl(
+        liveContext?.sourcePageUrl || liveCandidateUrl,
+        liveCandidateUrl || fallbackSourcePageUrl || undefined
+    );
+    const liveTitleHint = cleanTitle(liveContext?.titleHint || '');
+
+    if (hasStrongPdfSendContext(liveContext) && liveCandidateUrl) {
+        return {
+            candidateUrl: liveCandidateUrl,
+            sourcePageUrl: liveSourcePageUrl || liveCandidateUrl,
+            titleHint: liveTitleHint || cleanTitle(fallbackTitleHint || '') || null,
+            source: 'live_context'
+        };
+    }
+
+    const fallbackCandidate = normalizePdfCandidateUrl(
+        fallbackCandidateUrl,
+        fallbackSourcePageUrl || liveSourcePageUrl || undefined
+    );
+    const fallbackSource = normalizePdfCandidateUrl(
+        fallbackSourcePageUrl || fallbackCandidate,
+        fallbackCandidate || liveSourcePageUrl || undefined
+    );
+    const fallbackTitle = cleanTitle(fallbackTitleHint || '');
+
+    return {
+        candidateUrl: fallbackCandidate || liveCandidateUrl || null,
+        sourcePageUrl: fallbackSource || liveSourcePageUrl || fallbackCandidate || liveCandidateUrl || null,
+        titleHint: fallbackTitle || liveTitleHint || null,
+        source: fallbackCandidate ? 'fallback_message' : 'unresolved'
+    };
+}
+
 async function sendPdfToLectraFromMessage({ trigger, candidateUrl, sourcePageUrl, titleHint, sender }) {
     const extensionSettings = await getExtensionSettings();
     if (!extensionSettings.enableSendToLectra) {
@@ -4854,10 +5236,16 @@ async function sendPdfToLectraFromMessage({ trigger, candidateUrl, sourcePageUrl
 
     const activeMode = sender?.tab ? 'sender_tab' : 'active_tab';
     const context = await resolvePdfContextFromMessage({ mode: activeMode, sender });
-    const resolvedCandidateUrl = normalizePdfCandidateUrl(candidateUrl || context.candidateUrl, sourcePageUrl || context.sourcePageUrl);
-    const resolvedSourceUrl = normalizePdfCandidateUrl(sourcePageUrl || context.sourcePageUrl || resolvedCandidateUrl, context.sourcePageUrl || undefined);
+    const resolvedRequest = resolvePdfSendRequestPayload({
+        liveContext: context,
+        fallbackCandidateUrl: candidateUrl,
+        fallbackSourcePageUrl: sourcePageUrl,
+        fallbackTitleHint: titleHint
+    });
+    const resolvedCandidateUrl = resolvedRequest.candidateUrl;
+    const resolvedSourceUrl = resolvedRequest.sourcePageUrl;
 
-    if (!resolvedCandidateUrl || (!context.hasPdf && !candidateUrl)) {
+    if (!resolvedCandidateUrl || (resolvedRequest.source === 'unresolved' && !hasStrongPdfSendContext(context))) {
         return {
             success: false,
             code: 'no_pdf_detected',
@@ -4964,7 +5352,7 @@ async function sendPdfToLectraFromMessage({ trigger, candidateUrl, sourcePageUrl
         const sourceForCourse = resolvedSourceUrl || selectedCandidateUrl;
         const courseId = parseCourseIdFromUrl(sourceForCourse);
         const resolvedTitle = derivePdfTitle({
-            titleHint: titleHint || context.titleHint,
+            titleHint: resolvedRequest.titleHint || context.titleHint,
             fallbackFilename: downloaded.filename,
             sourcePageTitle: context.titleHint,
             candidateUrl: selectedCandidateUrl,
@@ -5507,6 +5895,24 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return true;
     }
 
+    // Slash overlay: fetch full indexed content array
+    if (message.action === 'getIndexedContent') {
+        chrome.storage.local.get(['indexedContent']).then(data => {
+            sendResponse({ items: data.indexedContent || [] });
+        });
+        return true;
+    }
+
+    // Slash overlay: fetch extension settings
+    if (message.action === 'getExtensionSettings') {
+        getExtensionSettings().then(settings => {
+            sendResponse({ settings });
+        }).catch(() => {
+            sendResponse({ settings: DEFAULT_EXTENSION_SETTINGS });
+        });
+        return true;
+    }
+
     if (message.action === 'forceScan') {
         // Reset last scan time and trigger
         chrome.storage.local.get(['settings']).then(data => {
@@ -5615,7 +6021,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                     topic,
                     uploadId
                 });
-                await requestDropBridgeV2Poll(`offscreen-${wakeReason}`);
+                let handledByTargetedClaim = false;
+                if (uploadId) {
+                    handledByTargetedClaim = await tryClaimAndProcessDropBridgeV2UploadById({
+                        uploadId,
+                        reason: `offscreen-${wakeReason}`
+                    });
+                }
+
+                if (!handledByTargetedClaim) {
+                    await requestDropBridgeV2Poll(`offscreen-${wakeReason}`);
+                }
                 sendResponse({ success: true });
             } catch (error) {
                 sendResponse({
@@ -5631,6 +6047,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         (async () => {
             try {
                 const status = String(message.status || 'unknown').toLowerCase();
+                const reason = message.reason ? String(message.reason) : null;
                 const patch = {
                     receiverStatus: status,
                     receiverStatusAt: new Date().toISOString(),
@@ -5643,11 +6060,42 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                 await updateDropBridgeV2Diagnostics(patch, {
                     type: 'receiver_status',
                     status,
-                    reason: message.reason ? String(message.reason) : null,
+                    reason,
                     topic: patch.receiverTopic,
                     error: message.error ? String(message.error) : null
                 });
+
+                if (shouldRestartDropBridgeReceiverFromStatus(status, reason)) {
+                    void ensureDropBridgeV2LoopWarm(`receiver-status-${status}`, {
+                        force: true,
+                        restart: true
+                    }).catch((error) => {
+                        console.warn('[DropBridge v2] Receiver restart after status failed:', parseErrorMessage(error));
+                    });
+                }
                 sendResponse({ success: true });
+            } catch (error) {
+                sendResponse({
+                    success: false,
+                    error: parseErrorMessage(error)
+                });
+            }
+        })();
+        return true;
+    }
+
+    if (message.action === 'ensureDropBridgeReceiver') {
+        (async () => {
+            try {
+                const reason = String(message.reason || 'manual-warmup');
+                const result = await ensureDropBridgeV2LoopWarm(reason, {
+                    force: Boolean(message.force),
+                    restart: Boolean(message.restart)
+                });
+                sendResponse({
+                    success: true,
+                    ...result
+                });
             } catch (error) {
                 sendResponse({
                     success: false,

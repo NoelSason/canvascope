@@ -234,7 +234,8 @@
             }
 
             if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-                void reportStatus('error', {
+                const normalizedStatus = status === 'TIMED_OUT' ? 'timed_out' : 'error';
+                void reportStatus(normalizedStatus, {
                     reason,
                     topic: context.topic,
                     error: errorMessage || status

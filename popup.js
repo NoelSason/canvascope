@@ -50,6 +50,7 @@ const BASE_FUSE_KEYS = Object.freeze([
   Object.freeze({ name: 'title', weight: 3.0, bucket: 'title' }),
   Object.freeze({ name: 'searchTitleNormalized', weight: 2.5, bucket: 'title' }),
   Object.freeze({ name: 'searchAliases', weight: 2.0, bucket: 'title' }),
+  Object.freeze({ name: 'searchPathNormalized', weight: 2.2, bucket: 'context' }),
   Object.freeze({ name: 'searchCourseNormalized', weight: 2.2, bucket: 'context' }),
   Object.freeze({ name: 'folderPath', weight: 1.8, bucket: 'context' }),
   Object.freeze({ name: 'moduleName', weight: 1.5, bucket: 'context' }),
@@ -83,12 +84,17 @@ const CUSTOM_ALGORITHM_WARNING = 'Custom Algorithm is experimental. It changes h
 const MAX_RESULTS = 20;
 const SEARCH_DEBOUNCE_MS = 150;
 const MAX_HISTORY = 10;
+const SLASH_RESULT_LIMIT = 18;
+const DEFAULT_SEARCH_PLACEHOLDER = "e.g., 'lecture 7' or 'midterm'";
+const SLASH_SEARCH_PLACEHOLDER = 'Type a command or alias'; // Unused — slash moved to in-page overlay
 
 // Type boost values for ranking
 const TYPE_BOOST = {
+  syllabus: 0.42,
   assignment: 0.30,
   quiz: 0.25,
   discussion: 0.20,
+  folder: 0.18,
   page: 0.15,
   file: 0.10,
   pdf: 0.10,
@@ -613,6 +619,154 @@ function dueUrgencyClass(item) {
   return 'upcoming';
 }
 
+function buildItemAriaLabel(item, { includeOpenedAt = false } = {}) {
+  const parts = [];
+  const title = item?.title || 'Untitled';
+  parts.push(title);
+  if (item?.type) parts.push(formatTypeName(item.type));
+  if (item?.courseName) parts.push(item.courseName);
+  if (item?.folderPath && (item.type === 'folder' || LEAF_FILE_TYPES.has(String(item.type || '').toLowerCase()))) {
+    parts.push(item.folderPath);
+  }
+  if (item?.dueAt && isTaskType(item)) parts.push(formatDueLabel(item));
+  if (includeOpenedAt && item?.openedAt) parts.push(`Opened ${formatRelativeTime(item.openedAt)}`);
+  return parts.join(', ');
+}
+
+function formatRelativeTime(timestamp) {
+  const elapsedMs = Date.now() - Number(timestamp || 0);
+  if (!Number.isFinite(elapsedMs) || elapsedMs <= 0) return 'just now';
+
+  const minutes = Math.round(elapsedMs / (1000 * 60));
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${minutes}m ago`;
+
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+
+  const days = Math.round(hours / 24);
+  if (days < 7) return `${days}d ago`;
+
+  return new Date(timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
+function renderHomeSections() {
+  if (!elements.homeSections || state.isOverlayMode) return false;
+
+  const query = elements.searchInput?.value.trim() || '';
+  if (query.length > 0) {
+    elements.homeSections.classList.add('hidden');
+    return false;
+  }
+
+  const primaryRecent = state.recentlyOpened[0];
+  const additionalRecents = state.recentlyOpened.slice(1, MAX_RECENTS);
+  const hasHomeContent = Boolean(primaryRecent || additionalRecents.length > 0);
+
+  elements.continueSection.innerHTML = '';
+  elements.recentlyOpenedSection.innerHTML = '';
+
+  if (primaryRecent) {
+    const title = document.createElement('div');
+    title.className = 'home-section-title';
+    title.textContent = 'Continue where you left off';
+    elements.continueSection.appendChild(title);
+
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'continue-card';
+    button.setAttribute('aria-label', buildItemAriaLabel(primaryRecent, { includeOpenedAt: true }));
+
+    const copy = document.createElement('div');
+    copy.className = 'continue-card-copy';
+    copy.innerHTML = `
+      <span class="continue-card-kicker">Resume</span>
+      <div class="continue-card-title"></div>
+      <div class="continue-card-meta"></div>
+    `;
+    copy.querySelector('.continue-card-title').textContent = primaryRecent.title || 'Untitled';
+    copy.querySelector('.continue-card-meta').textContent = [
+      primaryRecent.courseName || 'Recent item',
+      formatRelativeTime(primaryRecent.openedAt)
+    ].filter(Boolean).join(' • ');
+
+    const badge = document.createElement('span');
+    badge.className = 'continue-card-badge';
+    badge.textContent = formatTypeName(primaryRecent.type || 'link');
+
+    button.appendChild(copy);
+    button.appendChild(badge);
+    button.addEventListener('click', (event) => openResult(primaryRecent, event));
+    button.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        openResult(primaryRecent, event);
+      }
+    });
+
+    elements.continueSection.appendChild(button);
+    elements.continueSection.classList.remove('hidden');
+  } else {
+    elements.continueSection.classList.add('hidden');
+  }
+
+  if (additionalRecents.length > 0) {
+    const title = document.createElement('div');
+    title.className = 'home-section-title';
+    title.textContent = 'Recently opened';
+    elements.recentlyOpenedSection.appendChild(title);
+
+    const list = document.createElement('div');
+    list.className = 'recent-list';
+
+    additionalRecents.forEach((item) => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'recent-item-card';
+      button.setAttribute('aria-label', buildItemAriaLabel(item, { includeOpenedAt: true }));
+
+      const copy = document.createElement('div');
+      copy.className = 'recent-item-copy';
+
+      const itemTitle = document.createElement('div');
+      itemTitle.className = 'recent-item-title';
+      itemTitle.textContent = item.title || 'Untitled';
+      copy.appendChild(itemTitle);
+
+      const meta = document.createElement('div');
+      meta.className = 'recent-item-meta';
+      meta.textContent = [
+        item.courseName || 'Recent item',
+        formatRelativeTime(item.openedAt)
+      ].filter(Boolean).join(' • ');
+      copy.appendChild(meta);
+
+      const type = document.createElement('span');
+      type.className = 'recent-item-type';
+      type.textContent = formatTypeName(item.type || 'link');
+
+      button.appendChild(copy);
+      button.appendChild(type);
+      button.addEventListener('click', (event) => openResult(item, event));
+      button.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          openResult(item, event);
+        }
+      });
+      list.appendChild(button);
+    });
+
+    elements.recentlyOpenedSection.appendChild(list);
+    elements.recentlyOpenedSection.classList.remove('hidden');
+  } else {
+    elements.recentlyOpenedSection.classList.add('hidden');
+  }
+
+  elements.homeSections.classList.toggle('hidden', !hasHomeContent);
+  return hasHomeContent;
+}
+
 function renderDuePlanner() {
   const planner = elements.duePlanner;
   if (!planner || state.isOverlayMode) return;
@@ -649,6 +803,9 @@ function renderDuePlanner() {
     for (const item of sec.items) {
       const row = document.createElement('div');
       row.className = 'due-item';
+      row.setAttribute('tabindex', '0');
+      row.setAttribute('role', 'button');
+      row.setAttribute('aria-label', buildItemAriaLabel(item));
 
       const left = document.createElement('div');
       left.className = 'due-item-left';
@@ -683,8 +840,10 @@ function renderDuePlanner() {
 
       const dismissBtn = document.createElement('button');
       dismissBtn.className = 'dismiss-task-btn';
+      dismissBtn.type = 'button';
       dismissBtn.innerHTML = '&times;';
       dismissBtn.title = "Dismiss task";
+      dismissBtn.setAttribute('aria-label', `Dismiss ${item.title || 'task'}`);
       dismissBtn.addEventListener('click', async (e) => {
         e.stopPropagation(); // prevent opening result
 
@@ -701,6 +860,12 @@ function renderDuePlanner() {
       row.appendChild(right);
 
       row.addEventListener('click', (e) => openResult(item, e));
+      row.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          openResult(item, e);
+        }
+      });
       sectionEl.appendChild(row);
     }
 
@@ -844,23 +1009,144 @@ function numberVariants(text) {
   return variants.join(' ');
 }
 
+function splitPathSegments(item) {
+  if (Array.isArray(item?.pathSegments) && item.pathSegments.length > 0) {
+    return item.pathSegments
+      .map(segment => String(segment || '').trim())
+      .filter(Boolean);
+  }
+
+  return String(item?.folderPath || '')
+    .split(/\s*>\s*/)
+    .map(segment => segment.trim())
+    .filter(Boolean);
+}
+
+function buildPathWindows(segments) {
+  const windows = [];
+  for (let size = 2; size <= Math.min(3, segments.length); size++) {
+    for (let start = 0; start <= segments.length - size; start++) {
+      windows.push(segments.slice(start, start + size).join(' '));
+    }
+  }
+  return windows;
+}
+
+function addAliasWithVariants(aliases, text) {
+  const normalized = normalizeText(text);
+  if (!normalized) return;
+
+  aliases.add(numberVariants(normalized));
+
+  const singularized = normalized
+    .replace(/\bdiscussions\b/g, 'discussion')
+    .replace(/\bfolders\b/g, 'folder')
+    .replace(/\bfiles\b/g, 'file');
+
+  if (singularized !== normalized) {
+    aliases.add(numberVariants(singularized));
+  }
+}
+
+function extractWeekHintsFromValue(value) {
+  const hints = new Set();
+  const text = String(value || '');
+  if (!text) return [];
+
+  const regex = /\bweek\s*#?\s*0*(\d{1,3})\b/ig;
+  let match = regex.exec(text);
+  while (match) {
+    const normalized = String(match[1] || '').replace(/^0+/, '') || '0';
+    hints.add(normalized);
+    match = regex.exec(text);
+  }
+
+  return Array.from(hints);
+}
+
+function getItemWeekHints(item) {
+  if (Array.isArray(item?.weekHints) && item.weekHints.length > 0) {
+    return item.weekHints
+      .map(value => String(value || '').replace(/^0+/, '') || '0')
+      .filter(Boolean);
+  }
+
+  return extractWeekHintsFromValue([
+    item?.title || '',
+    item?.folderPath || '',
+    item?.moduleName || ''
+  ].join(' '));
+}
+
+function buildBreadcrumbAliases(item) {
+  const segments = splitPathSegments(item);
+  const aliases = new Set();
+  const normalizedSegments = segments
+    .map(segment => expandAbbreviations(segment))
+    .map(segment => normalizeText(segment))
+    .filter(Boolean);
+
+  if (normalizedSegments.length > 0) {
+    const fullPath = normalizedSegments.join(' ');
+    addAliasWithVariants(aliases, fullPath);
+    for (const segment of normalizedSegments) {
+      addAliasWithVariants(aliases, segment);
+    }
+    for (const windowText of buildPathWindows(normalizedSegments)) {
+      addAliasWithVariants(aliases, windowText);
+    }
+  }
+
+  const weekHints = getItemWeekHints(item);
+  for (const week of weekHints) {
+    aliases.add(`week ${week}`);
+    aliases.add(`week${week}`);
+  }
+
+  if (item?.type === 'syllabus') {
+    aliases.add('syllabus');
+    aliases.add('course syllabus');
+    aliases.add('course outline');
+  }
+
+  const excerpt = normalizeText(String(item?.syllabusExcerpt || '').slice(0, 240));
+  if (excerpt) {
+    aliases.add(excerpt);
+  }
+
+  return {
+    aliases: Array.from(aliases).filter(Boolean),
+    searchPathNormalized: normalizedSegments.join(' ')
+  };
+}
+
 /**
  * Build searchable fields for an item
  */
 function buildSearchFields(item) {
   const normalized = expandAbbreviations(item.title || '');
-  let aliases = numberVariants(normalized);
+  const aliases = new Set([numberVariants(normalized)]);
   const normalizedCourse = expandAbbreviations(item.courseName || '');
-  // Include folder path in aliases so folder names are searchable
+  const pathInfo = buildBreadcrumbAliases(item);
+
+  for (const alias of pathInfo.aliases) {
+    aliases.add(alias);
+  }
+
   if (item.folderPath) {
-    aliases += ' ' + normalizeText(item.folderPath);
+    aliases.add(normalizeText(item.folderPath));
   }
   if (item.moduleName && item.moduleName !== 'Files') {
-    aliases += ' ' + normalizeText(item.moduleName);
+    aliases.add(normalizeText(item.moduleName));
   }
+  if (item.type === 'folder' && item.containerUrl) {
+    aliases.add('folder');
+  }
+
   return {
     searchTitleNormalized: normalized,
-    searchAliases: aliases,
+    searchAliases: Array.from(aliases).filter(Boolean).join(' '),
+    searchPathNormalized: pathInfo.searchPathNormalized,
     searchCourseNormalized: normalizedCourse
   };
 }
@@ -883,6 +1169,7 @@ function getSearchTokenVocabulary() {
 
   for (const item of content) {
     addTokens(item.searchTitleNormalized || expandAbbreviations(item.title || ''));
+    addTokens(item.searchPathNormalized || normalizeText(item.folderPath || ''));
     addTokens(item.searchCourseNormalized || expandAbbreviations(item.courseName || ''));
     addTokens(item.searchAliases || '');
     addTokens(item.folderPath || '');
@@ -1349,6 +1636,202 @@ function getQueryCourseHintBoost(item, normalizedQuery) {
   return -0.18;
 }
 
+const FILE_SPECIFIC_QUERY_TOKENS = new Set([
+  'pdf', 'doc', 'docx', 'file', 'files', 'worksheet', 'handout', 'document',
+  'slides', 'slide', 'notes', 'download', 'ppt', 'pptx'
+]);
+
+const PATH_ORIENTED_QUERY_TOKENS = new Set([
+  'week', 'module', 'folder', 'folders', 'files', 'discussion', 'discussions',
+  'unit', 'chapter', 'syllabus'
+]);
+
+const LEAF_FILE_TYPES = new Set(['file', 'pdf', 'document', 'slides']);
+
+function getMeaningfulQueryTokens(normalizedQuery) {
+  return String(normalizedQuery || '')
+    .split(/\s+/)
+    .filter(token => token.length > 0 && (token.length > 1 || /^\d+$/.test(token)))
+    .filter(token => !STOP_TOKENS.has(token));
+}
+
+function isFileSpecificQuery(normalizedQuery) {
+  return getMeaningfulQueryTokens(normalizedQuery).some(token => FILE_SPECIFIC_QUERY_TOKENS.has(token));
+}
+
+function isPathOrientedQuery(normalizedQuery) {
+  const tokens = getMeaningfulQueryTokens(normalizedQuery);
+  if (tokens.length >= 3) return true;
+  if (tokens.some(token => PATH_ORIENTED_QUERY_TOKENS.has(token))) return true;
+  const numericCount = tokens.filter(token => /^\d+$/.test(token)).length;
+  return numericCount > 0 && tokens.length >= 2;
+}
+
+function isSyllabusQuery(normalizedQuery) {
+  return /\bsyllabus\b/i.test(String(normalizedQuery || ''));
+}
+
+function normalizeSlashAlias(value) {
+  return String(value || '')
+    .trim()
+    .replace(/^\//, '')
+    .toLowerCase();
+}
+
+function buildSlashCommandLookup(commands) {
+  const lookup = new Map();
+
+  for (const command of Array.isArray(commands) ? commands : []) {
+    const aliases = [command?.primaryAlias, ...(Array.isArray(command?.aliases) ? command.aliases : [])];
+    for (const alias of aliases) {
+      const normalized = normalizeSlashAlias(alias);
+      if (!normalized || lookup.has(normalized)) continue;
+      lookup.set(normalized, command);
+    }
+  }
+
+  return lookup;
+}
+
+function scoreSlashCommandMatch(command, query) {
+  const normalizedQuery = normalizeSlashAlias(query);
+  if (!normalizedQuery) return 1;
+
+  const aliases = [command?.primaryAlias, ...(Array.isArray(command?.aliases) ? command.aliases : [])]
+    .map(normalizeSlashAlias)
+    .filter(Boolean);
+  const title = normalizeText(command?.title || '');
+  const description = normalizeText(command?.description || '');
+  const keywords = (Array.isArray(command?.keywords) ? command.keywords : [])
+    .map(keyword => normalizeText(keyword))
+    .filter(Boolean);
+
+  let score = -Infinity;
+
+  for (const alias of aliases) {
+    if (alias === normalizedQuery) return 200;
+    if (alias.startsWith(normalizedQuery)) score = Math.max(score, 150 - alias.length);
+    if (alias.includes(normalizedQuery)) score = Math.max(score, 132 - alias.length);
+  }
+
+  if (title === normalizedQuery) score = Math.max(score, 126);
+  if (title.startsWith(normalizedQuery)) score = Math.max(score, 112);
+  if (title.includes(normalizedQuery)) score = Math.max(score, 98);
+  if (description.includes(normalizedQuery)) score = Math.max(score, 74);
+
+  for (const keyword of keywords) {
+    if (keyword === normalizedQuery) score = Math.max(score, 104);
+    if (keyword.startsWith(normalizedQuery)) score = Math.max(score, 92);
+    if (keyword.includes(normalizedQuery)) score = Math.max(score, 84);
+  }
+
+  return score;
+}
+
+function rankSlashCommands(commands, query) {
+  const normalizedQuery = normalizeSlashAlias(query);
+  const entries = [];
+
+  for (const command of Array.isArray(commands) ? commands : []) {
+    const score = scoreSlashCommandMatch(command, normalizedQuery);
+    if (normalizedQuery && !Number.isFinite(score)) continue;
+    entries.push({ command, score });
+  }
+
+  return entries
+    .sort((lhs, rhs) => {
+      if (rhs.score !== lhs.score) return rhs.score - lhs.score;
+      return (lhs.command?.order || 0) - (rhs.command?.order || 0);
+    })
+    .map(entry => entry.command);
+}
+
+function parseSlashCommandText(rawValue, commandLookup = new Map()) {
+  const rawText = String(rawValue || '');
+  if (!rawText.startsWith('/')) {
+    return {
+      active: false,
+      commandQuery: '',
+      commandToken: '',
+      argumentText: '',
+      hasTrailingSpace: false,
+      exactCommand: null,
+      mode: 'inactive'
+    };
+  }
+
+  const body = rawText.slice(1);
+  const firstWhitespaceIndex = body.search(/\s/);
+  const hasWhitespace = firstWhitespaceIndex !== -1;
+  const commandToken = hasWhitespace ? body.slice(0, firstWhitespaceIndex) : body;
+  const commandQuery = commandToken.trim().toLowerCase();
+  const argumentText = hasWhitespace ? body.slice(firstWhitespaceIndex + 1) : '';
+  const hasTrailingSpace = /\s$/.test(body);
+  const exactCommand = commandLookup.get(commandQuery) || null;
+  const mode = exactCommand && hasWhitespace ? 'results' : 'commands';
+
+  return {
+    active: true,
+    commandQuery,
+    commandToken,
+    argumentText,
+    hasTrailingSpace,
+    exactCommand,
+    mode
+  };
+}
+
+function isSlashPdfEligibleItem(item) {
+  const normalizedType = String(item?.type || '').toLowerCase();
+  if (normalizedType === 'pdf') return true;
+  if (normalizedType !== 'file') return false;
+
+  const title = String(item?.title || '').toLowerCase();
+  const url = String(item?.url || '').toLowerCase();
+  return title.includes('.pdf') || url.includes('.pdf');
+}
+
+// Slash commands moved to in-page overlay (slash-overlay.js).
+// This stub is kept so references to state.slashMode don't throw.
+function createDefaultSlashModeState() {
+  return Object.freeze({
+    active: false,
+    rawValue: '',
+    parsed: null,
+    highlightedIndex: 0,
+    results: [],
+    feedback: null
+  });
+}
+
+function countTokenHits(tokens, searchableText) {
+  if (!tokens.length || !searchableText) return 0;
+  let hits = 0;
+  for (const token of tokens) {
+    if (/^\d+$/.test(token)) {
+      if (new RegExp(`\\b${token}\\b`).test(searchableText)) hits++;
+    } else if (searchableText.includes(token)) {
+      hits++;
+    }
+  }
+  return hits;
+}
+
+function getPathSearchText(item) {
+  return normalizeText([
+    item?.courseName || '',
+    item?.folderPath || '',
+    Array.isArray(item?.pathSegments) ? item.pathSegments.join(' ') : '',
+    item?.moduleName || '',
+    item?.type === 'syllabus' ? 'syllabus' : ''
+  ].join(' '));
+}
+
+function shouldShowPathContext(item) {
+  return Boolean(item?.folderPath) &&
+    (item?.type === 'folder' || LEAF_FILE_TYPES.has(String(item?.type || '').toLowerCase()));
+}
+
 // ============================================
 // UI STATE MACHINE
 // ============================================
@@ -1426,10 +1909,14 @@ const elements = {};
 
 const MAX_RECENTS = 5;
 const PDF_VIEWER_DEBUG = true;
+const POPUP_UI_STORAGE_KEY = 'popupUi';
 const DEFAULT_EXTENSION_SETTINGS = Object.freeze({
   enableSendToLectra: false,
   selectedCourseFilters: [],
   customAlgorithm: DEFAULT_CUSTOM_ALGORITHM
+});
+const DEFAULT_POPUP_UI = Object.freeze({
+  walkthroughSeen: false
 });
 
 let state = {
@@ -1453,6 +1940,11 @@ let state = {
   user: null,
   activePdfContext: null,
   extensionSettings: { ...DEFAULT_EXTENSION_SETTINGS },
+  popupUi: { ...DEFAULT_POPUP_UI },
+  settingsModalOpen: false,
+  helpModalOpen: false,
+  lastModalTrigger: null,
+  slashMode: createDefaultSlashModeState(),
   _courseCandidatesCache: null,
   _courseCandidatesVersion: 0,
   dismissedTasks: []
@@ -1474,6 +1966,14 @@ function normalizeExtensionSettings(rawSettings) {
   };
 }
 
+function normalizePopupUi(rawPopupUi) {
+  const source = rawPopupUi && typeof rawPopupUi === 'object' ? rawPopupUi : {};
+  return {
+    ...DEFAULT_POPUP_UI,
+    walkthroughSeen: Boolean(source.walkthroughSeen)
+  };
+}
+
 async function loadExtensionSettings() {
   try {
     const result = await chrome.storage.local.get(['settings']);
@@ -1485,6 +1985,27 @@ async function loadExtensionSettings() {
 
   syncCourseFiltersFromSettings();
   applyExtensionSettingsUi();
+}
+
+async function loadPopupUiState() {
+  try {
+    const result = await chrome.storage.local.get([POPUP_UI_STORAGE_KEY]);
+    state.popupUi = normalizePopupUi(result[POPUP_UI_STORAGE_KEY]);
+  } catch (error) {
+    console.warn('[Canvascope] Could not load popup UI state:', error);
+    state.popupUi = { ...DEFAULT_POPUP_UI };
+  }
+}
+
+async function updatePopupUiState(patch) {
+  const current = normalizePopupUi(state.popupUi);
+  const next = normalizePopupUi({
+    ...current,
+    ...patch
+  });
+  state.popupUi = next;
+  await chrome.storage.local.set({ [POPUP_UI_STORAGE_KEY]: next });
+  return next;
 }
 
 function applyExtensionSettingsUi() {
@@ -1510,6 +2031,46 @@ function applyExtensionSettingsUi() {
       updateCustomAlgorithmValueLabel(key, customAlgorithm[key]);
     }
   }
+
+  if (state.slashMode.active) {
+    renderSlashCommandSheet();
+  }
+}
+
+function updateAuthButtonUi({ label = null, disabled = false } = {}) {
+  if (!elements.googleSignInBtn) return;
+
+  const text = label ?? (state.isSignedIn ? 'Account' : 'Sign in');
+  const buttonLabel = label
+    ? text
+    : (state.isSignedIn ? 'Open account and sign-out controls' : 'Sign in with Google');
+
+  elements.googleSignInBtn.disabled = disabled;
+  elements.googleSignInBtn.setAttribute('aria-label', buttonLabel);
+  elements.googleSignInBtn.querySelector('.btn-text').textContent = text;
+
+  const googleIcon = elements.googleSignInBtn.querySelector('.auth-icon-google');
+  const accountIcon = elements.googleSignInBtn.querySelector('.auth-icon-account');
+  if (googleIcon) googleIcon.classList.toggle('hidden', state.isSignedIn);
+  if (accountIcon) accountIcon.classList.toggle('hidden', !state.isSignedIn);
+
+  elements.googleSignInBtn.style.backgroundColor = '';
+  elements.googleSignInBtn.style.color = '';
+  elements.googleSignInBtn.style.borderColor = 'var(--glass-border)';
+}
+
+function updateSettingsAccountUi() {
+  if (elements.settingsProfile) {
+    elements.settingsProfile.classList.toggle('hidden', !state.isSignedIn);
+  }
+
+  if (elements.settingsAccountState) {
+    elements.settingsAccountState.classList.toggle('hidden', state.isSignedIn);
+  }
+
+  if (elements.settingsModalFooter) {
+    elements.settingsModalFooter.classList.toggle('hidden', !state.isSignedIn);
+  }
 }
 
 async function updateExtensionSettings(patch) {
@@ -1532,6 +2093,17 @@ function getAllowedFileSchemeAccess() {
       resolve(Boolean(allowed));
     });
   });
+}
+
+async function warmDropBridgeReceiver(reason = 'popup-open') {
+  try {
+    await chrome.runtime.sendMessage({
+      action: 'ensureDropBridgeReceiver',
+      reason
+    });
+  } catch (error) {
+    console.warn('[Canvascope] Failed to warm DropBridge receiver:', error?.message || error);
+  }
 }
 
 async function syncPdfViewerOverlayRegistration(reason = 'popup') {
@@ -1612,6 +2184,11 @@ function updateCustomAlgorithmValueLabel(key, value) {
 function rerunSearchWithCurrentQuery() {
   initializeFuse();
 
+  if (state.slashMode.active) {
+    renderSlashCommandSheet();
+    return;
+  }
+
   const activeQuery = elements.searchInput?.value.trim();
   if (activeQuery) {
     performSearch(activeQuery);
@@ -1660,6 +2237,12 @@ function itemMatchesSelectedCourses(item, selectedCourses = state.filters.course
   if (!itemCourse) return false;
 
   return normalizedSelections.some(course => normalizeText(course) === itemCourse);
+}
+
+function isCourseSelected(courseName, selectedCourses = state.filters.course) {
+  if (!courseName) return false;
+  return normalizeSelectedCourseFilters(selectedCourses)
+    .some(course => normalizeText(course) === normalizeText(courseName));
 }
 
 function buildCourseOption(label, { value = label, selected = false } = {}) {
@@ -1742,8 +2325,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   setUiState(UI_STATE.BOOT_LOADING);
   console.log('[Canvascope] Popup opened');
   initializeElements();
+  applySlashModeUi();
   setupEventListeners();
   await loadExtensionSettings();
+  await loadPopupUiState();
   await loadContent();
   await loadSearchHistory();
   await loadRecentlyOpened();
@@ -1752,31 +2337,35 @@ document.addEventListener('DOMContentLoaded', async () => {
   initializeFuse();
   updateUI();
   renderDuePlanner();
+  renderHomeSections();
+  updateAuthButtonUi();
+  updateSettingsModalContent();
+  updateSearchFieldAffordances();
   elements.searchInput.focus();
 
   // Request status from background
   getBackgroundStatus();
+  void warmDropBridgeReceiver('popup-open');
 
   // Check auth status
   chrome.runtime.sendMessage({ type: 'checkAuthStatus' }, (response) => {
     if (response && response.signedIn) {
-      state.isSignedIn = true;
-      state.user = response.user;
-      if (elements.googleSignInBtn) {
-        elements.googleSignInBtn.querySelector('.btn-text').textContent = 'Signed in ✓';
-        elements.googleSignInBtn.style.backgroundColor = 'var(--success-color, #4CAF50)';
-        elements.googleSignInBtn.style.color = '#fff';
-        elements.googleSignInBtn.style.borderColor = 'rgba(76, 175, 80, 0.35)';
-      }
+      handleSignedInState(response.user);
+    } else {
+      updateAuthButtonUi();
+      updateSettingsModalContent();
     }
   });
 
   // Check if current tab is a supported LMS and auto-detect domain
-  checkCurrentTab();
+  await checkCurrentTab();
+  void requestActiveTabContentScan();
 
   if (!state.isOverlayMode) {
     await refreshPdfFallbackAvailability();
   }
+
+  void maybeShowWalkthrough();
 
   try {
     chrome.storage.onChanged.addListener((changes, areaName) => {
@@ -1883,8 +2472,13 @@ function checkOverlayMode() {
 }
 
 function initializeElements() {
+  elements.helpBtn = document.getElementById('help-btn');
+  elements.settingsBtn = document.getElementById('settings-btn');
+  elements.searchSection = document.querySelector('.search-section');
+  elements.searchWrapper = document.querySelector('.search-wrapper');
   elements.searchInput = document.getElementById('search-input');
   elements.clearSearchBtn = document.getElementById('clear-search');
+  // Slash DOM elements removed — slash commands live in in-page overlay now
   elements.resultsContainer = document.getElementById('results-container');
   elements.emptyState = document.getElementById('empty-state');
   elements.refreshBtn = document.getElementById('refresh-btn');
@@ -1894,6 +2488,9 @@ function initializeElements() {
   elements.statsText = document.getElementById('stats-text');
   elements.statsHint = document.getElementById('stats-hint');
   elements.statsBtn = document.getElementById('stats-btn');
+  elements.homeSections = document.getElementById('home-sections');
+  elements.continueSection = document.getElementById('continue-section');
+  elements.recentlyOpenedSection = document.getElementById('recently-opened-section');
 
   // Browsing Modal Elements
   elements.browseModal = document.getElementById('browse-modal');
@@ -1905,6 +2502,10 @@ function initializeElements() {
   elements.googleSignInBtn = document.getElementById('google-signin-btn');
   elements.accountModal = document.getElementById('account-modal');
   elements.closeAccountModalBtn = document.getElementById('close-account-modal');
+  elements.settingsProfile = document.getElementById('settings-profile');
+  elements.settingsAccountState = document.getElementById('settings-account-state');
+  elements.settingsSigninBtn = document.getElementById('settings-signin-btn');
+  elements.settingsModalFooter = document.getElementById('settings-modal-footer');
   elements.accountNameDisplay = document.getElementById('account-name-display');
   elements.accountEmailDisplay = document.getElementById('account-email-display');
   elements.accountAvatarPlaceholder = document.getElementById('account-avatar-placeholder');
@@ -1918,6 +2519,9 @@ function initializeElements() {
       .map(node => [node.dataset.algorithmValueFor, node])
   );
   elements.logoutBtn = document.getElementById('logout-btn');
+  elements.helpModal = document.getElementById('help-modal');
+  elements.closeHelpModalBtn = document.getElementById('close-help-modal');
+  elements.exampleSearchButtons = Array.from(document.querySelectorAll('[data-example-query]'));
 
   // Sync Status Elements
   elements.syncStatus = document.getElementById('sync-status');
@@ -1929,6 +2533,7 @@ function initializeElements() {
   elements.courseTrigger = document.getElementById('course-trigger');
   elements.courseOptions = document.getElementById('course-options');
   elements.courseText = document.getElementById('course-text');
+  elements.filterBar = document.getElementById('filter-bar');
 
   elements.typeWrapper = document.getElementById('type-select-wrapper');
   elements.typeTrigger = document.getElementById('type-trigger');
@@ -1987,9 +2592,964 @@ function sanitizeAdminExport(data) {
   return cloned;
 }
 
+function openPopupModal(stateKey, modalElement, trigger = null, initialFocusElement = null) {
+  if (!modalElement) return;
+
+  state.lastModalTrigger = trigger || document.activeElement;
+  modalElement.classList.remove('hidden');
+  if (stateKey) state[stateKey] = true;
+
+  window.requestAnimationFrame(() => {
+    const focusTarget = initialFocusElement
+      || modalElement.querySelector('button, [href], input, [tabindex]:not([tabindex="-1"])');
+    if (focusTarget && typeof focusTarget.focus === 'function') {
+      focusTarget.focus();
+    }
+  });
+}
+
+function closePopupModal(stateKey, modalElement) {
+  if (!modalElement || modalElement.classList.contains('hidden')) return;
+
+  modalElement.classList.add('hidden');
+  if (stateKey) state[stateKey] = false;
+
+  const trigger = state.lastModalTrigger;
+  state.lastModalTrigger = null;
+  if (trigger && typeof trigger.focus === 'function') {
+    trigger.focus();
+  }
+}
+
+async function maybeShowWalkthrough() {
+  if (state.isOverlayMode || state.popupUi.walkthroughSeen) return;
+  await updatePopupUiState({ walkthroughSeen: true });
+  showHelpModal(elements.helpBtn, { autoOpen: true });
+}
+
+function showHelpModal(trigger = null, { autoOpen = false } = {}) {
+  if (!elements.helpModal) return;
+  openPopupModal('helpModalOpen', elements.helpModal, trigger, elements.closeHelpModalBtn);
+  if (!autoOpen && !state.popupUi.walkthroughSeen) {
+    void updatePopupUiState({ walkthroughSeen: true });
+  }
+}
+
+function updateSettingsModalContent() {
+  updateSettingsAccountUi();
+
+  if (!state.isSignedIn) {
+    return;
+  }
+
+  const user = state.user || {};
+  const name = user.name || 'User';
+  const email = user.email || '';
+
+  if (elements.accountNameDisplay) elements.accountNameDisplay.textContent = name;
+  if (elements.accountEmailDisplay) elements.accountEmailDisplay.textContent = email;
+
+  if (elements.accountAvatarPlaceholder) {
+    if (user.avatar_url) {
+      elements.accountAvatarPlaceholder.innerHTML = `<img src="${user.avatar_url}" alt="" style="width: 100%; height: 100%; border-radius: 50%; object-fit: cover;">`;
+      elements.accountAvatarPlaceholder.style.backgroundColor = 'transparent';
+    } else {
+      elements.accountAvatarPlaceholder.innerHTML = name.charAt(0).toUpperCase();
+      elements.accountAvatarPlaceholder.style.backgroundColor = 'var(--glass-border)';
+    }
+  }
+}
+
+function showSettingsModal(trigger = null) {
+  if (!elements.accountModal) return;
+  updateSettingsModalContent();
+  applyExtensionSettingsUi();
+  openPopupModal('settingsModalOpen', elements.accountModal, trigger, elements.closeAccountModalBtn);
+}
+
+function closeTopModal() {
+  if (state.helpModalOpen) {
+    closePopupModal('helpModalOpen', elements.helpModal);
+    return true;
+  }
+
+  if (state.settingsModalOpen) {
+    closePopupModal('settingsModalOpen', elements.accountModal);
+    return true;
+  }
+
+  if (elements.browseModal && !elements.browseModal.classList.contains('hidden')) {
+    closeBrowseModal();
+    return true;
+  }
+
+  return false;
+}
+
+function handleSignedInState(user) {
+  state.isSignedIn = true;
+  state.user = user || null;
+  updateAuthButtonUi();
+  updateSettingsModalContent();
+  if (state.slashMode.active) {
+    renderSlashCommandSheet();
+  }
+  void warmDropBridgeReceiver('popup-post-login');
+}
+
+function handleSignedOutState() {
+  state.isSignedIn = false;
+  state.user = null;
+  updateAuthButtonUi();
+  updateSettingsModalContent();
+  if (state.slashMode.active) {
+    renderSlashCommandSheet();
+  }
+}
+
+function getPopupErrorMessage(error, fallback = 'Action failed.') {
+  const message = error?.message ? String(error.message) : '';
+  return message || fallback;
+}
+
+function updateSearchFieldAffordances() {
+  if (!elements.clearSearchBtn || !elements.searchInput) return;
+  const hasInput = Boolean(elements.searchInput.value);
+  elements.clearSearchBtn.classList.toggle('visible', state.slashMode.active || hasInput);
+}
+
+function applySlashModeUi() {
+  const active = Boolean(state.slashMode.active) && !state.isOverlayMode;
+
+  document.body.classList.toggle('slash-mode-active', active);
+
+  if (elements.slashSearchPrefix) {
+    elements.slashSearchPrefix.classList.toggle('hidden', !active);
+  }
+
+  if (elements.slashSheet) {
+    elements.slashSheet.classList.toggle('hidden', !active);
+  }
+
+  if (elements.searchInput) {
+    elements.searchInput.placeholder = active ? SLASH_SEARCH_PLACEHOLDER : DEFAULT_SEARCH_PLACEHOLDER;
+    elements.searchInput.setAttribute('aria-expanded', active ? 'true' : 'false');
+    elements.searchInput.setAttribute('aria-controls', active ? 'slash-results' : 'results-container');
+    if (!active) {
+      elements.searchInput.removeAttribute('aria-activedescendant');
+    }
+  }
+
+  if (active) {
+    hideSearchHistory();
+    elements.courseWrapper?.classList.remove('open');
+    elements.typeWrapper?.classList.remove('open');
+  }
+
+  updateSearchFieldAffordances();
+}
+
+function createSlashResultEntry({
+  key,
+  kind = 'candidate',
+  title,
+  subtitle = '',
+  meta = '',
+  badge = '',
+  badgeClass = '',
+  ariaLabel = '',
+  onSelect = null
+}) {
+  return {
+    key,
+    kind,
+    title,
+    subtitle,
+    meta,
+    badge,
+    badgeClass,
+    ariaLabel: ariaLabel || [title, subtitle, meta, badge].filter(Boolean).join(', '),
+    onSelect
+  };
+}
+
+function getSlashItemSortTitle(item) {
+  return String(item?.title || '').trim().toLowerCase();
+}
+
+function sortSlashItemsAlphabetically(items) {
+  return [...items].sort((lhs, rhs) => getSlashItemSortTitle(lhs).localeCompare(getSlashItemSortTitle(rhs)));
+}
+
+function sortSlashItemsByRecency(items) {
+  return [...items].sort((lhs, rhs) => {
+    const lhsTs = lhs?.scannedAt ? new Date(lhs.scannedAt).getTime() : 0;
+    const rhsTs = rhs?.scannedAt ? new Date(rhs.scannedAt).getTime() : 0;
+    if (rhsTs !== lhsTs) return rhsTs - lhsTs;
+    return getSlashItemSortTitle(lhs).localeCompare(getSlashItemSortTitle(rhs));
+  });
+}
+
+function buildSlashItemSearchBlob(item) {
+  return normalizeText([
+    item?.searchTitleNormalized || expandAbbreviations(item?.title || ''),
+    item?.searchCourseNormalized || expandAbbreviations(item?.courseName || ''),
+    item?.searchPathNormalized || normalizeText(item?.folderPath || ''),
+    normalizeText(item?.moduleName || ''),
+    Array.isArray(item?.searchAliases) ? item.searchAliases.join(' ') : '',
+    normalizeText(item?.url || '')
+  ].join(' '));
+}
+
+function scoreSlashItemMatch(item, query) {
+  const normalizedQuery = expandAbbreviations(query || '');
+  const meaningfulTokens = getMeaningfulQueryTokens(normalizedQuery);
+  if (!normalizedQuery || meaningfulTokens.length === 0) return 0;
+
+  const titleText = String(item?.searchTitleNormalized || expandAbbreviations(item?.title || '')).toLowerCase();
+  const courseText = String(item?.searchCourseNormalized || expandAbbreviations(item?.courseName || '')).toLowerCase();
+  const pathText = String(item?.searchPathNormalized || normalizeText(item?.folderPath || '')).toLowerCase();
+  const haystack = buildSlashItemSearchBlob(item);
+
+  let score = 0;
+
+  if (titleText === normalizedQuery) score += 170;
+  else if (titleText.startsWith(normalizedQuery)) score += 132;
+  else if (titleText.includes(normalizedQuery)) score += 112;
+
+  if (courseText.includes(normalizedQuery)) score += 28;
+  if (pathText.includes(normalizedQuery)) score += 22;
+
+  let matchedTokens = 0;
+  for (const token of meaningfulTokens) {
+    if (titleText.includes(token)) {
+      score += 22;
+      matchedTokens += 1;
+      continue;
+    }
+    if (courseText.includes(token)) {
+      score += 14;
+      matchedTokens += 1;
+      continue;
+    }
+    if (pathText.includes(token)) {
+      score += 12;
+      matchedTokens += 1;
+      continue;
+    }
+    if (haystack.includes(token)) {
+      score += 8;
+      matchedTokens += 1;
+    }
+  }
+
+  if (matchedTokens === meaningfulTokens.length) {
+    score += 28;
+  } else {
+    score -= (meaningfulTokens.length - matchedTokens) * 16;
+  }
+
+  return score;
+}
+
+function filterSlashItems(items, query, { defaultSort = sortSlashItemsAlphabetically, extraScore = null } = {}) {
+  const sourceItems = Array.isArray(items) ? items : [];
+  const normalizedQuery = String(query || '').trim();
+
+  if (!normalizedQuery) {
+    return defaultSort(sourceItems).slice(0, SLASH_RESULT_LIMIT);
+  }
+
+  const scored = [];
+  for (const item of sourceItems) {
+    let score = scoreSlashItemMatch(item, normalizedQuery);
+    if (typeof extraScore === 'function') {
+      score += Number(extraScore(item, normalizedQuery) || 0);
+    }
+    if (score <= 0) continue;
+    scored.push({ item, score });
+  }
+
+  return scored
+    .sort((lhs, rhs) => {
+      if (rhs.score !== lhs.score) return rhs.score - lhs.score;
+      return getSlashItemSortTitle(lhs.item).localeCompare(getSlashItemSortTitle(rhs.item));
+    })
+    .slice(0, SLASH_RESULT_LIMIT)
+    .map(entry => entry.item);
+}
+
+function getSlashDueItems() {
+  const now = Date.now();
+  return state.indexedContent
+    .filter(item => isTaskType(item) && parseDueTs(item) > 0 && !isCompletedTask(item))
+    .sort((lhs, rhs) => {
+      const lhsTs = parseDueTs(lhs);
+      const rhsTs = parseDueTs(rhs);
+      const lhsOverdue = lhsTs < now;
+      const rhsOverdue = rhsTs < now;
+
+      if (lhsOverdue !== rhsOverdue) return lhsOverdue ? -1 : 1;
+      if (lhsOverdue && rhsOverdue) return rhsTs - lhsTs;
+      return lhsTs - rhsTs;
+    });
+}
+
+function getSlashLectraAvailability() {
+  if (!state.isSignedIn) {
+    return {
+      available: false,
+      title: 'Sign in to use /ls',
+      reason: 'Open Settings to sign in, then turn on Send to Lectra before using Lectra Send.',
+      cta: 'Press Enter to open Settings.',
+      badge: 'Setup',
+      onSelect: () => {
+        exitSlashMode({ clearInput: true, focusInput: false });
+        showSettingsModal(elements.searchInput);
+      }
+    };
+  }
+
+  if (!state.extensionSettings.enableSendToLectra) {
+    return {
+      available: false,
+      title: 'Enable Send to Lectra',
+      reason: 'Turn on “Enable Send to Lectra” in Settings to make /ls available.',
+      cta: 'Press Enter to open Settings.',
+      badge: 'Setup',
+      onSelect: () => {
+        exitSlashMode({ clearInput: true, focusInput: false });
+        showSettingsModal(elements.searchInput);
+      }
+    };
+  }
+
+  return { available: true };
+}
+
+function createSlashGuidanceEntry(command, availability) {
+  return createSlashResultEntry({
+    key: `guidance:${command.id}`,
+    kind: 'guidance',
+    title: availability.title || `${command.title} needs setup`,
+    subtitle: availability.reason || 'Finish setup in Settings to use this command.',
+    meta: availability.cta || 'Press Enter to open Settings.',
+    badge: availability.badge || 'Setup',
+    badgeClass: 'badge-setup',
+    onSelect: typeof availability.onSelect === 'function' ? availability.onSelect : null
+  });
+}
+
+function createSlashItemEntry(command, item, {
+  subtitle = '',
+  meta = '',
+  badge = '',
+  badgeClass = ''
+} = {}) {
+  return createSlashResultEntry({
+    key: `${command.id}:${getCanonicalId(item)}`,
+    kind: 'candidate',
+    title: item?.title || 'Untitled',
+    subtitle,
+    meta,
+    badge,
+    badgeClass,
+    ariaLabel: buildItemAriaLabel(item),
+    onSelect: () => command.execute(command, { item })
+  });
+}
+
+function createSlashActionEntry(command, {
+  keySuffix,
+  title,
+  subtitle,
+  meta = '',
+  badge = '',
+  badgeClass = '',
+  ariaLabel = ''
+}) {
+  return createSlashResultEntry({
+    key: `${command.id}:${keySuffix}`,
+    kind: 'candidate',
+    title,
+    subtitle,
+    meta,
+    badge,
+    badgeClass,
+    ariaLabel,
+    onSelect: () => command.execute(command, {})
+  });
+}
+
+function buildSlashLectraEntries(command, argumentText, availability) {
+  if (!availability.available) {
+    return [createSlashGuidanceEntry(command, availability)];
+  }
+
+  const pdfItems = state.indexedContent.filter(isSlashPdfEligibleItem);
+  const filtered = filterSlashItems(pdfItems, argumentText, {
+    defaultSort: sortSlashItemsByRecency
+  });
+
+  return filtered.map(item => createSlashItemEntry(command, item, {
+    subtitle: item?.courseName || 'Indexed PDF',
+    meta: item?.folderPath || 'Send straight to Lectra',
+    badge: 'PDF'
+  }));
+}
+
+function buildSlashCourseEntries(command, argumentText) {
+  const courseItems = state.indexedContent.filter(item => String(item?.type || '').toLowerCase() === 'course');
+  const filtered = filterSlashItems(courseItems, argumentText, {
+    defaultSort: sortSlashItemsAlphabetically
+  });
+
+  return filtered.map(item => createSlashItemEntry(command, item, {
+    subtitle: 'Open this course in the current LMS tab',
+    meta: item?.moduleName && item.moduleName !== item.title ? item.moduleName : (item?.url || ''),
+    badge: 'Course'
+  }));
+}
+
+function buildSlashDueEntries(command, argumentText) {
+  const dueItems = getSlashDueItems();
+  const filtered = argumentText
+    ? filterSlashItems(dueItems, argumentText, {
+      defaultSort: (items) => items,
+      extraScore: (item) => {
+        const dueTs = parseDueTs(item);
+        if (dueTs <= 0) return 0;
+        return Math.max(0, 24 - ((dueTs - Date.now()) / (1000 * 60 * 60 * 24)));
+      }
+    })
+    : dueItems.slice(0, SLASH_RESULT_LIMIT);
+
+  return filtered.map(item => createSlashItemEntry(command, item, {
+    subtitle: `${formatTypeName(item?.type || 'task')} • ${item?.courseName || 'Task'}`,
+    meta: item?.folderPath || item?.moduleName || 'Open this due item',
+    badge: formatDueLabel(item)
+  }));
+}
+
+function buildSlashRefreshEntries(command) {
+  return [
+    createSlashActionEntry(command, {
+      keySuffix: 'run',
+      title: 'Refresh Now',
+      subtitle: 'Start a fresh Canvascope sync for the active LMS tab.',
+      meta: 'The popup will return to the dashboard once sync starts.',
+      badge: 'Sync'
+    })
+  ];
+}
+
+function buildSlashBrowseEntries(command) {
+  return [
+    createSlashActionEntry(command, {
+      keySuffix: 'open',
+      title: 'Browse All Indexed Content',
+      subtitle: 'Open the full Canvascope browser for everything already indexed.',
+      meta: `${state.indexedContent.length} indexed item${state.indexedContent.length === 1 ? '' : 's'} available`,
+      badge: 'Browse'
+    })
+  ];
+}
+
+function buildSlashGradescopeEntries(command) {
+  return [
+    createSlashActionEntry(command, {
+      keySuffix: 'open',
+      title: 'Open Gradescope',
+      subtitle: 'Launch gradescope.com in a new tab.',
+      meta: 'This opens Gradescope outside your LMS tab.',
+      badge: 'Open'
+    })
+  ];
+}
+
+function getSlashCommandRegistry() {
+  return [
+    {
+      order: 0,
+      id: 'lectra-send',
+      primaryAlias: 'ls',
+      aliases: ['lectra', 'lectra-send'],
+      title: 'Lectra Send',
+      description: 'Find an indexed PDF and send it straight to Lectra.',
+      keywords: ['pdf', 'send', 'lectra', 'annotate'],
+      badge: 'Send',
+      needsArgument: true,
+      availability: getSlashLectraAvailability,
+      getResults: buildSlashLectraEntries,
+      execute: executeSlashLectraSend
+    },
+    {
+      order: 1,
+      id: 'gradescope',
+      primaryAlias: 'gs',
+      aliases: ['gradescope'],
+      title: 'Open Gradescope',
+      description: 'Open gradescope.com in a new tab.',
+      keywords: ['gradescope', 'grade', 'open'],
+      badge: 'Open',
+      needsArgument: false,
+      availability: () => ({ available: true }),
+      getResults: buildSlashGradescopeEntries,
+      execute: executeSlashGradescopeOpen
+    },
+    {
+      order: 2,
+      id: 'course',
+      primaryAlias: 'course',
+      aliases: ['class', 'courses'],
+      title: 'Open Course',
+      description: 'Jump straight into one of your indexed courses.',
+      keywords: ['course', 'class', 'dashboard', 'open'],
+      badge: 'Go',
+      needsArgument: true,
+      availability: () => ({ available: true }),
+      getResults: buildSlashCourseEntries,
+      execute: executeSlashCourseOpen
+    },
+    {
+      order: 3,
+      id: 'due',
+      primaryAlias: 'due',
+      aliases: ['todo', 'tasks'],
+      title: 'Due Items',
+      description: 'Browse upcoming and overdue work from your dashboard.',
+      keywords: ['due', 'todo', 'task', 'assignment', 'quiz'],
+      badge: 'View',
+      needsArgument: true,
+      availability: () => ({ available: true }),
+      getResults: buildSlashDueEntries,
+      execute: executeSlashDueOpen
+    },
+    {
+      order: 4,
+      id: 'refresh',
+      primaryAlias: 'refresh',
+      aliases: ['sync'],
+      title: 'Refresh Index',
+      description: 'Kick off a fresh Canvascope sync for the current LMS tab.',
+      keywords: ['refresh', 'sync', 'scan', 'index'],
+      badge: 'Sync',
+      needsArgument: false,
+      availability: () => ({ available: true }),
+      getResults: buildSlashRefreshEntries,
+      execute: executeSlashRefresh
+    },
+    {
+      order: 5,
+      id: 'browse',
+      primaryAlias: 'browse',
+      aliases: ['all'],
+      title: 'Browse All Indexed Content',
+      description: 'Open the all-content browser without leaving the popup.',
+      keywords: ['browse', 'all', 'index', 'content'],
+      badge: 'Browse',
+      needsArgument: false,
+      availability: () => ({ available: true }),
+      getResults: buildSlashBrowseEntries,
+      execute: executeSlashBrowse
+    }
+  ];
+}
+
+function getSlashCommandLookup() {
+  return buildSlashCommandLookup(getSlashCommandRegistry());
+}
+
+function buildSlashCommandPaletteEntry(command) {
+  const availability = typeof command.availability === 'function'
+    ? command.availability()
+    : { available: true };
+  const subtitle = availability.available
+    ? command.description
+    : `${command.description} ${availability.reason || ''}`.trim();
+  const meta = availability.available
+    ? (command.needsArgument
+      ? 'Press Enter or type a space to browse results.'
+      : 'Press Enter to run this command.')
+    : (availability.cta || 'Press Enter to open Settings.');
+
+  return createSlashResultEntry({
+    key: `command:${command.id}`,
+    kind: 'command',
+    title: `/${command.primaryAlias}`,
+    subtitle,
+    meta,
+    badge: command.badge || 'Run',
+    badgeClass: availability.available ? '' : 'badge-setup',
+    ariaLabel: [`/${command.primaryAlias}`, command.title, subtitle, meta].filter(Boolean).join(', '),
+    onSelect: () => handleSlashCommandPaletteSelect(command)
+  });
+}
+
+function getSlashEmptyCopy(command, argumentText) {
+  switch (command?.id) {
+    case 'lectra-send':
+      return argumentText.trim()
+        ? `No indexed PDFs matched "${argumentText.trim()}".`
+        : 'No indexed PDFs are ready to send yet.';
+    case 'course':
+      return argumentText.trim()
+        ? `No indexed courses matched "${argumentText.trim()}".`
+        : 'No indexed courses are available yet.';
+    case 'due':
+      return argumentText.trim()
+        ? `No due items matched "${argumentText.trim()}".`
+        : 'No upcoming due items are available right now.';
+    default:
+      return 'No slash results available.';
+  }
+}
+
+function renderSlashFeedback() {
+  if (!elements.slashFeedback) return;
+
+  const feedback = state.slashMode.feedback;
+  if (!feedback?.message) {
+    elements.slashFeedback.classList.add('hidden');
+    elements.slashFeedback.textContent = '';
+    elements.slashFeedback.className = 'slash-feedback hidden';
+    return;
+  }
+
+  elements.slashFeedback.className = `slash-feedback tone-${feedback.tone || 'info'}`;
+  elements.slashFeedback.textContent = feedback.message;
+  elements.slashFeedback.classList.remove('hidden');
+}
+
+function setSlashFeedback(message, tone = 'info') {
+  state.slashMode.feedback = {
+    message: String(message || '').trim(),
+    tone
+  };
+  renderSlashFeedback();
+}
+
+function clearSlashFeedback() {
+  state.slashMode.feedback = null;
+  renderSlashFeedback();
+}
+
+function scrollSlashHighlightIntoView() {
+  if (!elements.slashResults) return;
+  const items = elements.slashResults.querySelectorAll('.slash-result-item');
+  const activeItem = items[state.slashMode.highlightedIndex];
+  activeItem?.scrollIntoView({ block: 'nearest' });
+}
+
+function renderSlashCommandSheet() {
+  if (!state.slashMode.active || !elements.slashSheet || !elements.slashResults) {
+    return;
+  }
+
+  const parsed = state.slashMode.parsed || parseSlashCommandText(state.slashMode.rawValue, getSlashCommandLookup());
+  const commands = getSlashCommandRegistry();
+
+  let title = 'Slash commands';
+  let subtitle = 'Type a command or alias to jump into dashboard actions.';
+  let entries = [];
+  let emptyCopy = 'No commands matched that.';
+
+  if (parsed.mode === 'commands') {
+    const matchingCommands = rankSlashCommands(commands, parsed.commandQuery);
+    entries = matchingCommands.map(buildSlashCommandPaletteEntry);
+    if (parsed.commandQuery) {
+      subtitle = 'Press Enter to run the highlighted command or open its result picker.';
+      emptyCopy = `No commands matched "/${parsed.commandQuery}".`;
+    }
+  } else if (parsed.exactCommand) {
+    const command = parsed.exactCommand;
+    const availability = typeof command.availability === 'function'
+      ? command.availability()
+      : { available: true };
+    title = `/${command.primaryAlias}`;
+    subtitle = availability.available
+      ? command.description
+      : (availability.reason || command.description);
+    entries = command.getResults(command, parsed.argumentText, availability) || [];
+    emptyCopy = getSlashEmptyCopy(command, parsed.argumentText);
+  }
+
+  state.slashMode.results = entries;
+  state.slashMode.highlightedIndex = entries.length > 0
+    ? Math.max(0, Math.min(state.slashMode.highlightedIndex, entries.length - 1))
+    : 0;
+
+  if (elements.slashSheetTitle) elements.slashSheetTitle.textContent = title;
+  if (elements.slashSheetSubtitle) elements.slashSheetSubtitle.textContent = subtitle;
+  renderSlashFeedback();
+
+  elements.slashResults.innerHTML = '';
+
+  entries.forEach((entry, index) => {
+    const itemButton = document.createElement('button');
+    itemButton.type = 'button';
+    itemButton.id = `slash-result-${index}`;
+    itemButton.className = `slash-result-item kind-${entry.kind}${index === state.slashMode.highlightedIndex ? ' is-active' : ''}`;
+    itemButton.setAttribute('role', 'option');
+    itemButton.setAttribute('aria-selected', index === state.slashMode.highlightedIndex ? 'true' : 'false');
+    itemButton.setAttribute('aria-label', entry.ariaLabel || entry.title);
+    itemButton.addEventListener('mousedown', (event) => event.preventDefault());
+    itemButton.addEventListener('click', () => {
+      state.slashMode.highlightedIndex = index;
+      renderSlashCommandSheet();
+      void executeSlashEntry(entry);
+    });
+
+    const copy = document.createElement('div');
+    copy.className = 'slash-result-copy';
+
+    const titleRow = document.createElement('div');
+    titleRow.className = 'slash-result-title-row';
+
+    const titleEl = document.createElement('span');
+    titleEl.className = 'slash-result-title';
+    titleEl.textContent = entry.title || 'Untitled';
+    titleRow.appendChild(titleEl);
+    copy.appendChild(titleRow);
+
+    if (entry.subtitle) {
+      const subtitleEl = document.createElement('div');
+      subtitleEl.className = 'slash-result-subtitle';
+      subtitleEl.textContent = entry.subtitle;
+      copy.appendChild(subtitleEl);
+    }
+
+    if (entry.meta) {
+      const metaEl = document.createElement('div');
+      metaEl.className = 'slash-result-meta';
+      metaEl.textContent = entry.meta;
+      copy.appendChild(metaEl);
+    }
+
+    itemButton.appendChild(copy);
+
+    if (entry.badge) {
+      const badgeEl = document.createElement('span');
+      badgeEl.className = `slash-result-badge${entry.badgeClass ? ` ${entry.badgeClass}` : ''}`;
+      badgeEl.textContent = entry.badge;
+      itemButton.appendChild(badgeEl);
+    }
+
+    elements.slashResults.appendChild(itemButton);
+  });
+
+  if (entries.length > 0) {
+    elements.slashResults.classList.remove('hidden');
+    elements.slashEmpty.classList.add('hidden');
+    elements.slashEmpty.textContent = '';
+    const activeId = `slash-result-${state.slashMode.highlightedIndex}`;
+    elements.searchInput?.setAttribute('aria-activedescendant', activeId);
+    window.requestAnimationFrame(scrollSlashHighlightIntoView);
+  } else {
+    elements.slashResults.classList.add('hidden');
+    elements.slashEmpty.classList.remove('hidden');
+    elements.slashEmpty.textContent = emptyCopy;
+    elements.searchInput?.removeAttribute('aria-activedescendant');
+  }
+}
+
+function syncSlashModeFromRawInput(rawValue) {
+  if (state.isOverlayMode) return false;
+
+  const incomingValue = String(rawValue ?? '');
+  if (!state.slashMode.active && !incomingValue.startsWith('/')) {
+    return false;
+  }
+
+  if (state.searchTimeout) {
+    clearTimeout(state.searchTimeout);
+    state.searchTimeout = null;
+  }
+
+  const displayValue = incomingValue.startsWith('/') ? incomingValue.slice(1) : incomingValue;
+  const nextRawValue = `/${displayValue}`;
+  const previousRawValue = state.slashMode.rawValue;
+
+  state.slashMode.active = true;
+  state.slashMode.rawValue = nextRawValue;
+  state.slashMode.parsed = parseSlashCommandText(nextRawValue, getSlashCommandLookup());
+
+  if (incomingValue.startsWith('/')) {
+    elements.searchInput.value = displayValue;
+  }
+
+  if (previousRawValue !== nextRawValue) {
+    state.slashMode.highlightedIndex = 0;
+    clearSlashFeedback();
+  }
+
+  applySlashModeUi();
+  renderSlashCommandSheet();
+  return true;
+}
+
+function exitSlashMode({ clearInput = true, focusInput = true } = {}) {
+  const wasActive = state.slashMode.active;
+  state.slashMode = createDefaultSlashModeState();
+
+  if (state.searchTimeout) {
+    clearTimeout(state.searchTimeout);
+    state.searchTimeout = null;
+  }
+
+  if (clearInput && elements.searchInput) {
+    elements.searchInput.value = '';
+  }
+
+  applySlashModeUi();
+  clearSlashFeedback();
+
+  if (wasActive) {
+    if (clearInput || !elements.searchInput?.value.trim()) {
+      if (!state.isScanning) {
+        setUiState(UI_STATE.READY);
+      } else {
+        setUiState(UI_STATE.SCAN_SYNCING);
+      }
+    } else {
+      performSearch(elements.searchInput.value.trim());
+    }
+  }
+
+  if (focusInput) {
+    elements.searchInput?.focus();
+  }
+}
+
+function moveSlashHighlight(delta) {
+  const count = state.slashMode.results.length;
+  if (count === 0) return;
+
+  state.slashMode.highlightedIndex = Math.max(0, Math.min(state.slashMode.highlightedIndex + delta, count - 1));
+  renderSlashCommandSheet();
+}
+
+async function executeSlashEntry(entry) {
+  if (!entry || typeof entry.onSelect !== 'function') return;
+  try {
+    await entry.onSelect();
+  } catch (error) {
+    console.error('[Canvascope] Slash command execution failed:', error);
+    setSlashFeedback(getPopupErrorMessage(error, 'Slash command failed.'), 'error');
+  }
+}
+
+async function executeSlashHighlightedEntry() {
+  const entry = state.slashMode.results[state.slashMode.highlightedIndex];
+  if (!entry) return;
+  await executeSlashEntry(entry);
+}
+
+function handleSlashCommandPaletteSelect(command) {
+  if (!command) return;
+
+  const availability = typeof command.availability === 'function'
+    ? command.availability()
+    : { available: true };
+
+  if (command.needsArgument || !availability.available) {
+    elements.searchInput.value = `${command.primaryAlias} `;
+    syncSlashModeFromRawInput(elements.searchInput.value);
+    return;
+  }
+
+  void command.execute(command, {});
+}
+
+async function executeSlashLectraSend(command, { item } = {}) {
+  if (!item) return;
+
+  setSlashFeedback(`Sending "${item.title || 'PDF'}" to Lectra...`, 'info');
+
+  try {
+    const response = await chrome.runtime.sendMessage({
+      action: 'sendPdfToLectra',
+      trigger: 'popup_slash_ls',
+      candidateUrl: item?.url || null,
+      sourcePageUrl: item?.url || null,
+      titleHint: item?.title || null
+    });
+
+    if (response?.success) {
+      setSlashFeedback(`Sent "${item.title || 'PDF'}" to Lectra.`, 'success');
+      showSyncedStatus('PDF sent to Lectra');
+      return;
+    }
+
+    const failureMessage = String(response?.message || 'Send failed');
+    showErrorStatus(failureMessage);
+    setSlashFeedback(failureMessage, 'error');
+  } catch (error) {
+    const failureMessage = getPopupErrorMessage(error, 'Send failed');
+    showErrorStatus(failureMessage);
+    setSlashFeedback(failureMessage, 'error');
+  }
+}
+
+async function executeSlashGradescopeOpen() {
+  await chrome.tabs.create({ url: 'https://www.gradescope.com/', active: true });
+  window.close();
+}
+
+function executeSlashCourseOpen(command, { item } = {}) {
+  if (!item) return;
+  openResult(item);
+}
+
+function executeSlashDueOpen(command, { item } = {}) {
+  if (!item) return;
+  openResult(item);
+}
+
+async function executeSlashRefresh() {
+  if (state.isScanning) {
+    setSlashFeedback('A refresh is already in progress.', 'info');
+    return;
+  }
+
+  setSlashFeedback('Refreshing your dashboard index...', 'info');
+  await handleRefresh();
+  window.setTimeout(() => {
+    exitSlashMode({ clearInput: true, focusInput: true });
+  }, 320);
+}
+
+function executeSlashBrowse() {
+  exitSlashMode({ clearInput: true, focusInput: false });
+  openBrowseModal(elements.searchInput);
+}
+
+function beginGoogleSignIn() {
+  updateAuthButtonUi({ label: 'Signing in...', disabled: true });
+
+  chrome.runtime.sendMessage({ type: 'signInWithGoogle' }, (response) => {
+    if (response && response.success) {
+      chrome.runtime.sendMessage({ type: 'checkAuthStatus' }, (statusRes) => {
+        if (statusRes && statusRes.signedIn) {
+          handleSignedInState(statusRes.user);
+          return;
+        }
+        updateAuthButtonUi();
+      });
+      return;
+    }
+
+    console.error('Sign in failed:', response?.error);
+    updateAuthButtonUi({ label: 'Sign in error' });
+    setTimeout(() => updateAuthButtonUi(), 3000);
+  });
+}
+
 function setupEventListeners() {
   elements.searchInput.addEventListener('input', handleSearchInput);
-  elements.searchInput.addEventListener('focus', showSearchHistory);
+  elements.searchInput.addEventListener('focus', () => {
+    showSearchHistory();
+  });
   elements.searchInput.addEventListener('blur', () => {
     // Delay hiding to allow clicking on history items
     setTimeout(() => {
@@ -1998,54 +3558,41 @@ function setupEventListeners() {
   });
 
   // Auth Integration
+  if (elements.helpBtn) {
+    elements.helpBtn.addEventListener('click', () => showHelpModal(elements.helpBtn));
+  }
+
+  if (elements.settingsBtn) {
+    elements.settingsBtn.addEventListener('click', () => showSettingsModal(elements.settingsBtn));
+  }
+
   if (elements.googleSignInBtn) {
     elements.googleSignInBtn.addEventListener('click', () => {
-      // If already signed in, open settings instead of re-authenticating.
       if (state.isSignedIn) {
-        showSettingsModal();
+        showSettingsModal(elements.googleSignInBtn);
         return;
       }
-
-      elements.googleSignInBtn.querySelector('.btn-text').textContent = 'Signing in...';
-      elements.googleSignInBtn.disabled = true;
-
-      chrome.runtime.sendMessage({ type: 'signInWithGoogle' }, (response) => {
-        elements.googleSignInBtn.disabled = false;
-        if (response && response.success) {
-          // Fetch the new user session
-          chrome.runtime.sendMessage({ type: 'checkAuthStatus' }, (statusRes) => {
-            if (statusRes && statusRes.signedIn) {
-              state.isSignedIn = true;
-              state.user = statusRes.user;
-              elements.googleSignInBtn.querySelector('.btn-text').textContent = 'Signed in ✓';
-              elements.googleSignInBtn.style.backgroundColor = 'var(--success-color, #4CAF50)';
-              elements.googleSignInBtn.style.color = '#fff';
-              elements.googleSignInBtn.style.borderColor = 'rgba(76, 175, 80, 0.35)';
-            }
-          });
-        } else {
-          elements.googleSignInBtn.querySelector('.btn-text').textContent = 'Sign in error';
-          elements.googleSignInBtn.style.backgroundColor = '';
-          elements.googleSignInBtn.style.color = '';
-          elements.googleSignInBtn.style.borderColor = 'var(--glass-border)';
-          console.error('Sign in failed:', response?.error);
-          setTimeout(() => {
-            if (elements.googleSignInBtn) {
-              elements.googleSignInBtn.querySelector('.btn-text').textContent = 'Sign in';
-              elements.googleSignInBtn.style.backgroundColor = '';
-              elements.googleSignInBtn.style.color = '';
-              elements.googleSignInBtn.style.borderColor = 'var(--glass-border)';
-            }
-          }, 3000);
-        }
-      });
+      beginGoogleSignIn();
     });
   }
 
   // Account Modal Interaction
   if (elements.closeAccountModalBtn) {
     elements.closeAccountModalBtn.addEventListener('click', () => {
-      elements.accountModal.classList.add('hidden');
+      closePopupModal('settingsModalOpen', elements.accountModal);
+    });
+  }
+
+  if (elements.closeHelpModalBtn) {
+    elements.closeHelpModalBtn.addEventListener('click', () => {
+      closePopupModal('helpModalOpen', elements.helpModal);
+    });
+  }
+
+  if (elements.settingsSigninBtn) {
+    elements.settingsSigninBtn.addEventListener('click', () => {
+      closePopupModal('settingsModalOpen', elements.accountModal);
+      beginGoogleSignIn();
     });
   }
 
@@ -2170,17 +3717,8 @@ function setupEventListeners() {
         elements.logoutBtn.querySelector('.btn-text').textContent = 'Sign out';
 
         if (response && response.success) {
-          state.isSignedIn = false;
-          state.user = null;
-
-          // Reset Main Sign in Button
-          elements.googleSignInBtn.querySelector('.btn-text').textContent = 'Sign in';
-          elements.googleSignInBtn.style.backgroundColor = '';
-          elements.googleSignInBtn.style.color = '';
-          elements.googleSignInBtn.style.borderColor = 'var(--glass-border)';
-
-          // Hide account modal
-          elements.accountModal.classList.add('hidden');
+          handleSignedOutState();
+          closePopupModal('settingsModalOpen', elements.accountModal);
         } else {
           console.error('Sign out failed:', response?.error);
         }
@@ -2190,6 +3728,7 @@ function setupEventListeners() {
 
   // Keyboard navigation for search results
   elements.searchInput.addEventListener('keydown', (e) => {
+
     if (e.key === 'Enter') {
       e.preventDefault();
 
@@ -2250,6 +3789,8 @@ function setupEventListeners() {
 
   // Close search history when clicking outside
   document.addEventListener('click', (e) => {
+    // Slash click-outside handling removed — slash is now an in-page overlay
+
     if (!elements.searchHistory.contains(e.target) && e.target !== elements.searchInput) {
       hideSearchHistory();
     }
@@ -2263,12 +3804,27 @@ function setupEventListeners() {
     }
   });
 
-  elements.clearSearchBtn.addEventListener('click', clearSearch);
+  elements.clearSearchBtn.addEventListener('click', () => {
+    clearSearch();
+  });
   elements.refreshBtn.addEventListener('click', handleRefresh);
   if (elements.sendPdfBtn) elements.sendPdfBtn.addEventListener('click', handleSendPdfFallback);
   if (elements.clearDataBtn) elements.clearDataBtn.addEventListener('click', handleClearData);
   if (elements.statsBtn) elements.statsBtn.addEventListener('click', openBrowseModal);
   if (elements.closeBrowse) elements.closeBrowse.addEventListener('click', closeBrowseModal);
+  if (elements.exampleSearchButtons) {
+    elements.exampleSearchButtons.forEach((button) => {
+      button.addEventListener('click', () => {
+        const query = String(button.dataset.exampleQuery || '').trim();
+        if (!query) return;
+        closePopupModal('helpModalOpen', elements.helpModal);
+        elements.searchInput.value = query;
+        elements.clearSearchBtn.classList.add('visible');
+        performSearch(query);
+        elements.searchInput.focus();
+      });
+    });
+  }
 
   // Custom Dropdown Listeners
   setupCustomDropdown(elements.courseWrapper, elements.courseTrigger, elements.courseOptions, 'course');
@@ -2276,33 +3832,13 @@ function setupEventListeners() {
 
   // Listen for background updates
   chrome.runtime.onMessage.addListener(handleBackgroundMessage);
-}
 
-/**
- * Show the signed-in settings modal.
- */
-function showSettingsModal() {
-  if (!state.user || !elements.accountModal) return;
-
-  const user = state.user;
-  const name = user.name || 'User';
-  const email = user.email || '';
-
-  if (elements.accountNameDisplay) elements.accountNameDisplay.textContent = name;
-  if (elements.accountEmailDisplay) elements.accountEmailDisplay.textContent = email;
-
-  if (elements.accountAvatarPlaceholder) {
-    if (user.avatar_url) {
-      elements.accountAvatarPlaceholder.innerHTML = `<img src="${user.avatar_url}" style="width: 100%; height: 100%; border-radius: 50%; object-fit: cover;">`;
-      elements.accountAvatarPlaceholder.style.backgroundColor = 'transparent';
-    } else {
-      elements.accountAvatarPlaceholder.innerHTML = name.charAt(0).toUpperCase();
-      elements.accountAvatarPlaceholder.style.backgroundColor = 'var(--border-color)';
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && closeTopModal()) {
+      event.preventDefault();
+      event.stopPropagation();
     }
-  }
-
-  applyExtensionSettingsUi();
-  elements.accountModal.classList.remove('hidden');
+  }, true);
 }
 
 /**
@@ -2506,6 +4042,36 @@ async function getBackgroundStatus() {
   }
 }
 
+async function mergeScannedContentIntoIndex(scannedContent) {
+  if (!Array.isArray(scannedContent) || scannedContent.length === 0) return 0;
+
+  const merged = deduplicateCrossType(deduplicateContent([
+    ...state.indexedContent,
+    ...scannedContent
+  ]));
+  const addedCount = Math.max(0, merged.length - state.indexedContent.length);
+
+  state.indexedContent = merged;
+  await chrome.storage.local.set({ indexedContent: merged });
+
+  initializeFuse();
+  updateUI();
+  renderDuePlanner();
+  renderHomeSections();
+
+  return addedCount;
+}
+
+async function requestActiveTabContentScan() {
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab?.id || !tab.url || !isValidLmsUrl(tab.url)) return;
+    await chrome.tabs.sendMessage(tab.id, { action: 'startScan' });
+  } catch (error) {
+    console.log('[Canvascope] Active-tab content scan unavailable');
+  }
+}
+
 /**
  * Check current tab for supported LMS and auto-detect custom domain
  */
@@ -2702,11 +4268,26 @@ function handleBackgroundMessage(message) {
 
     case 'scanComplete':
       state.isScanning = false;
-      loadContent().then(() => {
-        initializeFuse();
-        updateUI();
-        showSyncedStatus(`Added ${message.newItems} new items`);
-      });
+      if (Array.isArray(message.content)) {
+        mergeScannedContentIntoIndex(message.content).then((addedCount) => {
+          const statusCopy = addedCount > 0
+            ? `Indexed ${addedCount} current-page item${addedCount === 1 ? '' : 's'}`
+            : 'Current page checked';
+          showSyncedStatus(statusCopy);
+          if (state.slashMode.active) {
+            renderSlashCommandSheet();
+          }
+        });
+      } else {
+        loadContent().then(() => {
+          initializeFuse();
+          updateUI();
+          showSyncedStatus(`Added ${message.newItems} new items`);
+          if (state.slashMode.active) {
+            renderSlashCommandSheet();
+          }
+        });
+      }
       break;
 
     case 'scanError':
@@ -2822,6 +4403,7 @@ function initializeFuse() {
     const fields = buildSearchFields(item);
     item.searchTitleNormalized = fields.searchTitleNormalized;
     item.searchAliases = fields.searchAliases;
+    item.searchPathNormalized = fields.searchPathNormalized;
     item.searchCourseNormalized = fields.searchCourseNormalized;
   }
 
@@ -2859,7 +4441,8 @@ function handleFilterChange() {
   if (query.length > 0) {
     performSearch(query);
   } else {
-    updateUI(); // Show all filtered results if no query
+    updateUI();
+    showEmptyState();
   }
 }
 
@@ -2904,8 +4487,10 @@ function populateCourseFilter() {
 }
 
 function handleSearchInput(event) {
-  const query = event.target.value.trim();
-  elements.clearSearchBtn.classList.toggle('visible', query.length > 0);
+  const rawValue = String(event.target.value || '');
+
+  const query = rawValue.trim();
+  updateSearchFieldAffordances();
   hideSearchHistory();
 
   if (state.searchTimeout) {
@@ -2975,9 +4560,15 @@ function performSearch(query) {
 
   // Temporal-first retrieval: when query has a time intent, scope the corpus
   // before lexical ranking so relevant due items are never dropped by early truncation.
-  const temporalCorpus = temporalIntent.kind
-    ? filterItemsByTemporalWindow(state.filteredContent, temporalIntent.kind)
-    : state.filteredContent;
+  // Fall back to the full corpus if temporal pre-filtering yields nothing, so the
+  // subsequent temporal fallback paths at applyTemporalFilter still have items to work with.
+  let temporalCorpus;
+  if (temporalIntent.kind) {
+    const filtered = filterItemsByTemporalWindow(state.filteredContent, temporalIntent.kind);
+    temporalCorpus = filtered.length > 0 ? filtered : state.filteredContent;
+  } else {
+    temporalCorpus = state.filteredContent;
+  }
   const searchCorpus = courseScope
     ? temporalCorpus.filter(item => itemMatchesCourseScope(item, courseScope))
     : temporalCorpus;
@@ -3341,6 +4932,13 @@ function calculateScore(item, fuseScore, normalizedQuery, intent, queryNums, isP
   const courseMultiplier = tuning.courseBoost / 100;
   const dueDateMultiplier = tuning.dueDateBoost / 100;
   const contextMultiplier = tuning.contextWeight / 100;
+  const queryTokens = getMeaningfulQueryTokens(normalizedQuery);
+  const pathSearchText = getPathSearchText(item);
+  const pathCoverage = queryTokens.length > 0 ? (countTokenHits(queryTokens, pathSearchText) / queryTokens.length) : 0;
+  const queryLooksFileSpecific = isFileSpecificQuery(normalizedQuery);
+  const queryLooksPathOriented = isPathOrientedQuery(normalizedQuery);
+  const queryWeekHints = extractWeekHintsFromValue(normalizedQuery);
+  const itemWeekHints = getItemWeekHints(item);
 
   // Base: invert Fuse score. Pre-pass items use their calculated baseScore (0.0 is perfect)
   let score;
@@ -3406,7 +5004,11 @@ function calculateScore(item, fuseScore, normalizedQuery, intent, queryNums, isP
   // ── Token coverage ──────────────────────────────
   if (normalizedQuery) {
     const titleText = (item.searchTitleNormalized || normalizeText(item.title || '')).toLowerCase();
-    const contextText = normalizeText((item.folderPath || '') + ' ' + (item.moduleName || ''));
+    const contextText = normalizeText([
+      item.searchPathNormalized || item.folderPath || '',
+      item.moduleName || '',
+      item.courseName || ''
+    ].join(' '));
     const coverage = computeTokenCoverage(normalizedQuery, titleText, contextText);
     const qTokenCount = normalizedQuery.split(/\s+/).filter(t => t.length > 1 && !STOP_TOKENS.has(t)).length;
     if (coverage >= 0.8) {
@@ -3426,20 +5028,44 @@ function calculateScore(item, fuseScore, normalizedQuery, intent, queryNums, isP
   score += getQueryCourseHintBoost(item, normalizedQuery) * courseMultiplier;
 
   // ── Folder-context boost ────────────────────────
-  // Boost items whose folder/module name matches query tokens
-  if (normalizedQuery && (item.folderPath || item.moduleName)) {
-    const folderText = normalizeText((item.folderPath || '') + ' ' + (item.moduleName || ''));
-    const normQ = normalizedQuery.toLowerCase();
-    const qTokens = normQ.split(/\s+/).filter(t => t.length > 1 && !STOP_TOKENS.has(t));
-    if (qTokens.length > 0) {
-      let folderHits = 0;
-      for (const t of qTokens) {
-        if (folderText.includes(t)) folderHits++;
+  if (normalizedQuery && queryTokens.length > 0 && (item.folderPath || item.moduleName || item.type === 'syllabus')) {
+    if (pathCoverage > 0) {
+      score += Math.min(0.38, 0.30 * pathCoverage) * contextMultiplier;
+    }
+
+    if (queryLooksPathOriented) {
+      if (item.type === 'folder' && pathCoverage >= 0.45) {
+        score += (0.72 + (pathCoverage * 0.18)) * contextMultiplier;
+      } else if (LEAF_FILE_TYPES.has(String(item.type || '').toLowerCase()) && pathCoverage >= 0.45 && !queryLooksFileSpecific) {
+        score -= 0.18;
       }
-      if (folderHits > 0) {
-        // Proportional boost, max +0.35
-        score += Math.min(0.35, 0.25 * (folderHits / qTokens.length)) * contextMultiplier;
-      }
+    }
+
+    if (queryLooksFileSpecific && LEAF_FILE_TYPES.has(String(item.type || '').toLowerCase())) {
+      score += 0.26;
+    } else if (queryLooksFileSpecific && item.type === 'folder') {
+      score -= 0.10;
+    }
+  }
+
+  // ── Explicit week matching + weak timestamp fallback ─────────────
+  if (queryWeekHints.length > 0) {
+    const overlapsWeekHint = itemWeekHints.some(hint => queryWeekHints.includes(hint));
+    if (overlapsWeekHint) {
+      score += item.type === 'folder' ? 0.34 : 0.18;
+    } else if (itemWeekHints.length > 0) {
+      score -= 0.25;
+    } else if (item.createdAt || item.updatedAt) {
+      score += 0.03;
+    }
+  }
+
+  // ── Syllabus intent boost ───────────────────────
+  if (isSyllabusQuery(normalizedQuery)) {
+    if (item.type === 'syllabus') {
+      score += 1.1;
+    } else if (item.type === 'course' || item.type === 'navigation' || item.type === 'page') {
+      score -= 0.18;
     }
   }
 
@@ -3523,6 +5149,7 @@ async function saveSearchToHistory(query) {
 }
 
 function showSearchHistory() {
+  if (state.slashMode.active) return;
   if (!state.isOverlayMode) return;
 
   const query = elements.searchInput.value.trim();
@@ -3543,16 +5170,27 @@ function showSearchHistory() {
     const historyItem = document.createElement('div');
     historyItem.className = 'history-item';
     historyItem.textContent = item.query;
+    historyItem.setAttribute('tabindex', '0');
+    historyItem.setAttribute('role', 'button');
     historyItem.addEventListener('click', () => {
       elements.searchInput.value = item.query;
       hideSearchHistory();
       performSearch(item.query);
+    });
+    historyItem.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        elements.searchInput.value = item.query;
+        hideSearchHistory();
+        performSearch(item.query);
+      }
     });
     elements.searchHistory.appendChild(historyItem);
   });
 
   // Hide empty state and planner, show history in its place
   if (elements.emptyState) elements.emptyState.classList.add('hidden');
+  if (elements.homeSections) elements.homeSections.classList.add('hidden');
   if (elements.duePlanner) elements.duePlanner.classList.add('hidden');
 
   elements.searchHistory.classList.remove('hidden');
@@ -3577,6 +5215,7 @@ async function clearSearchHistory() {
 function displayResults(results) {
   clearResultsContainer();
   elements.emptyState.classList.add('hidden');
+  if (elements.homeSections) elements.homeSections.classList.add('hidden');
 
   // Hide planner when showing search results
   if (elements.duePlanner) elements.duePlanner.classList.add('hidden');
@@ -3595,6 +5234,7 @@ function displayResults(results) {
     resultElement.className = 'result-item';
     resultElement.setAttribute('tabindex', '0');
     resultElement.setAttribute('role', 'button');
+    resultElement.setAttribute('aria-label', buildItemAriaLabel(item));
 
     // Auto-highlight first result in overlay mode
     if (state.isOverlayMode && index === 0) {
@@ -3616,6 +5256,13 @@ function displayResults(results) {
         courseEl.className = 'overlay-result-course';
         courseEl.textContent = item.courseName;
         textCol.appendChild(courseEl);
+      }
+
+      if (shouldShowPathContext(item)) {
+        const contextEl = document.createElement('div');
+        contextEl.className = 'overlay-result-context';
+        contextEl.textContent = item.folderPath;
+        textCol.appendChild(contextEl);
       }
 
       // Due date on its own row so it's always visible
@@ -3647,7 +5294,7 @@ function displayResults(results) {
 
       const typeElement = document.createElement('span');
       typeElement.className = 'result-type';
-      typeElement.textContent = item.type || 'link';
+      typeElement.textContent = formatOverlayType(item.type || 'link');
 
       const courseElement = document.createElement('span');
       courseElement.className = 'result-module';
@@ -3667,11 +5314,21 @@ function displayResults(results) {
       }
 
       resultElement.appendChild(metaElement);
+
+      if (shouldShowPathContext(item)) {
+        const contextElement = document.createElement('div');
+        contextElement.className = 'result-context';
+        contextElement.textContent = item.folderPath;
+        resultElement.appendChild(contextElement);
+      }
     }
 
     resultElement.addEventListener('click', (e) => openResult(item, e));
     resultElement.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') openResult(item, e);
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        openResult(item, e);
+      }
     });
 
     elements.resultsContainer.appendChild(resultElement);
@@ -3683,9 +5340,11 @@ function displayResults(results) {
  */
 function formatOverlayType(type) {
   const names = {
+    'syllabus': 'SYLLABUS',
     'assignment': 'ASSIGNMENT',
     'quiz': 'QUIZ',
     'discussion': 'DISCUSSION',
+    'folder': 'FOLDER',
     'page': 'PAGE',
     'file': 'FILE',
     'pdf': 'FILE',
@@ -3796,6 +5455,7 @@ function showOverlayRecents() {
     el.className = 'result-item overlay-recent-item';
     el.setAttribute('tabindex', '0');
     el.setAttribute('role', 'button');
+    el.setAttribute('aria-label', buildItemAriaLabel(item, { includeOpenedAt: true }));
 
     const textCol = document.createElement('div');
     textCol.className = 'overlay-result-text';
@@ -3821,7 +5481,10 @@ function showOverlayRecents() {
 
     el.addEventListener('click', (e) => openResult(item, e));
     el.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') openResult(item, e);
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        openResult(item, e);
+      }
     });
 
     recentsSection.appendChild(el);
@@ -3872,8 +5535,13 @@ function isValidCanvasUrl(url) {
 }
 
 function clearSearch() {
+  if (state.slashMode.active) {
+    exitSlashMode({ clearInput: true, focusInput: true });
+    return;
+  }
+
   elements.searchInput.value = '';
-  elements.clearSearchBtn.classList.remove('visible');
+  updateSearchFieldAffordances();
 
   if (!state.isScanning) {
     setUiState(UI_STATE.READY);
@@ -3890,6 +5558,8 @@ function showEmptyState() {
   clearResultsContainer();
 
   const query = elements.searchInput.value.trim();
+  const hasHomeSections = renderHomeSections();
+  let hasPlannerContent = false;
 
   // Show empty state text only if there is no query
   if (query.length === 0 && (currentUiState === UI_STATE.READY || currentUiState === UI_STATE.ERROR || currentUiState === UI_STATE.SCAN_SYNCING)) {
@@ -3904,31 +5574,93 @@ function showEmptyState() {
   if (elements.duePlanner && !state.isOverlayMode) {
     if (query.length === 0 && (currentUiState === UI_STATE.READY || currentUiState === UI_STATE.SCAN_SYNCING)) {
       renderDuePlanner();
-      const hasTasks = elements.duePlanner.innerHTML.trim().length > 0;
-      elements.duePlanner.classList.toggle('hidden', !hasTasks);
-      if (hasTasks) {
-        elements.emptyState.classList.add('hidden');
-      }
+      hasPlannerContent = elements.duePlanner.innerHTML.trim().length > 0;
+      elements.duePlanner.classList.toggle('hidden', !hasPlannerContent);
     } else {
       elements.duePlanner.classList.add('hidden');
     }
   }
+
+  elements.emptyState.classList.toggle('hidden', hasHomeSections || hasPlannerContent || query.length > 0);
 }
 
 function showNoResults(message) {
   clearResultsContainer();
   elements.emptyState.classList.add('hidden');
+  if (elements.homeSections) elements.homeSections.classList.add('hidden');
+  if (elements.duePlanner) elements.duePlanner.classList.add('hidden');
+
+  if (state.isOverlayMode) {
+    const noResultsElement = document.createElement('div');
+    noResultsElement.className = 'no-results';
+    noResultsElement.textContent = message;
+    elements.resultsContainer.appendChild(noResultsElement);
+    return;
+  }
 
   const noResultsElement = document.createElement('div');
   noResultsElement.className = 'no-results';
-  noResultsElement.textContent = message;
+
+  const title = document.createElement('div');
+  title.className = 'no-results-title';
+  title.textContent = 'No matches yet';
+  noResultsElement.appendChild(title);
+
+  const copy = document.createElement('div');
+  copy.className = 'no-results-copy';
+  copy.textContent = message;
+  noResultsElement.appendChild(copy);
+
+  const actions = document.createElement('div');
+  actions.className = 'no-results-actions';
+
+  const hasIndexedContent = state.indexedContent.length > 0;
+
+  if (hasIndexedContent && activeCourseContext?.courseName && !isCourseSelected(activeCourseContext.courseName)) {
+    const courseBtn = document.createElement('button');
+    courseBtn.type = 'button';
+    courseBtn.className = 'no-results-action';
+    courseBtn.textContent = 'Try this course only';
+    courseBtn.addEventListener('click', async () => {
+      await setSelectedCourseFilters([activeCourseContext.courseName]);
+    });
+    actions.appendChild(courseBtn);
+  }
+
+  if (hasIndexedContent) {
+    const dueBtn = document.createElement('button');
+    dueBtn.type = 'button';
+    dueBtn.className = 'no-results-action';
+    dueBtn.textContent = 'Show due items';
+    dueBtn.addEventListener('click', () => clearSearch());
+    actions.appendChild(dueBtn);
+
+    const browseBtn = document.createElement('button');
+    browseBtn.type = 'button';
+    browseBtn.className = 'no-results-action';
+    browseBtn.textContent = 'Browse all indexed content';
+    browseBtn.addEventListener('click', () => openBrowseModal());
+    actions.appendChild(browseBtn);
+  }
+
+  if (actions.children.length > 0) {
+    noResultsElement.appendChild(actions);
+  }
+
   elements.resultsContainer.appendChild(noResultsElement);
 }
 
 function clearResultsContainer() {
   const children = Array.from(elements.resultsContainer.children);
   children.forEach(child => {
-    if (child.id !== 'empty-state' && child.id !== 'due-planner' && child.id !== 'overlay-recents') {
+    if (
+      child.id !== 'empty-state'
+      && child.id !== 'due-planner'
+      && child.id !== 'overlay-recents'
+      && child.id !== 'home-sections'
+      && child.id !== 'search-history'
+      && child.id !== 'loading-shell'
+    ) {
       child.remove();
     }
   });
@@ -3959,6 +5691,9 @@ async function loadContent() {
 
     // Initialize Fuse in place now that data is loaded
     initializeFuse();
+    if (state.slashMode.active) {
+      renderSlashCommandSheet();
+    }
 
     // Set UI to Ready mode after a small flicker-prevention delay
     setTimeout(() => {
@@ -4040,6 +5775,28 @@ function getCanonicalId(item) {
   return `__hash__${raw}`;
 }
 
+function getPopupTypeSpecificity(type) {
+  const priorities = {
+    syllabus: 0,
+    assignment: 1,
+    quiz: 2,
+    discussion: 3,
+    folder: 4,
+    page: 5,
+    file: 6,
+    pdf: 6,
+    document: 6,
+    slides: 6,
+    video: 7,
+    course: 8,
+    navigation: 9,
+    link: 10,
+    external: 10,
+    externalurl: 10
+  };
+  return priorities[String(type || '').toLowerCase()] ?? 50;
+}
+
 /**
  * Remove duplicate entries using canonical ID.
  * Prefers canonical URLs (e.g. /assignments/123) over module item URLs.
@@ -4073,7 +5830,10 @@ function deduplicateContent(content) {
       const newIsCanonical = isCanonical(item.url);
 
       let winner = existing;
-      if (newIsCanonical && !existingIsCanonical) {
+      if (getPopupTypeSpecificity(item.type) < getPopupTypeSpecificity(existing.type)) {
+        winner = item;
+        seen.set(key, item);
+      } else if (newIsCanonical && !existingIsCanonical) {
         winner = item;
         seen.set(key, item);
       } else if (newIsCanonical === existingIsCanonical) {
@@ -4101,10 +5861,16 @@ function deduplicateContent(content) {
  */
 function deduplicateCrossType(content) {
   const TYPE_PRIORITY = { assignment: 0, quiz: 1, discussion: 2 };
+  const MERGEABLE_TYPES = new Set(['assignment', 'quiz', 'discussion']);
   const groups = new Map();
 
   for (const item of content) {
     if (!item || !item.title) continue;
+    const normalizedType = String(item.type || '').toLowerCase();
+    if (!MERGEABLE_TYPES.has(normalizedType)) {
+      groups.set(`unique:${getCanonicalId(item)}`, item);
+      continue;
+    }
     const key = `${(item.title || '').trim().toLowerCase()}|${(item.courseName || '').trim().toLowerCase()}`;
     if (!groups.has(key)) {
       groups.set(key, item);
@@ -4217,19 +5983,21 @@ function updateStats() {
 // BROWSE MODAL
 // ============================================
 
-function openBrowseModal() {
+function openBrowseModal(trigger = null) {
   if (state.indexedContent.length === 0) {
     return;
   }
 
+  const resolvedTrigger = trigger?.currentTarget || trigger || document.activeElement;
+
   const grouped = groupContentByType(state.indexedContent);
   buildBrowseTabs(grouped);
   showBrowseCategory('all', state.indexedContent);
-  elements.browseModal.classList.remove('hidden');
+  openPopupModal(null, elements.browseModal, resolvedTrigger, elements.closeBrowse);
 }
 
 function closeBrowseModal() {
-  elements.browseModal.classList.add('hidden');
+  closePopupModal(null, elements.browseModal);
 }
 
 function groupContentByType(content) {
@@ -4256,6 +6024,7 @@ function buildBrowseTabs(grouped) {
   types.forEach(type => {
     const tab = document.createElement('button');
     tab.className = 'browse-tab' + (type === 'all' ? ' active' : '');
+    tab.type = 'button';
 
     const label = document.createElement('span');
     label.textContent = formatTypeName(type);
@@ -4280,9 +6049,11 @@ function buildBrowseTabs(grouped) {
 function formatTypeName(type) {
   const names = {
     'all': 'All',
+    'syllabus': 'Syllabus',
     'assignment': 'Assignments',
     'quiz': 'Quizzes',
     'discussion': 'Discussions',
+    'folder': 'Folders',
     'page': 'Pages',
     'file': 'Files',
     'pdf': 'PDFs',
@@ -4311,6 +6082,9 @@ function showBrowseCategory(type, items) {
   sorted.forEach(item => {
     const itemEl = document.createElement('div');
     itemEl.className = 'browse-item';
+    itemEl.setAttribute('tabindex', '0');
+    itemEl.setAttribute('role', 'button');
+    itemEl.setAttribute('aria-label', buildItemAriaLabel(item));
 
     const title = document.createElement('div');
     title.className = 'browse-item-title';
@@ -4319,8 +6093,9 @@ function showBrowseCategory(type, items) {
     const meta = document.createElement('div');
     meta.className = 'browse-item-meta';
     const parts = [];
-    if (item.type && type === 'all') parts.push(item.type.toUpperCase());
+    if (item.type && type === 'all') parts.push(formatOverlayType(item.type));
     if (item.courseName) parts.push(item.courseName);
+    if (shouldShowPathContext(item)) parts.push(item.folderPath);
     meta.textContent = parts.join(' • ');
 
     itemEl.appendChild(title);
@@ -4328,6 +6103,12 @@ function showBrowseCategory(type, items) {
 
     itemEl.addEventListener('click', () => {
       if (isValidLmsUrl(item.url)) {
+        chrome.tabs.create({ url: item.url });
+      }
+    });
+    itemEl.addEventListener('keydown', (event) => {
+      if ((event.key === 'Enter' || event.key === ' ') && isValidLmsUrl(item.url)) {
+        event.preventDefault();
         chrome.tabs.create({ url: item.url });
       }
     });

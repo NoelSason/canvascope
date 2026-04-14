@@ -979,6 +979,158 @@ function getCourseContext() {
     };
 }
 
+function normalizeCanvasItemUrl(rawUrl, baseUrl = window.location.href) {
+    if (!rawUrl) return '';
+    try {
+        const parsed = new URL(rawUrl, baseUrl);
+        parsed.hash = '';
+        return parsed.toString();
+    } catch {
+        return '';
+    }
+}
+
+function normalizeCanvasText(text) {
+    return String(text || '').replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+function getCanvasBreadcrumbSegments() {
+    return Array.from(document.querySelectorAll(CANVAS_SELECTORS.breadcrumb))
+        .map(node => safeGetText(node.querySelector('a') || node))
+        .map(text => text.trim())
+        .filter(Boolean);
+}
+
+function extractWeekHintsFromTextParts(values) {
+    const hints = new Set();
+    const inputs = Array.isArray(values) ? values : [values];
+
+    for (const value of inputs) {
+        const text = String(value || '');
+        if (!text) continue;
+
+        const regex = /\bweek\s*#?\s*0*(\d{1,3})\b/ig;
+        let match = regex.exec(text);
+        while (match) {
+            const normalized = String(match[1] || '').replace(/^0+/, '') || '0';
+            hints.add(normalized);
+            match = regex.exec(text);
+        }
+    }
+
+    return Array.from(hints);
+}
+
+function isCanvasSyllabusUrl(rawUrl) {
+    try {
+        const parsed = new URL(rawUrl, window.location.href);
+        return /\/courses\/\d+\/assignments\/syllabus(?:\/|$)/i.test(parsed.pathname);
+    } catch {
+        return false;
+    }
+}
+
+function getCanvasFileBrowserContext(courseContext) {
+    const path = String(window.location.pathname || '').toLowerCase();
+    if (!path.includes('/courses/') || !path.includes('/files')) {
+        return null;
+    }
+
+    const breadcrumbSegments = getCanvasBreadcrumbSegments();
+    const normalizedCourse = normalizeCanvasText(courseContext?.title || '');
+    let pathSegments = [];
+
+    if (breadcrumbSegments.length > 0) {
+        const courseIndex = normalizedCourse
+            ? breadcrumbSegments.findIndex(segment => normalizeCanvasText(segment) === normalizedCourse)
+            : -1;
+
+        if (courseIndex >= 0) {
+            pathSegments = breadcrumbSegments.slice(courseIndex + 1);
+        }
+    }
+
+    if (!path.includes('/files/folder/')) {
+        pathSegments = [];
+    } else if (pathSegments.length === 0) {
+        const heading = safeGetText(document.querySelector('h1'));
+        if (heading) {
+            pathSegments = [heading.trim()];
+        }
+    }
+
+    return {
+        url: normalizeCanvasItemUrl(window.location.href),
+        isFolderRoute: path.includes('/files/folder/'),
+        pathSegments,
+        folderPath: pathSegments.join(' > '),
+        currentTitle: pathSegments[pathSegments.length - 1] || 'Files',
+        moduleName: pathSegments[0] || 'Files',
+        weekHints: extractWeekHintsFromTextParts(pathSegments)
+    };
+}
+
+function buildCanvasFileBrowserItem(courseContext, title, url, pathSegments) {
+    const normalizedUrl = normalizeCanvasItemUrl(url);
+    const segments = Array.isArray(pathSegments)
+        ? pathSegments.map(segment => String(segment || '').trim()).filter(Boolean)
+        : [];
+
+    return {
+        title: String(title || '').trim(),
+        url: normalizedUrl,
+        type: 'folder',
+        moduleName: segments[0] || 'Files',
+        folderPath: segments.join(' > '),
+        pathSegments: segments,
+        pathDepth: segments.length,
+        weekHints: extractWeekHintsFromTextParts(segments),
+        containerUrl: normalizedUrl,
+        courseName: courseContext.title,
+        courseId: courseContext.id,
+        scannedAt: new Date().toISOString()
+    };
+}
+
+function scanCanvasFileBrowser(courseContext) {
+    const browserContext = getCanvasFileBrowserContext(courseContext);
+    if (!browserContext) return [];
+
+    const content = [];
+    const seen = new Set();
+    const addItem = (item) => {
+        if (!item?.url || !item?.title || seen.has(item.url)) return;
+        seen.add(item.url);
+        content.push(item);
+    };
+
+    if (browserContext.isFolderRoute && browserContext.folderPath) {
+        addItem(buildCanvasFileBrowserItem(
+            courseContext,
+            browserContext.currentTitle,
+            browserContext.url,
+            browserContext.pathSegments
+        ));
+    }
+
+    const folderLinks = document.querySelectorAll(
+        '#content a[href*="/files/folder/"], main a[href*="/files/folder/"], a[href*="/files/folder/"]'
+    );
+
+    folderLinks.forEach(link => {
+        if (!link.href || !isCanvasUrl(link.href)) return;
+        if (link.closest('nav, header, footer, #breadcrumbs, #section-tabs')) return;
+
+        const title = safeGetText(link) || link.getAttribute('title') || link.getAttribute('aria-label');
+        if (!title) return;
+
+        const rowSegments = [...browserContext.pathSegments, title.trim()];
+        addItem(buildCanvasFileBrowserItem(courseContext, title, link.href, rowSegments));
+    });
+
+    return content;
+}
+
 /**
  * Scan all content on the page
  * 
@@ -1010,6 +1162,10 @@ function scanPageContent(courseContext) {
     // Scan course navigation
     const navContent = scanCourseNavigation(courseContext);
     content.push(...navContent);
+
+    // Scan file-browser folders and current breadcrumb container
+    const fileBrowserContent = scanCanvasFileBrowser(courseContext);
+    content.push(...fileBrowserContent);
 
     // Scan for any other links on the page
     const otherContent = scanOtherLinks(courseContext);
@@ -1162,13 +1318,16 @@ function scanCourseNavigation(courseContext) {
 
     navLinks.forEach(link => {
         const title = safeGetText(link);
-        const url = link.href;
+        const url = normalizeCanvasItemUrl(link.href);
 
         if (title && url) {
+            const isSyllabus = isCanvasSyllabusUrl(url) || /\bsyllabus\b/i.test(title);
             content.push({
-                title: title.trim(),
+                title: isSyllabus && courseContext.title
+                    ? `${courseContext.title} Syllabus`
+                    : title.trim(),
                 url: url,
-                type: 'navigation',
+                type: isSyllabus ? 'syllabus' : 'navigation',
                 moduleName: 'Course Navigation',
                 courseName: courseContext.title,
                 courseId: courseContext.id,
@@ -1191,6 +1350,7 @@ function scanCourseNavigation(courseContext) {
  */
 function scanOtherLinks(courseContext) {
     const content = [];
+    const browserContext = getCanvasFileBrowserContext(courseContext);
 
     // Look for file download links
     const fileLinks = document.querySelectorAll(CANVAS_SELECTORS.fileLinks);
@@ -1198,14 +1358,19 @@ function scanOtherLinks(courseContext) {
     fileLinks.forEach(link => {
         const title = safeGetText(link) || link.getAttribute('title') ||
             getFilenameFromUrl(link.href);
-        const url = link.href;
+        const url = normalizeCanvasItemUrl(link.href);
 
         if (title && url && isCanvasUrl(url)) {
             content.push({
                 title: title.trim(),
                 url: url,
                 type: 'file',
-                moduleName: 'Files',
+                moduleName: browserContext?.currentTitle || 'Files',
+                folderPath: browserContext?.folderPath || '',
+                pathSegments: Array.isArray(browserContext?.pathSegments) ? browserContext.pathSegments.slice() : [],
+                pathDepth: browserContext?.pathSegments?.length || 0,
+                weekHints: Array.isArray(browserContext?.weekHints) ? browserContext.weekHints.slice() : [],
+                containerUrl: browserContext?.url || null,
                 courseName: courseContext.title,
                 courseId: courseContext.id,
                 scannedAt: new Date().toISOString()
@@ -1316,6 +1481,7 @@ function extractCourseId(url) {
  */
 function scanGenericLinks(courseContext) {
     const content = [];
+    const browserContext = getCanvasFileBrowserContext(courseContext);
 
     // Find all links that point to Canvas content
     const allLinks = document.querySelectorAll('a[href*="/courses/"]');
@@ -1333,19 +1499,22 @@ function scanGenericLinks(courseContext) {
         if (title && title.length > 2 && title.length < 200) {
             // Determine type from URL
             let type = 'link';
-            const url = link.href.toLowerCase();
+            const url = normalizeCanvasItemUrl(link.href);
+            const lowerUrl = url.toLowerCase();
 
-            if (url.includes('/assignments/')) type = 'assignment';
-            else if (url.includes('/quizzes/')) type = 'quiz';
-            else if (url.includes('/discussion_topics/')) type = 'discussion';
-            else if (url.includes('/pages/')) type = 'page';
-            else if (url.includes('/files/')) type = 'file';
-            else if (url.includes('/modules/')) type = 'module';
-            else if (url.includes('/announcements/')) type = 'announcement';
-            else if (url.includes('/grades')) type = 'grades';
+            if (lowerUrl.includes('/assignments/syllabus')) type = 'syllabus';
+            else if (lowerUrl.includes('/assignments/')) type = 'assignment';
+            else if (lowerUrl.includes('/quizzes/')) type = 'quiz';
+            else if (lowerUrl.includes('/discussion_topics/')) type = 'discussion';
+            else if (lowerUrl.includes('/pages/')) type = 'page';
+            else if (lowerUrl.includes('/files/folder/')) type = 'folder';
+            else if (lowerUrl.includes('/files/')) type = 'file';
+            else if (lowerUrl.includes('/modules/')) type = 'module';
+            else if (lowerUrl.includes('/announcements/')) type = 'announcement';
+            else if (lowerUrl.includes('/grades')) type = 'grades';
 
             // IMPORTANT: Check if this link belongs to the current course context
-            const linkCourseId = extractCourseId(link.href);
+            const linkCourseId = extractCourseId(url);
             let itemCourseName = courseContext.title || '';
             let itemModuleName = courseContext.title || 'Canvas';
 
@@ -1359,10 +1528,27 @@ function scanGenericLinks(courseContext) {
             }
 
             content.push({
-                title: title.trim(),
-                url: link.href,
+                title: type === 'syllabus' && courseContext.title
+                    ? `${courseContext.title} Syllabus`
+                    : title.trim(),
+                url,
                 type: type,
-                moduleName: itemModuleName,
+                moduleName: type === 'folder'
+                    ? (browserContext?.moduleName || 'Files')
+                    : itemModuleName,
+                folderPath: type === 'folder'
+                    ? [...(browserContext?.pathSegments || []), title.trim()].join(' > ')
+                    : '',
+                pathSegments: type === 'folder'
+                    ? [...(browserContext?.pathSegments || []), title.trim()]
+                    : [],
+                pathDepth: type === 'folder'
+                    ? [...(browserContext?.pathSegments || []), title.trim()].length
+                    : 0,
+                weekHints: type === 'folder'
+                    ? extractWeekHintsFromTextParts([...(browserContext?.pathSegments || []), title.trim()])
+                    : [],
+                containerUrl: type === 'folder' ? url : null,
                 courseName: itemCourseName,
                 courseId: linkCourseId || courseContext.id,
                 scannedAt: new Date().toISOString()
@@ -1516,8 +1702,9 @@ function createOverlay() {
         display: none;
         align-items: center;
         justify-content: center;
-        background: rgba(0, 0, 0, 0.4);
-        backdrop-filter: blur(3px);
+        background: rgba(0, 0, 0, 0.45);
+        backdrop-filter: blur(5px);
+        -webkit-backdrop-filter: blur(5px);
     `;
 
     // Create iframe
@@ -1527,12 +1714,15 @@ function createOverlay() {
     overlayIframe.style.cssText = `
         width: 420px;
         height: 550px;
-        border: none;
-        border-radius: 16px;
-        box-shadow: 0 20px 60px rgba(0,0,0,0.4);
+        border: 1px solid rgba(239, 68, 68, 0.30);
+        border-radius: 20px;
+        box-shadow:
+            0 24px 56px rgba(0, 0, 0, 0.55),
+            0 0 0 1px rgba(255, 255, 255, 0.04) inset,
+            0 1px 0 rgba(255, 255, 255, 0.06) inset;
         background: transparent;
         transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.2s ease;
-        transform: scale(0.95);
+        transform: scale(0.92);
         opacity: 0;
     `;
 

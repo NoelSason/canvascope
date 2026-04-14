@@ -12,27 +12,46 @@
   <div class="container">
     <!-- Header Section -->
     <header class="header">
-      <h1 class="title">
-        <svg class="title-icon" viewBox="0 0 128 128" fill="none">
-          <path d="M20 16h76v96H20z" stroke="#D32F2F" stroke-width="10" stroke-linecap="round" stroke-linejoin="round">
-          </path>
-          <path d="M20 88h76" stroke="#D32F2F" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"></path>
-          <circle cx="60" cy="52" r="22" stroke="#D32F2F" stroke-width="10" stroke-linecap="round"
-            stroke-linejoin="round"></circle>
-          <line x1="76" y1="68" x2="104" y2="96" stroke="#D32F2F" stroke-width="10" stroke-linecap="round"
-            stroke-linejoin="round"></line>
-        </svg>
-        Canvascope
-      </h1>
-      <p class="subtitle" id="status-text" aria-live="polite">Search your course content</p>
+      <div class="header-top-row">
+        <div class="header-brand">
+          <h1 class="title">
+            <svg class="title-icon" viewBox="0 0 128 128" fill="none">
+              <path d="M20 16h76v96H20z" stroke="#D32F2F" stroke-width="10" stroke-linecap="round" stroke-linejoin="round">
+              </path>
+              <path d="M20 88h76" stroke="#D32F2F" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"></path>
+              <circle cx="60" cy="52" r="22" stroke="#D32F2F" stroke-width="10" stroke-linecap="round"
+                stroke-linejoin="round"></circle>
+              <line x1="76" y1="68" x2="104" y2="96" stroke="#D32F2F" stroke-width="10" stroke-linecap="round"
+                stroke-linejoin="round"></line>
+            </svg>
+            Canvascope
+          </h1>
+          <p class="subtitle" id="status-text" aria-live="polite">Search your course content</p>
+        </div>
+        <div class="header-actions" aria-label="Popup controls">
+          <button id="help-btn" class="header-icon-btn" type="button" aria-label="Open help and shortcuts" title="Help">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <circle cx="12" cy="12" r="9"></circle>
+              <path d="M9.5 9a2.5 2.5 0 1 1 4.33 1.7c-.62.66-1.33 1.1-1.83 1.8-.3.4-.5.83-.5 1.5"></path>
+              <circle cx="12" cy="17" r="1"></circle>
+            </svg>
+          </button>
+          <button id="settings-btn" class="header-icon-btn" type="button" aria-label="Open settings" title="Settings">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <circle cx="12" cy="12" r="3"></circle>
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 8.92 4.6H9A1.65 1.65 0 0 0 10 3.09V3a2 2 0 0 1 4 0v.09A1.65 1.65 0 0 0 15 4.6a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9c.22.52.73.87 1.3.91H21a2 2 0 0 1 0 4h-.09c-.57.04-1.08.39-1.3.91Z"></path>
+            </svg>
+          </button>
+        </div>
+      </div>
     </header>
 
     <!-- Search Section -->
     <div class="search-section">
       <div class="search-wrapper">
         <input type="text" id="search-input" class="search-input" placeholder="e.g., 'lecture 7' or 'midterm'"
-          autocomplete="off" spellcheck="false">
-        <button id="clear-search" class="clear-btn" title="Clear search" aria-label="Clear search">×</button>
+          autocomplete="off" spellcheck="false" aria-label="Search your course content">
+        <button id="clear-search" class="clear-btn" type="button" title="Clear search" aria-label="Clear search">×</button>
       </div>
 
 
@@ -67,10 +86,16 @@
           </div>
         </div>
       </div>
+
     </div>
 
     <!-- Results Section -->
     <div id="results-container" class="results-container">
+      <div id="home-sections" class="home-sections hidden">
+        <section id="continue-section" class="home-section hidden"></section>
+        <section id="recently-opened-section" class="home-section hidden"></section>
+      </div>
+
       <!-- Due Planner (shown when search is empty) -->
       <div id="due-planner" class="due-planner hidden"></div>
 
@@ -105,7 +130,7 @@
 
     <!-- Stats Section -->
     <div class="stats-section">
-      <button id="stats-btn" class="stats-btn">
+      <button id="stats-btn" class="stats-btn" type="button" aria-label="Browse all indexed content">
         <span id="stats-text" class="stats-text">Loading...</span>
         <span class="stats-hint" id="stats-hint"></span>
       </button>
@@ -134,8 +159,9 @@
       </button>
 
       <!-- Auth Integration -->
-      <button id="google-signin-btn" class="action-btn">
-        <svg class="btn-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <button id="google-signin-btn" class="action-btn" type="button" aria-label="Sign in with Google">
+        <svg class="btn-icon auth-icon auth-icon-google" width="16" height="16" viewBox="0 0 24 24" fill="none"
+          xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
           <path
             d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
             fill="#4285F4" />
@@ -149,32 +175,50 @@
             d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
             fill="#EA4335" />
         </svg>
+        <svg class="btn-icon auth-icon auth-icon-account hidden" width="16" height="16" viewBox="0 0 24 24" fill="none"
+          stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <path d="M20 21a8 8 0 0 0-16 0"></path>
+          <circle cx="12" cy="8" r="4"></circle>
+        </svg>
         <span class="btn-text">Sign in</span>
       </button>
 
     </div>
 
     <!-- Browse Modal -->
-    <div id="browse-modal" class="browse-modal hidden">
+    <div id="browse-modal" class="browse-modal hidden" role="dialog" aria-modal="true" aria-labelledby="browse-title">
       <div class="browse-header">
-        <h2 class="browse-title">All Indexed Content</h2>
-        <button id="close-browse" class="close-btn" aria-label="Close">×</button>
+        <h2 id="browse-title" class="browse-title">All Indexed Content</h2>
+        <button id="close-browse" class="close-btn" type="button" aria-label="Close">×</button>
       </div>
       <div class="browse-tabs" id="browse-tabs"></div>
       <div class="browse-content" id="browse-content"></div>
     </div>
     <!-- Settings Modal -->
-    <div id="account-modal" class="browse-modal settings-modal hidden">
+    <div id="account-modal" class="browse-modal settings-modal hidden" role="dialog" aria-modal="true"
+      aria-labelledby="settings-title">
       <div class="browse-header">
-        <h2 class="browse-title">Settings</h2>
-        <button id="close-account-modal" class="close-btn" aria-label="Close">×</button>
+        <h2 id="settings-title" class="browse-title">Settings</h2>
+        <button id="close-account-modal" class="close-btn" type="button" aria-label="Close settings">×</button>
       </div>
       <div class="browse-content settings-modal-content">
-        <div class="settings-profile">
+        <div id="settings-profile" class="settings-profile hidden">
           <div id="account-avatar-placeholder" class="settings-avatar"></div>
           <div class="settings-profile-copy">
             <h3 id="account-name-display" class="settings-profile-name">Loading...</h3>
             <p id="account-email-display" class="settings-profile-email">Please wait</p>
+          </div>
+        </div>
+
+        <div id="settings-account-state" class="settings-card hidden">
+          <div class="settings-card-header">
+            <h3 class="settings-card-title">Account</h3>
+            <p class="settings-card-subtitle">Sign in to use account-linked Lectra sync features and manage your profile.</p>
+          </div>
+          <div class="settings-account-copy">
+            <button id="settings-signin-btn" class="action-btn" type="button">
+              <span class="btn-text">Sign in</span>
+            </button>
           </div>
         </div>
 
@@ -307,16 +351,65 @@
         </div>
       </div>
       <!-- Sign Out pinned at bottom -->
-      <div class="settings-modal-footer">
-        <button id="logout-btn" class="action-btn settings-logout-btn">
+      <div id="settings-modal-footer" class="settings-modal-footer hidden">
+        <button id="logout-btn" class="action-btn settings-logout-btn" type="button">
           <svg class="btn-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-            stroke-width="2">
+            stroke-width="2" aria-hidden="true">
             <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
             <polyline points="16 17 21 12 16 7"></polyline>
             <line x1="21" y1="12" x2="9" y2="12"></line>
           </svg>
           <span class="btn-text">Sign out</span>
         </button>
+      </div>
+    </div>
+
+    <!-- Help Modal -->
+    <div id="help-modal" class="browse-modal settings-modal hidden" role="dialog" aria-modal="true"
+      aria-labelledby="help-title">
+      <div class="browse-header">
+        <h2 id="help-title" class="browse-title">Help &amp; Shortcuts</h2>
+        <button id="close-help-modal" class="close-btn" type="button" aria-label="Close help">×</button>
+      </div>
+      <div class="browse-content settings-modal-content help-modal-content">
+        <div class="settings-card help-card">
+          <div class="settings-card-header">
+            <h3 class="settings-card-title">Quick start</h3>
+            <p class="settings-card-subtitle">Canvascope works best when the extension is pinned and your LMS tab has had a chance to sync once.</p>
+          </div>
+          <ol class="help-list">
+            <li>Pin Canvascope for one-click access from the toolbar.</li>
+            <li>Press <kbd>Cmd/Ctrl + K</kbd> on a Canvas page to open the quick search overlay.</li>
+            <li>Tap <strong>Refresh Now</strong> once if you just opened a class and want a fresh sync.</li>
+            <li>Try a search from the examples below to learn how the index behaves.</li>
+          </ol>
+        </div>
+
+        <div class="settings-card help-card">
+          <div class="settings-card-header">
+            <h3 class="settings-card-title">Shortcuts</h3>
+            <p class="settings-card-subtitle">Popup and overlay controls share the same search engine, but the overlay stays keyboard-first.</p>
+          </div>
+          <div class="shortcut-list" aria-label="Shortcuts reference">
+            <div class="shortcut-row"><span class="shortcut-key">Cmd/Ctrl + K</span><span class="shortcut-copy">Open the page overlay</span></div>
+            <div class="shortcut-row"><span class="shortcut-key">Enter</span><span class="shortcut-copy">Open the highlighted result</span></div>
+            <div class="shortcut-row"><span class="shortcut-key">Arrow keys</span><span class="shortcut-copy">Move through overlay results</span></div>
+            <div class="shortcut-row"><span class="shortcut-key">Escape</span><span class="shortcut-copy">Close Help, Settings, or the overlay</span></div>
+          </div>
+        </div>
+
+        <div class="settings-card help-card">
+          <div class="settings-card-header">
+            <h3 class="settings-card-title">Try a search</h3>
+            <p class="settings-card-subtitle">These examples populate the search box and run immediately.</p>
+          </div>
+          <div class="help-chip-list" role="list" aria-label="Example searches">
+            <button class="help-chip" type="button" data-example-query="lecture 7">lecture 7</button>
+            <button class="help-chip" type="button" data-example-query="midterm">midterm</button>
+            <button class="help-chip" type="button" data-example-query="lab this week">lab this week</button>
+            <button class="help-chip" type="button" data-example-query="assignment due today">assignment due today</button>
+          </div>
+        </div>
       </div>
     </div>
 

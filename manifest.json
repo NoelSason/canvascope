@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
   "name": "Canvascope",
-  "version": "4.1.0",
+  "version": "5.0.0",
   "minimum_chrome_version": "116",
-  "description": "Instantly search Canvas and Brightspace content, then optionally send PDFs to Lectra for iPad annotation.",
+  "description": "Instantly search Canvas and Brightspace content",
   "icons": {
     "16": "icons/icon16.png",
     "32": "icons/icon32.png",
@@ -63,7 +63,8 @@
       ],
       "js": [
         "lib/supabase.js",
-        "content.js"
+        "content.js",
+        "slash-overlay.js"
       ],
       "run_at": "document_idle"
     }
