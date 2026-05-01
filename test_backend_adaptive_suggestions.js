@@ -101,6 +101,10 @@ async function createHarness() {
             callback?.({ success: true });
             return;
           }
+          if (message.type === 'syncAdaptiveSearchState') {
+            callback?.({ success: true });
+            return;
+          }
           callback?.({ success: false });
         },
         onMessage: { addListener() {} }
@@ -153,6 +157,8 @@ async function createHarness() {
     globalThis.__boostQuery = (query) => getWeeklyHabitBoostQuery(query);
     globalThis.__buildEvent = (kind, query) => buildAdaptiveSearchEventPayload(kind, query);
     globalThis.__recordEvent = async (kind, query, overrides) => await recordAdaptiveSearchEvent(kind, query, overrides || {});
+    globalThis.__mergeHabits = (localHabits, remoteHabits) => mergeSearchHabits(localHabits, remoteHabits);
+    globalThis.__updateHabits = async (item, query) => await updateSearchHabits(item, query);
   `, context);
 
   return {
@@ -168,6 +174,12 @@ async function createHarness() {
     },
     async recordEvent(kind, query, overrides = {}) {
       return await vm.runInContext(`__recordEvent(${JSON.stringify(kind)}, ${JSON.stringify(query)}, ${JSON.stringify(overrides)})`, context);
+    },
+    mergeHabits(localHabits, remoteHabits) {
+      return vm.runInContext(`__mergeHabits(${JSON.stringify(localHabits)}, ${JSON.stringify(remoteHabits)})`, context);
+    },
+    async updateHabits(item, query) {
+      return await vm.runInContext(`__updateHabits(${JSON.stringify(item)}, ${JSON.stringify(query)})`, context);
     }
   };
 }
@@ -199,6 +211,42 @@ function assert(condition, message) {
   assert(recordMessage, 'Expected popup adaptive events to go through the background bridge.');
   assert(recordMessage.event.eventKind === 'suggestion_clicked', 'Expected the recorded adaptive event kind to be "suggestion_clicked".');
   assert(recordMessage.event.baseQuery === 'chem lab', 'Expected the recorded adaptive event to preserve the base query.');
+
+  const mergedHabits = harness.mergeHabits(
+    {
+      globalClicks: {
+        '/files/current/download': { openCount: 4, lastOpenedAt: 2000 }
+      },
+      queryAffinity: {
+        'chem lab 4': { '/files/current/download': 4 }
+      }
+    },
+    {
+      globalClicks: {
+        '/files/current/download': { openCount: 1, lastOpenedAt: 1000 },
+        '/files/remote/download': { openCount: 2, lastOpenedAt: 1500 }
+      },
+      queryAffinity: {
+        'chem lab 4': {
+          '/files/current/download': 1,
+          '/files/remote/download': 2
+        }
+      }
+    }
+  );
+  assert(mergedHabits.globalClicks['/files/current/download'].openCount === 4, 'Expected stale remote habits not to overwrite stronger local click counts.');
+  assert(mergedHabits.globalClicks['/files/remote/download'].openCount === 2, 'Expected remote-only habits to merge into local fallback state.');
+  assert(mergedHabits.queryAffinity['chem lab 4']['/files/current/download'] === 4, 'Expected stale remote query affinity not to overwrite local affinity.');
+
+  await harness.updateHabits({
+    title: 'Chem Lab 4',
+    url: 'https://canvas.example.edu/files/current/download',
+    type: 'file'
+  }, 'chem lab 4');
+  const syncMessage = harness.sentMessages.find((message) => message.type === 'syncAdaptiveSearchState');
+  assert(syncMessage, 'Expected local adaptive habit updates to mirror a snapshot to Supabase.');
+  assert(syncMessage.state.habits.globalClicks['/files/current/download'].openCount === 1, 'Expected habit snapshot to include the clicked item count.');
+  assert(syncMessage.state.enabled === true, 'Expected habit snapshot to preserve adaptive-learning enabled state.');
 
   console.log('PASS test_backend_adaptive_suggestions');
 })().catch((error) => {

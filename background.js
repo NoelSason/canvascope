@@ -5799,13 +5799,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                     .select('id')
                     .eq('user_id', session.user.id)
                     .eq('item_type', 'adaptive_search_habits')
-                    .single();
+                    .order('updated_at', { ascending: false })
+                    .limit(1)
+                    .maybeSingle();
+                if (error) throw error;
                 
                 const payload = {
                     user_id: session.user.id,
                     item_type: 'adaptive_search_habits',
                     item_data: message.state,
-                    sync_status: 'synced'
+                    sync_status: 'synced',
+                    updated_at: new Date().toISOString()
                 };
 
                 if (data) {
@@ -5836,9 +5840,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                     .select('item_data')
                     .eq('user_id', session.user.id)
                     .eq('item_type', 'adaptive_search_habits')
-                    .single();
+                    .order('updated_at', { ascending: false })
+                    .limit(1)
+                    .maybeSingle();
                 
-                if (error && error.code !== 'PGRST116') {
+                if (error) {
                     throw error;
                 }
                 sendResponse({ success: true, state: data ? data.item_data : null });

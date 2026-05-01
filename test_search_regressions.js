@@ -134,9 +134,11 @@ function createSearchHarness(indexedContent) {
     displayResults = (results) => {
       globalThis.__lastResults = results.map(r => ({
         title: r.item.title,
+        url: r.item.url,
         course: r.item.courseName,
         type: r.item.type,
-        dueAt: r.item.dueAt || null
+        dueAt: r.item.dueAt || null,
+        folderPath: r.item.folderPath || null
       }));
     };
 
@@ -326,6 +328,89 @@ assert(Array.isArray(syntheticChemQuizResults) && syntheticChemQuizResults.lengt
 assert(syntheticChemQuizResults[0].title === 'Quiz 7', 'Expected broad "chem quiz" to surface the earliest current-week quiz first.');
 assert(syntheticChemQuizResults[1].title === 'Quiz 8', 'Expected broad "chem quiz" to keep the rest of the current-week quiz cluster ahead of later quizzes.');
 assert(dueTs(syntheticChemQuizResults[1]) < dueTs(syntheticChemQuizResults[2]), 'Expected later quizzes to trail the current-week quiz cluster.');
+
+const syntheticSelfAssessmentHarness = createSearchHarness([
+  {
+    title: 'Week 15 Self-Assessment',
+    url: 'https://example.edu/courses/bio1a/assignments/week-15-self-assessment',
+    type: 'assignment',
+    courseName: '2026 Spring Biology 1A',
+    dueAt: '2026-03-22T06:59:59Z'
+  },
+  {
+    title: 'Week 14 Self-Assessment',
+    url: 'https://example.edu/courses/bio1a/assignments/week-14-self-assessment',
+    type: 'assignment',
+    courseName: '2026 Spring Biology 1A',
+    dueAt: '2026-03-15T22:00:00Z',
+    submitted: false,
+    submissionStatus: 'not_submitted',
+    submission: null
+  },
+  {
+    title: 'Week 13 Self-Assessment',
+    url: 'https://example.edu/courses/bio1a/assignments/week-13-self-assessment',
+    type: 'assignment',
+    courseName: '2026 Spring Biology 1A',
+    dueAt: '2026-03-08T06:59:59Z',
+    submitted: true,
+    submissionStatus: 'submitted',
+    submission: {
+      workflowState: 'submitted',
+      submittedAt: '2026-03-07T05:00:00Z'
+    }
+  }
+]);
+const selfAssessmentResults = syntheticSelfAssessmentHarness.run('self a');
+assert(Array.isArray(selfAssessmentResults) && selfAssessmentResults.length >= 3, 'Expected synthetic self-assessment results for "self a".');
+assert(selfAssessmentResults[0].title === 'Week 14 Self-Assessment', 'Expected the incomplete self-assessment due soonest to rank first for "self a".');
+assert(selfAssessmentResults[1].title === 'Week 15 Self-Assessment', 'Expected later upcoming self-assessment to follow the due-soon item.');
+assert(selfAssessmentResults[2].title === 'Week 13 Self-Assessment', 'Expected completed self-assessment to stay behind unfinished work.');
+
+const homeworkKeyPreferenceHarness = createSearchHarness([
+  {
+    title: 'W. Epoxides as electrophiles (Chem 3A - ...)',
+    url: 'https://example.edu/courses/chem3a/files/homework-w',
+    type: 'file',
+    courseName: 'Chem 3A (Spring 2025)',
+    folderPath: '1. Homework > 4. Unit 3'
+  },
+  {
+    title: 'W. Epoxides as electrophiles (Chem 3A - ...)',
+    url: 'https://example.edu/courses/chem3a/files/homework-w-key',
+    type: 'file',
+    courseName: 'Chem 3A (Spring 2025)',
+    folderPath: '1. Homework > 4. Unit 3 > Unit 3 Homework Keys'
+  },
+  {
+    title: '1. Homework',
+    url: 'https://example.edu/courses/chem3a/folders/homework',
+    type: 'folder',
+    courseName: 'Chem 3A (Spring 2025)',
+    folderPath: '1. Homework'
+  },
+  {
+    title: 'Unit 3 Homework Keys',
+    url: 'https://example.edu/courses/chem3a/folders/homework-keys',
+    type: 'folder',
+    courseName: 'Chem 3A (Spring 2025)',
+    folderPath: '1. Homework > 4. Unit 3 > Unit 3 Homework Keys'
+  }
+]);
+const homeworkVsKeyResults = homeworkKeyPreferenceHarness.run('chem 3a homework w');
+assert(Array.isArray(homeworkVsKeyResults) && homeworkVsKeyResults.length >= 4, 'Expected synthetic homework-vs-key results.');
+assert(homeworkVsKeyResults[0].url === 'https://example.edu/courses/chem3a/files/homework-w', 'Expected the non-key homework file to rank first for "chem 3a homework w".');
+const homeworkFolderIndex = homeworkVsKeyResults.findIndex(r => r.url === 'https://example.edu/courses/chem3a/folders/homework');
+assert(homeworkFolderIndex > 0, 'Expected the generic homework folder to remain visible without outranking the matching homework file.');
+const explicitKeyResults = homeworkKeyPreferenceHarness.run('chem 3a homework key w');
+assert(Array.isArray(explicitKeyResults) && explicitKeyResults.length >= 2, 'Expected explicit key results for "chem 3a homework key w".');
+assert(explicitKeyResults[0].url === 'https://example.edu/courses/chem3a/files/homework-w-key', 'Expected the key-like homework file to rank first when the query explicitly asks for a key.');
+const explicitAnswerKeyResults = homeworkKeyPreferenceHarness.run('chem 3a answer key w');
+assert(Array.isArray(explicitAnswerKeyResults) && explicitAnswerKeyResults.length > 0, 'Expected explicit answer-key results for "chem 3a answer key w".');
+const answerKeyFileIndex = explicitAnswerKeyResults.findIndex(r => r.url === 'https://example.edu/courses/chem3a/files/homework-w-key');
+const answerKeyNonKeyIndex = explicitAnswerKeyResults.findIndex(r => r.url === 'https://example.edu/courses/chem3a/files/homework-w');
+assert(answerKeyFileIndex !== -1, 'Expected the key-like homework file to remain visible for "chem 3a answer key w".');
+assert(answerKeyNonKeyIndex === -1 || answerKeyFileIndex < answerKeyNonKeyIndex, 'Expected the key-like homework file to outrank the non-key homework file for "chem 3a answer key w".');
 
 const completedBioLab = harness.describeTask('Lab 5 Post-Lab Assessment', '2026 Spring Biology 1AL');
 assert(completedBioLab?.completed === true, 'Expected Lab 5 Post-Lab Assessment to be detected as completed.');

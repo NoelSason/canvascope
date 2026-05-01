@@ -83,10 +83,14 @@ const CUSTOM_ALGORITHM_WARNING = 'Custom Algorithm is experimental. It changes h
 
 const MAX_RESULTS = 20;
 const SEARCH_DEBOUNCE_MS = 150;
+const OVERLAY_SEARCH_DEBOUNCE_MS = 75;
 const MAX_HISTORY = 10;
 const SLASH_RESULT_LIMIT = 18;
 const DEFAULT_SEARCH_PLACEHOLDER = "e.g., 'lecture 7' or 'midterm'";
 const SLASH_SEARCH_PLACEHOLDER = 'Type a command or alias'; // Unused — slash moved to in-page overlay
+const KEY_LIKE_CONTENT_RE = /\b(?:answer\s+keys?|worked\s+solutions?|solutions?|keys?)\b/i;
+const KEY_LIKE_CONTENT_STRIP_RE = /\b(?:answer\s+keys?|worked\s+solutions?|solutions?|keys?)\b/gi;
+const EXPLICIT_TASK_QUALIFIER_RE = /\b(pre[\s-]*lab|post[\s-]*lab|quiz|assignment|discussion|homework|worksheet|exam)\b/i;
 
 // Type boost values for ranking
 const TYPE_BOOST = {
@@ -362,7 +366,7 @@ function extractNumericTokens(text) {
  */
 function computeNumericAlignment(queryNums, titleText) {
   if (queryNums.length === 0) return { aligned: 0, mismatched: 0, queryHasNumbers: false };
-  const titleNums = new Set(extractNumericTokens(titleText));
+  const titleNums = titleText instanceof Set ? titleText : new Set(extractNumericTokens(titleText));
   let aligned = 0, mismatched = 0;
   for (const qn of queryNums) {
     if (titleNums.has(qn)) aligned++;
@@ -377,6 +381,20 @@ function computeNumericAlignment(queryNums, titleText) {
 
 const STOP_TOKENS = new Set(['the', 'in', 'on', 'of', 'to', 'for', 'and', 'or', 'is']);
 const BROAD_QUERY_TOKENS = new Set(['lab', 'laboratory', 'chemistry', 'biology', 'physics']);
+const GENERIC_RECALL_TOKENS = new Set([
+  ...BROAD_QUERY_TOKENS,
+  'homework',
+  'key',
+  'keys',
+  'assignment',
+  'assignments',
+  'quiz',
+  'quizzes',
+  'discussion',
+  'discussions',
+  'worksheet',
+  'worksheets'
+]);
 
 /**
  * Compute fraction of query tokens present in searchable text using boundaries.
@@ -402,6 +420,7 @@ function computeTokenCoverage(normalizedQuery, titleText, contextText) {
 // ============================================
 
 let clickFeedbackMap = {}; // Legacy fallback
+let searchHabitsSyncTimer = null;
 const WEEKLY_HABIT_SLOT_HOURS = 2;
 const WEEKLY_HABIT_MIN_STREAK = 3;
 const WEEKLY_HABIT_MAX_LOOKAHEAD_WEEKS = 4;
@@ -425,6 +444,46 @@ function normalizeSearchHabits(rawHabits) {
     queryAffinity: source.queryAffinity && typeof source.queryAffinity === 'object' ? source.queryAffinity : {},
     weeklyQueryPatterns: source.weeklyQueryPatterns && typeof source.weeklyQueryPatterns === 'object' ? source.weeklyQueryPatterns : {}
   };
+}
+
+function mergeSearchHabits(localHabits, remoteHabits) {
+  const merged = normalizeSearchHabits(localHabits);
+  const remote = normalizeSearchHabits(remoteHabits);
+
+  for (const [key, remoteEntry] of Object.entries(remote.globalClicks)) {
+    const localEntry = merged.globalClicks[key] || {};
+    const localOpenCount = Number(localEntry.openCount || 0);
+    const remoteOpenCount = Number(remoteEntry?.openCount || 0);
+    const localLastOpenedAt = Number(localEntry.lastOpenedAt || 0);
+    const remoteLastOpenedAt = Number(remoteEntry?.lastOpenedAt || 0);
+
+    merged.globalClicks[key] = {
+      openCount: Math.max(localOpenCount, remoteOpenCount),
+      lastOpenedAt: Math.max(localLastOpenedAt, remoteLastOpenedAt)
+    };
+  }
+
+  for (const [query, remoteAffinity] of Object.entries(remote.queryAffinity)) {
+    if (!remoteAffinity || typeof remoteAffinity !== 'object') continue;
+    const localAffinity = merged.queryAffinity[query] && typeof merged.queryAffinity[query] === 'object'
+      ? merged.queryAffinity[query]
+      : {};
+    for (const [key, remoteCount] of Object.entries(remoteAffinity)) {
+      localAffinity[key] = Math.max(Number(localAffinity[key] || 0), Number(remoteCount || 0));
+    }
+    merged.queryAffinity[query] = localAffinity;
+  }
+
+  for (const [patternKey, remotePattern] of Object.entries(remote.weeklyQueryPatterns)) {
+    const localPattern = merged.weeklyQueryPatterns[patternKey];
+    const localLastClickedAt = Number(localPattern?.lastClickedAt || 0);
+    const remoteLastClickedAt = Number(remotePattern?.lastClickedAt || 0);
+    if (!localPattern || remoteLastClickedAt > localLastClickedAt) {
+      merged.weeklyQueryPatterns[patternKey] = remotePattern;
+    }
+  }
+
+  return merged;
 }
 
 function getWeeklyHabitSlotKey(timestamp = Date.now()) {
@@ -828,7 +887,7 @@ async function loadClickFeedbackMap() {
       if (chrome.runtime.lastError) return;
       if (response && response.success && response.state) {
         if (response.state.habits) {
-          state.searchHabits = normalizeSearchHabits(response.state.habits);
+          state.searchHabits = mergeSearchHabits(state.searchHabits, response.state.habits);
         }
         if (response.state.enabled !== undefined && state.extensionSettings) {
           state.extensionSettings.enableAdaptiveLearning = response.state.enabled;
@@ -836,6 +895,7 @@ async function loadClickFeedbackMap() {
           if (toggle) toggle.checked = state.extensionSettings.enableAdaptiveLearning;
         }
         chrome.storage.local.set({ searchHabits: state.searchHabits });
+        debouncedSyncSearchHabits();
       }
     });
 
@@ -845,8 +905,29 @@ async function loadClickFeedbackMap() {
 }
 
 function debouncedSyncSearchHabits() {
-  // Search-habit authority now lives in Supabase event + pattern tables.
-  // Keep local fallback state on-device only during rollout.
+  if (!chrome?.runtime?.sendMessage || !state.searchHabits) return;
+
+  if (searchHabitsSyncTimer) {
+    clearTimeout(searchHabitsSyncTimer);
+    searchHabitsSyncTimer = null;
+  }
+
+  const snapshot = {
+    enabled: state.extensionSettings?.enableAdaptiveLearning !== false,
+    habits: normalizeSearchHabits(state.searchHabits),
+    updatedAt: Date.now()
+  };
+
+  try {
+    chrome.runtime.sendMessage({ type: 'syncAdaptiveSearchState', state: snapshot }, (response) => {
+      if (chrome.runtime?.lastError) return;
+      if (response && response.success === false && response.error !== 'Not signed in') {
+        console.warn('[Canvascope Adaptive Search] Failed to sync habit snapshot:', response.error);
+      }
+    });
+  } catch (e) {
+    // The backend search_events/search_patterns tables remain authoritative.
+  }
 }
 
 async function updateSearchHabits(item, query = '') {
@@ -1505,6 +1586,92 @@ function numberVariants(text) {
   return variants.join(' ');
 }
 
+function getSearchDebounceMs() {
+  return state.isOverlayMode ? OVERLAY_SEARCH_DEBOUNCE_MS : SEARCH_DEBOUNCE_MS;
+}
+
+function buildBoundaryMatcher(token) {
+  if (!token) return null;
+  const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`\\b${escaped}\\b`, 'i');
+}
+
+function buildTokenMatcherMap(tokens) {
+  const matchers = new Map();
+  for (const token of tokens || []) {
+    if (!token || matchers.has(token)) continue;
+    const matcher = buildBoundaryMatcher(token);
+    if (matcher) matchers.set(token, matcher);
+  }
+  return matchers;
+}
+
+function textIncludesQueryToken(searchableText, token, tokenMatchers = new Map()) {
+  if (!searchableText || !token) return false;
+  if (token.length === 1 || /^\d+$/.test(token)) {
+    return Boolean(tokenMatchers.get(token)?.test(searchableText));
+  }
+  return searchableText.includes(token);
+}
+
+function countMatchedQueryTokens(searchableText, tokens, tokenMatchers = new Map()) {
+  if (!Array.isArray(tokens) || tokens.length === 0 || !searchableText) return 0;
+  let hits = 0;
+  for (const token of tokens) {
+    if (textIncludesQueryToken(searchableText, token, tokenMatchers)) {
+      hits++;
+    }
+  }
+  return hits;
+}
+
+function countBoundaryMatches(searchableText, tokens, tokenMatchers = new Map()) {
+  if (!Array.isArray(tokens) || tokens.length === 0 || !searchableText) return 0;
+  let hits = 0;
+  for (const token of tokens) {
+    if (tokenMatchers.get(token)?.test(searchableText)) {
+      hits++;
+    }
+  }
+  return hits;
+}
+
+function hasSpecificRecallSignal(tokens) {
+  return (tokens || []).some(token => !GENERIC_RECALL_TOKENS.has(token));
+}
+
+function isKeyLikeContentText(text) {
+  return KEY_LIKE_CONTENT_RE.test(String(text || ''));
+}
+
+function stripKeyLikeContentText(text) {
+  return normalizeText(String(text || '').replace(KEY_LIKE_CONTENT_STRIP_RE, ' '));
+}
+
+function wantsKeyLikeQuery(text) {
+  return isKeyLikeContentText(text);
+}
+
+function buildKeyLikeQueryVariants(text) {
+  const normalized = normalizeText(text);
+  if (!normalized) return [];
+
+  const variants = new Set();
+  const replacements = [
+    [/\banswer\s+keys?\b/g, 'key'],
+    [/\bworked\s+solutions?\b/g, 'solution'],
+    [/\bsolutions\b/g, 'solution']
+  ];
+
+  for (const [pattern, replacement] of replacements) {
+    if (!pattern.test(normalized)) continue;
+    variants.add(normalizeText(normalized.replace(pattern, replacement)));
+    pattern.lastIndex = 0;
+  }
+
+  return Array.from(variants).filter(Boolean);
+}
+
 function splitPathSegments(item) {
   if (Array.isArray(item?.pathSegments) && item.pathSegments.length > 0) {
     return item.pathSegments
@@ -1639,12 +1806,97 @@ function buildSearchFields(item) {
     aliases.add('folder');
   }
 
+  const aliasText = Array.from(aliases).filter(Boolean).join(' ');
+
   return {
     searchTitleNormalized: normalized,
-    searchAliases: Array.from(aliases).filter(Boolean).join(' '),
+    searchAliases: aliasText,
     searchPathNormalized: pathInfo.searchPathNormalized,
-    searchCourseNormalized: normalizedCourse
+    searchCourseNormalized: normalizedCourse,
+    searchRuntime: buildItemSearchRuntime(item, {
+      searchTitleNormalized: normalized,
+      searchAliases: aliasText,
+      searchPathNormalized: pathInfo.searchPathNormalized,
+      searchCourseNormalized: normalizedCourse
+    })
   };
+}
+
+function buildItemSearchRuntime(item, fields = {}) {
+  const titleText = String(fields.searchTitleNormalized || expandAbbreviations(item?.title || '')).toLowerCase();
+  const courseText = String(fields.searchCourseNormalized || expandAbbreviations(item?.courseName || '')).toLowerCase();
+  const pathText = normalizeText([
+    fields.searchPathNormalized || '',
+    item?.folderPath || ''
+  ].join(' '));
+  const moduleText = normalizeText(item?.moduleName || '');
+  const aliasText = normalizeText(fields.searchAliases || '');
+  const contextText = normalizeText([
+    fields.searchPathNormalized || item?.folderPath || '',
+    item?.moduleName || '',
+    item?.courseName || ''
+  ].join(' '));
+  const searchableText = [
+    titleText,
+    courseText,
+    pathText,
+    moduleText,
+    aliasText
+  ].filter(Boolean).join(' ');
+  const comparableTitle = stripKeyLikeContentText(titleText);
+  const keyLike = isKeyLikeContentText([
+    titleText,
+    pathText,
+    moduleText,
+    aliasText
+  ].join(' '));
+
+  return {
+    titleText,
+    courseText,
+    pathText,
+    moduleText,
+    aliasText,
+    contextText,
+    searchableText,
+    pathSearchText: getPathSearchText(item),
+    titleNums: new Set(extractNumericTokens(titleText)),
+    weekHints: getItemWeekHints(item),
+    keyLike,
+    comparableTitle
+  };
+}
+
+function getItemSearchRuntime(item) {
+  if (!item || typeof item !== 'object') {
+    return {
+      titleText: '',
+      courseText: '',
+      pathText: '',
+      moduleText: '',
+      aliasText: '',
+      contextText: '',
+      searchableText: '',
+      pathSearchText: '',
+      titleNums: new Set(),
+      weekHints: [],
+      keyLike: false,
+      comparableTitle: ''
+    };
+  }
+
+  if (item.searchRuntime) {
+    return item.searchRuntime;
+  }
+
+  item.searchRuntime = buildItemSearchRuntime(item, {
+    searchTitleNormalized: item.searchTitleNormalized || expandAbbreviations(item.title || ''),
+    searchAliases: item.searchAliases || '',
+    searchPathNormalized: item.searchPathNormalized || normalizeText(item.folderPath || ''),
+    searchCourseNormalized: item.searchCourseNormalized || expandAbbreviations(item.courseName || '')
+  });
+
+  return item.searchRuntime;
 }
 
 function getSearchTokenVocabulary() {
@@ -2491,6 +2743,46 @@ function getMeaningfulQueryTokens(normalizedQuery) {
     .filter(token => !STOP_TOKENS.has(token));
 }
 
+function buildSearchQueryMetadata({ effectiveQuery, normalizedQuery, rankingQuery, weeklyHabitBoostQuery = '' }) {
+  const normalizedRankingQuery = String(rankingQuery || '').toLowerCase();
+  const normalizedExpandedQuery = String(normalizedQuery || '').toLowerCase();
+  const rawEffectiveQuery = normalizeText(effectiveQuery).toLowerCase();
+  const keyLikeVariants = buildKeyLikeQueryVariants(normalizedRankingQuery);
+  const searchQueries = Array.from(new Set([
+    weeklyHabitBoostQuery ? String(weeklyHabitBoostQuery).toLowerCase() : '',
+    normalizedRankingQuery,
+    normalizedExpandedQuery,
+    rawEffectiveQuery,
+    ...keyLikeVariants
+  ].filter(Boolean)));
+  const searchTokens = normalizedRankingQuery
+    .split(/\s+/)
+    .filter(token => token.length > 0 && (token.length > 1 || !STOP_TOKENS.has(token)));
+  const meaningfulTokens = getMeaningfulQueryTokens(normalizedRankingQuery);
+  const generalTokens = normalizedRankingQuery
+    .split(/\s+/)
+    .filter(token => token.length > 0 && !STOP_TOKENS.has(token));
+
+  return {
+    normalizedQuery: normalizedExpandedQuery,
+    rankingQuery: normalizedRankingQuery,
+    rawEffectiveQuery,
+    searchQueries,
+    searchTokens,
+    meaningfulTokens,
+    generalTokens,
+    searchTokenMatchers: buildTokenMatcherMap(searchTokens.filter(token => token.length === 1 || /^\d+$/.test(token))),
+    meaningfulTokenMatchers: buildTokenMatcherMap(meaningfulTokens),
+    queryNums: extractNumericTokens(normalizedRankingQuery),
+    queryLooksFileSpecific: isFileSpecificQuery(normalizedRankingQuery),
+    queryLooksPathOriented: isPathOrientedQuery(normalizedRankingQuery),
+    queryWeekHints: extractWeekHintsFromValue(normalizedRankingQuery),
+    wantsKeyLikeContent: wantsKeyLikeQuery(normalizedRankingQuery),
+    hasExplicitTaskQualifier: EXPLICIT_TASK_QUALIFIER_RE.test(normalizedRankingQuery),
+    hasSpecificRecallSignal: hasSpecificRecallSignal(searchTokens)
+  };
+}
+
 function isFileSpecificQuery(normalizedQuery) {
   return getMeaningfulQueryTokens(normalizedQuery).some(token => FILE_SPECIFIC_QUERY_TOKENS.has(token));
 }
@@ -2640,12 +2932,12 @@ function createDefaultSlashModeState() {
   });
 }
 
-function countTokenHits(tokens, searchableText) {
+function countTokenHits(tokens, searchableText, tokenMatchers = new Map()) {
   if (!tokens.length || !searchableText) return 0;
   let hits = 0;
   for (const token of tokens) {
-    if (/^\d+$/.test(token)) {
-      if (new RegExp(`\\b${token}\\b`).test(searchableText)) hits++;
+    if (token.length === 1 || /^\d+$/.test(token)) {
+      if (tokenMatchers.get(token)?.test(searchableText)) hits++;
     } else if (searchableText.includes(token)) {
       hits++;
     }
@@ -5337,6 +5629,7 @@ function initializeFuse() {
     item.searchAliases = fields.searchAliases;
     item.searchPathNormalized = fields.searchPathNormalized;
     item.searchCourseNormalized = fields.searchCourseNormalized;
+    item.searchRuntime = fields.searchRuntime;
   }
 
   if (state.filteredContent.length > 0) {
@@ -5438,7 +5731,7 @@ function handleSearchInput(event) {
 
   state.searchTimeout = setTimeout(() => {
     performSearch(query);
-  }, SEARCH_DEBOUNCE_MS);
+  }, getSearchDebounceMs());
 }
 
 function performSearch(query) {
@@ -5474,15 +5767,14 @@ function performSearch(query) {
 
   const typoTolerantQuery = buildTypoTolerantQuery(normalizedQuery);
   const rankingQuery = typoTolerantQuery.corrections.length ? typoTolerantQuery.correctedQuery : normalizedQuery;
-  const rawEffectiveQuery = normalizeText(effectiveQuery).toLowerCase();
   const weeklyHabitBoostQuery = !temporalIntent.kind ? getWeeklyHabitBoostQuery(rankingQuery) : null;
-  const searchQueries = Array.from(new Set([
-    weeklyHabitBoostQuery ? weeklyHabitBoostQuery.toLowerCase() : '',
-    rankingQuery.toLowerCase(),
-    normalizedQuery.toLowerCase(),
-    rawEffectiveQuery
-  ].filter(Boolean)));
-  trackAdaptiveQuerySubmission(query, rankingQuery);
+  const queryMeta = buildSearchQueryMetadata({
+    effectiveQuery,
+    normalizedQuery,
+    rankingQuery,
+    weeklyHabitBoostQuery
+  });
+  trackAdaptiveQuerySubmission(query, queryMeta.rankingQuery);
   void loadBackendAdaptiveSuggestions();
   if (typoTolerantQuery.corrections.length > 0) {
     const correctionSummary = typoTolerantQuery.corrections.map(c => `${c.from}->${c.to}`).join(', ');
@@ -5490,11 +5782,11 @@ function performSearch(query) {
   }
 
   // Derive search metadata once
-  const intent = detectQueryIntent(rankingQuery);
-  const queryNums = extractNumericTokens(rankingQuery);
-  const courseHintSignals = courseScope ? null : getCourseHintSignals(rankingQuery);
+  const intent = detectQueryIntent(queryMeta.rankingQuery);
+  const queryNums = queryMeta.queryNums;
+  const courseHintSignals = courseScope ? null : getCourseHintSignals(queryMeta.rankingQuery);
   const implicitCurrentWeekMode = detectImplicitCurrentWeekMode(
-    rankingQuery,
+    queryMeta.rankingQuery,
     queryNums,
     courseScope,
     courseHintSignals,
@@ -5522,8 +5814,10 @@ function performSearch(query) {
     return;
   }
 
-  const activeFuse = temporalIntent.kind ? new Fuse(searchCorpus, buildFuseOptions()) : state.fuse;
-  const activeFuseRelaxed = temporalIntent.kind ? new Fuse(searchCorpus, buildFuseOptions({ relaxed: true })) : state.fuseRelaxed;
+  const useScopedFuse = Boolean(temporalIntent.kind || courseScope);
+  const activeFuse = useScopedFuse ? new Fuse(searchCorpus, buildFuseOptions()) : state.fuse;
+  const activeFuseRelaxed = useScopedFuse ? new Fuse(searchCorpus, buildFuseOptions({ relaxed: true })) : state.fuseRelaxed;
+  const fuseResultLimit = temporalIntent.kind ? (MAX_RESULTS * 20) : (MAX_RESULTS * 12);
 
   const searchStart = performance.now();
 
@@ -5532,16 +5826,14 @@ function performSearch(query) {
   const prePassUrls = new Set();
 
   for (const item of searchCorpus) {
-    const nt = (item.searchTitleNormalized || normalizeText(item.title || '')).toLowerCase();
+    const runtime = getItemSearchRuntime(item);
+    const nt = runtime.titleText;
 
     let bestBaseScore = null;
 
     // Check against the corrected, expanded, and raw query variants.
-    for (const q of searchQueries) {
+    for (const q of queryMeta.searchQueries) {
       if (!q) continue;
-
-      const escapedQ = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const exactWordRe = new RegExp(`\\b${escapedQ}\\b`, 'i');
 
       let score = null;
       if (nt === q) {
@@ -5565,9 +5857,10 @@ function performSearch(query) {
   let fuseResults = [];
   const seenFuseUrls = new Set();
   const appendFuseResults = (fuseInstance) => {
-    for (const q of searchQueries) {
-      // Pull heavily from Fuse so generic tie-breaker collisions don't arbitrarily truncate upcoming dates
-      const nextResults = fuseInstance.search(q, { limit: MAX_RESULTS * 20 });
+    for (const q of queryMeta.searchQueries) {
+      // Pull more broadly for temporal searches, but keep the default live-search
+      // window smaller because lexical recall already fills gaps for harder queries.
+      const nextResults = fuseInstance.search(q, { limit: fuseResultLimit });
       for (const r of nextResults) {
         if (!seenFuseUrls.has(r.item.url)) {
           fuseResults.push(r);
@@ -5591,36 +5884,36 @@ function performSearch(query) {
     }
   }
 
+  const shouldRunExhaustiveRecall = queryMeta.searchTokens.length >= 3
+    || Boolean(courseScope)
+    || queryMeta.queryLooksPathOriented
+    || (queryMeta.hasExplicitTaskQualifier && queryMeta.hasSpecificRecallSignal)
+    || results.length < MAX_RESULTS;
+
   // ── Lexical Fallback pass & RRF Fusion ─────────────
-  // If we have a lot of items, hybrid retrieval using exact literal matching
-  // helps with hard token boundaries.
-  const lexicalResults = [];
-  const lexScores = new Map();
-  const qTokens = rankingQuery.toLowerCase().split(/\s+/).filter(t => t.length > 0 && (t.length > 1 || !STOP_TOKENS.has(t)));
-  if (qTokens.length > 0) {
+  // Only run the full-corpus literal scan when the main retrieval path is likely
+  // to need help. This keeps Cmd+K responsive on short queries.
+  if (queryMeta.searchTokens.length > 0 && shouldRunExhaustiveRecall) {
+    const lexicalResults = [];
     for (const item of searchCorpus) {
       if (prePassUrls.has(item.url)) continue;
-      const searchableText = [
-        item.searchTitleNormalized || normalizeText(item.title || ''),
-        item.searchCourseNormalized || normalizeText(item.courseName || ''),
-        normalizeText(item.folderPath || ''),
-        normalizeText(item.moduleName || '')
-      ].join(' ').toLowerCase();
-      let matchedTokens = 0;
-      for (const t of qTokens) {
-        if (t.length === 1) {
-          if (new RegExp(`\\b${t}\\b`).test(searchableText)) matchedTokens++;
-        } else {
-          if (searchableText.includes(t)) matchedTokens++;
-        }
-      }
-      if (matchedTokens === qTokens.length) { // AND boolean query basically
+      const runtime = getItemSearchRuntime(item);
+      const matchedTokens = countMatchedQueryTokens(
+        runtime.searchableText,
+        queryMeta.searchTokens,
+        queryMeta.searchTokenMatchers
+      );
+      if (matchedTokens === queryMeta.searchTokens.length) {
         lexicalResults.push({ item, score: 0.2, prePass: false });
       }
     }
 
     // Sort lexical results by length of title to prefer shorter matching titles (Occam's razor)
-    lexicalResults.sort((a, b) => (a.item.searchTitleNormalized?.length || 0) - (b.item.searchTitleNormalized?.length || 0));
+    lexicalResults.sort((a, b) => {
+      const aTitleLength = getItemSearchRuntime(a.item).titleText.length;
+      const bTitleLength = getItemSearchRuntime(b.item).titleText.length;
+      return aTitleLength - bTitleLength;
+    });
 
     // RRF Fusion: Fuse vs Lexical
     const RRF_K = 60;
@@ -5636,7 +5929,8 @@ function performSearch(query) {
       rrfScores.set(r.item.url, (rrfScores.get(r.item.url) || 0) + (1 / (RRF_K + i + 1)));
     });
 
-    const shouldInjectLexicalRecall = qTokens.length >= 3 || qTokens.some(t => !BROAD_QUERY_TOKENS.has(t));
+    const shouldInjectLexicalRecall = queryMeta.searchTokens.length >= 3
+      || queryMeta.searchTokens.some(t => !BROAD_QUERY_TOKENS.has(t));
     if (shouldInjectLexicalRecall) {
       const seenResultUrls = new Set(results.map(r => r.item.url));
       for (const r of lexicalResults) {
@@ -5663,34 +5957,25 @@ function performSearch(query) {
   if (courseScope) {
     const prefix = courseScope.coursePrefix;
     const seenUrls = new Set(results.map(r => r.item.url));
+    const coursePrefixMatcher = new RegExp(`^${prefix}(\\s|$)`);
 
     // Secondary recall: scan target course items for query token matches
     // in title + folderPath + moduleName (catches folder-name matches)
-    const qTokens = rankingQuery.toLowerCase().split(/\s+/).filter(t => t.length > 0 && (t.length > 1 || !STOP_TOKENS.has(t)));
-    if (qTokens.length > 0) {
+    if (queryMeta.searchTokens.length > 0 && shouldRunExhaustiveRecall) {
       for (const item of searchCorpus) {
         if (seenUrls.has(item.url)) continue;
-        const itemCourse = normalizeText(item.courseName || '');
+        const runtime = getItemSearchRuntime(item);
+        const itemCourse = runtime.courseText;
         // Require word boundary after prefix to prevent "chem 3al" matching "chem 3a"
-        if (!new RegExp(`^${prefix}(\\s|$)`).test(itemCourse)) continue;
+        if (!coursePrefixMatcher.test(itemCourse)) continue;
 
-        // Check if enough query tokens appear across searchable text
-        const searchableText = [
-          (item.searchTitleNormalized || normalizeText(item.title || '')),
-          normalizeText(item.folderPath || ''),
-          normalizeText(item.moduleName || '')
-        ].join(' ').toLowerCase();
-
-        let hits = 0;
-        for (const t of qTokens) {
-          if (t.length === 1) {
-            if (new RegExp(`\\b${t}\\b`).test(searchableText)) hits++;
-          } else {
-            if (searchableText.includes(t)) hits++;
-          }
-        }
+        const hits = countMatchedQueryTokens(
+          runtime.searchableText,
+          queryMeta.searchTokens,
+          queryMeta.searchTokenMatchers
+        );
         // Require at least half the tokens to match
-        if (hits >= Math.ceil(qTokens.length / 2)) {
+        if (hits >= Math.ceil(queryMeta.searchTokens.length / 2)) {
           results.push({ item, score: 0.5, prePass: false, courseRecall: true });
           seenUrls.add(item.url);
         }
@@ -5699,8 +5984,8 @@ function performSearch(query) {
 
     // Now filter to only course-scoped results
     const scopedResults = results.filter(r => {
-      const itemCourse = normalizeText(r.item.courseName || '');
-      return new RegExp(`^${prefix}(\\s|$)`).test(itemCourse);
+      const itemCourse = getItemSearchRuntime(r.item).courseText;
+      return coursePrefixMatcher.test(itemCourse);
     });
     if (scopedResults.length > 0) {
       results = scopedResults;
@@ -5715,7 +6000,7 @@ function performSearch(query) {
   }
 
   const implicitCurrentWeekContext = !temporalIntent.kind
-    ? buildImplicitCurrentWeekContext(searchCorpus, rankingQuery, courseScope, courseHintSignals, implicitCurrentWeekMode)
+    ? buildImplicitCurrentWeekContext(searchCorpus, queryMeta.rankingQuery, courseScope, courseHintSignals, implicitCurrentWeekMode)
     : { enabled: false, extraResults: [], anchorGroupOrder: new Map() };
 
   if (implicitCurrentWeekContext.enabled) {
@@ -5727,17 +6012,15 @@ function performSearch(query) {
 
     // Ensure broad temporal queries (e.g. "lab this week") don't lose relevant items
     // due to retrieval/ranking truncation.
-    const broadTokens = (rankingQuery || '').split(/\s+/).filter(t => t.length > 0 && !STOP_TOKENS.has(t));
+    const broadTokens = queryMeta.generalTokens;
     if (broadTokens.length <= 1) {
       const recallSeed = [];
       for (const item of searchCorpus) {
-        const searchable = [
-          item.searchTitleNormalized || normalizeText(item.title || ''),
-          normalizeText(item.folderPath || ''),
-          normalizeText(item.moduleName || '')
-        ].join(' ').toLowerCase();
+        const runtime = getItemSearchRuntime(item);
+        const searchable = [runtime.titleText, runtime.pathText, runtime.moduleText].filter(Boolean).join(' ');
 
-        const matchesBroadToken = broadTokens.length === 0 || broadTokens.every(t => searchable.includes(t));
+        const matchesBroadToken = broadTokens.length === 0
+          || broadTokens.every(t => textIncludesQueryToken(searchable, t, queryMeta.searchTokenMatchers));
         if (matchesBroadToken) {
           recallSeed.push({ item, score: 0.55, prePass: false, temporalRecall: true });
         }
@@ -5758,7 +6041,7 @@ function performSearch(query) {
       temporalResults = applyTemporalFilter(temporalSeed, temporalIntent.kind);
     }
 
-    temporalResults = expandTemporalLabSiblings(temporalResults, rankingQuery, courseScope);
+    temporalResults = expandTemporalLabSiblings(temporalResults, queryMeta.rankingQuery, courseScope);
 
     if (courseScope) {
       temporalResults = temporalResults.filter(r => itemMatchesCourseScope(r.item, courseScope));
@@ -5786,7 +6069,7 @@ function performSearch(query) {
   }
 
   // Apply full ranking pipeline (intent, numeric, coverage, click, due, diversity)
-  results = rankResults(results, rankingQuery, intent, queryNums);
+  results = rankResults(results, queryMeta, intent);
 
   // Hard ordering rule for temporal queries: upcoming/future items before overdue.
   if (temporalIntent.kind) {
@@ -5820,12 +6103,10 @@ function performSearch(query) {
     results = [...withDue.map(x => x.r), ...noDue];
   }
 
-  const generalTokens = (rankingQuery || '').split(/\s+/).filter(t => t.length > 0 && !STOP_TOKENS.has(t));
-  const hasExplicitTaskQualifier = /\b(pre[\s-]*lab|post[\s-]*lab|quiz|assignment|discussion|homework|worksheet|exam)\b/i.test(rankingQuery || '');
   const isGeneralQuery = !temporalIntent.kind
     && queryNums.length === 0
-    && generalTokens.length <= 3
-    && !hasExplicitTaskQualifier;
+    && queryMeta.generalTokens.length <= 3
+    && !queryMeta.hasExplicitTaskQualifier;
   const topIsExactMatch = results.length > 0 && results[0].prePass;
 
   if (implicitCurrentWeekContext.enabled) {
@@ -5846,12 +6127,18 @@ function performSearch(query) {
       }
     }
 
-    // Most recent due date first (newest assignment-like item at top),
-    // but keep completed items behind unfinished work.
+    // Actionable due order: unfinished upcoming work first, sooner before later.
+    // Completed items still stay behind unfinished work.
+    const nowTs = Date.now();
     recencyCandidates.sort((a, b) => {
       const aCompleted = isCompletedTask(a.r.item);
       const bCompleted = isCompletedTask(b.r.item);
       if (aCompleted !== bCompleted) return aCompleted ? 1 : -1;
+
+      const aFuture = a.dueTs >= nowTs;
+      const bFuture = b.dueTs >= nowTs;
+      if (aFuture !== bFuture) return aFuture ? -1 : 1;
+      if (aFuture) return a.dueTs - b.dueTs;
       return b.dueTs - a.dueTs;
     });
     results = [...recencyCandidates.map(x => x.r), ...otherResults];
@@ -5876,20 +6163,25 @@ function performSearch(query) {
  * Calculate custom score combining Fuse score with type, recency, position,
  * intent, numeric, coverage, click-feedback, due-date, and active-course boosts.
  */
-function calculateScore(item, fuseScore, normalizedQuery, intent, queryNums, isPrePass, algorithm) {
+function calculateScore(item, fuseScore, queryMeta, intent, isPrePass, algorithm) {
   const tuning = algorithm || getActiveSearchAlgorithm();
   const typeMultiplier = tuning.typeBoost / 100;
   const recencyMultiplier = tuning.recencyBoost / 100;
   const courseMultiplier = tuning.courseBoost / 100;
   const dueDateMultiplier = tuning.dueDateBoost / 100;
   const contextMultiplier = tuning.contextWeight / 100;
-  const queryTokens = getMeaningfulQueryTokens(normalizedQuery);
-  const pathSearchText = getPathSearchText(item);
-  const pathCoverage = queryTokens.length > 0 ? (countTokenHits(queryTokens, pathSearchText) / queryTokens.length) : 0;
-  const queryLooksFileSpecific = isFileSpecificQuery(normalizedQuery);
-  const queryLooksPathOriented = isPathOrientedQuery(normalizedQuery);
-  const queryWeekHints = extractWeekHintsFromValue(normalizedQuery);
-  const itemWeekHints = getItemWeekHints(item);
+  const runtime = getItemSearchRuntime(item);
+  const normalizedQuery = queryMeta?.rankingQuery || '';
+  const queryNums = queryMeta?.queryNums || [];
+  const queryTokens = queryMeta?.meaningfulTokens || [];
+  const pathSearchText = runtime.pathSearchText || getPathSearchText(item);
+  const pathCoverage = queryTokens.length > 0
+    ? (countTokenHits(queryTokens, pathSearchText, queryMeta?.meaningfulTokenMatchers) / queryTokens.length)
+    : 0;
+  const queryLooksFileSpecific = Boolean(queryMeta?.queryLooksFileSpecific);
+  const queryLooksPathOriented = Boolean(queryMeta?.queryLooksPathOriented);
+  const queryWeekHints = queryMeta?.queryWeekHints || [];
+  const itemWeekHints = runtime.weekHints?.length ? runtime.weekHints : getItemWeekHints(item);
 
   // Base: invert Fuse score. Pre-pass items use their calculated baseScore (0.0 is perfect)
   let score;
@@ -5913,7 +6205,7 @@ function calculateScore(item, fuseScore, normalizedQuery, intent, queryNums, isP
 
   // ── Suffix / position boost ─────────────────────
   if (normalizedQuery && normalizedQuery.length > 0) {
-    const normTitle = (item.searchTitleNormalized || normalizeText(item.title || '')).toLowerCase();
+    const normTitle = runtime.titleText;
     const normQ = normalizedQuery.toLowerCase();
 
     if (normTitle.endsWith(normQ)) {
@@ -5969,22 +6261,21 @@ function calculateScore(item, fuseScore, normalizedQuery, intent, queryNums, isP
 
   // ── Numeric alignment ───────────────────────────
   if (queryNums && queryNums.length > 0) {
-    const titleText = (item.searchTitleNormalized || normalizeText(item.title || '')).toLowerCase();
-    const { aligned, mismatched } = computeNumericAlignment(queryNums, titleText);
+    const { aligned, mismatched } = computeNumericAlignment(queryNums, runtime.titleNums);
     if (aligned > 0) score += 0.10 * (aligned / queryNums.length);
     if (mismatched > 0) score -= 0.50 * (mismatched / queryNums.length); // Severe penalty for mismatch
   }
 
   // ── Token coverage ──────────────────────────────
   if (normalizedQuery) {
-    const titleText = (item.searchTitleNormalized || normalizeText(item.title || '')).toLowerCase();
-    const contextText = normalizeText([
-      item.searchPathNormalized || item.folderPath || '',
-      item.moduleName || '',
-      item.courseName || ''
-    ].join(' '));
-    const coverage = computeTokenCoverage(normalizedQuery, titleText, contextText);
-    const qTokenCount = normalizedQuery.split(/\s+/).filter(t => t.length > 1 && !STOP_TOKENS.has(t)).length;
+    const coverage = queryTokens.length > 0
+      ? (countBoundaryMatches(
+        `${runtime.titleText} ${runtime.contextText}`,
+        queryTokens,
+        queryMeta?.meaningfulTokenMatchers
+      ) / queryTokens.length)
+      : 1;
+    const qTokenCount = queryTokens.length;
     if (coverage >= 0.8) {
       score += 0.12;
     } else if (coverage < 0.5 && qTokenCount >= 2) {
@@ -6019,6 +6310,15 @@ function calculateScore(item, fuseScore, normalizedQuery, intent, queryNums, isP
       score += 0.26;
     } else if (queryLooksFileSpecific && item.type === 'folder') {
       score -= 0.10;
+    }
+  }
+
+  // ── Key-like content preference ─────────────────
+  if (runtime.keyLike) {
+    if (queryMeta?.wantsKeyLikeContent) {
+      score += 0.08;
+    } else {
+      score -= 0.18;
     }
   }
 
@@ -6081,20 +6381,55 @@ function calculateScore(item, fuseScore, normalizedQuery, intent, queryNums, isP
   return score;
 }
 
+function areNearIdenticalCourseResults(leftItem, rightItem) {
+  const leftRuntime = getItemSearchRuntime(leftItem);
+  const rightRuntime = getItemSearchRuntime(rightItem);
+  if (!leftRuntime.courseText || leftRuntime.courseText !== rightRuntime.courseText) return false;
+
+  const leftComparable = leftRuntime.comparableTitle || leftRuntime.titleText;
+  const rightComparable = rightRuntime.comparableTitle || rightRuntime.titleText;
+  if (!leftComparable || !rightComparable) return false;
+
+  if (leftRuntime.titleText === rightRuntime.titleText) return true;
+  if (leftComparable === rightComparable) return true;
+
+  const shorter = leftComparable.length <= rightComparable.length ? leftComparable : rightComparable;
+  const longer = shorter === leftComparable ? rightComparable : leftComparable;
+  return shorter.length >= 18 && longer.includes(shorter);
+}
+
+function compareRankedSearchResults(left, right, queryMeta) {
+  const leftRuntime = getItemSearchRuntime(left.item);
+  const rightRuntime = getItemSearchRuntime(right.item);
+  const preferredKeyLikeState = Boolean(queryMeta?.wantsKeyLikeContent);
+
+  if (leftRuntime.keyLike !== rightRuntime.keyLike
+    && areNearIdenticalCourseResults(left.item, right.item)
+    && Math.abs(left.finalScore - right.finalScore) < 0.35) {
+    return leftRuntime.keyLike === preferredKeyLikeState ? -1 : 1;
+  }
+
+  if (right.finalScore !== left.finalScore) {
+    return right.finalScore - left.finalScore;
+  }
+
+  return leftRuntime.titleText.localeCompare(rightRuntime.titleText);
+}
+
 /**
  * Re-rank results using full scoring pipeline + diversity pass
  */
-function rankResults(results, normalizedQuery, intent, queryNums) {
+function rankResults(results, queryMeta, intent) {
   const algorithm = getActiveSearchAlgorithm();
   const scored = results
     .map(r => {
-      const finalScore = calculateScore(r.item, r.score, normalizedQuery, intent, queryNums, !!r.prePass, algorithm);
+      const finalScore = calculateScore(r.item, r.score, queryMeta, intent, !!r.prePass, algorithm);
       return {
         ...r,
         finalScore
       };
     })
-    .sort((a, b) => b.finalScore - a.finalScore);
+    .sort((a, b) => compareRankedSearchResults(a, b, queryMeta));
 
   return applyDiversityRerank(scored);
 }
