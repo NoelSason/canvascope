@@ -2,50 +2,166 @@
 <html>
 
 <head>
-    <title>Authenticating Canvascope...</title>
+    <title>Authenticating Canvascope…</title>
+    <link rel="icon" href="icons/icon32.png">
     <style>
+        :root {
+            --surface-0: #0a0708;
+            --surface-1: #120a0c;
+            --hairline: rgba(255, 255, 255, 0.08);
+            --hairline-brand: rgba(239, 68, 68, 0.2);
+            --brand-400: #f87171;
+            --brand-500: #ef4444;
+            --text-primary: rgba(255, 255, 255, 0.94);
+            --text-muted: rgba(255, 255, 255, 0.42);
+            --font-display: 'SF Pro Display', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+            --font-mono: 'SF Mono', ui-monospace, 'JetBrains Mono', Menlo, monospace;
+        }
+
+        html, body {
+            background: var(--surface-0);
+            color: var(--text-primary);
+            font-family: var(--font-display);
+            margin: 0;
+            min-height: 100vh;
+        }
+
         body {
-            background-color: #121212;
-            color: white;
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
             display: flex;
             justify-content: center;
             align-items: center;
-            height: 100vh;
-            margin: 0;
+            position: relative;
+            overflow: hidden;
+        }
+
+        body::before {
+            content: '';
+            position: absolute;
+            inset: -10%;
+            background:
+                radial-gradient(ellipse 50% 40% at 50% 30%, rgba(239, 68, 68, 0.16), transparent 65%),
+                radial-gradient(ellipse 70% 50% at 50% 80%, rgba(220, 38, 38, 0.06), transparent 70%);
+            pointer-events: none;
         }
 
         .container {
+            position: relative;
+            z-index: 1;
             text-align: center;
+            padding: 32px 28px;
+            background: var(--surface-1);
+            border: 1px solid var(--hairline);
+            border-radius: 14px;
+            min-width: 320px;
+            max-width: 420px;
+            box-shadow: 0 30px 80px rgba(0, 0, 0, 0.6);
         }
 
-        .loader {
-            border: 4px solid rgba(255, 255, 255, 0.1);
-            border-top: 4px solid #fff;
+        /* L-bracket reticle */
+        .container::after {
+            content: '';
+            position: absolute;
+            inset: 6px;
+            pointer-events: none;
+            background:
+                linear-gradient(to right, var(--brand-400) 14px, transparent 14px) top    left  / 14px 1px no-repeat,
+                linear-gradient(to bottom, var(--brand-400) 14px, transparent 14px) top    left  / 1px 14px no-repeat,
+                linear-gradient(to left,  var(--brand-400) 14px, transparent 14px) top    right / 14px 1px no-repeat,
+                linear-gradient(to bottom, var(--brand-400) 14px, transparent 14px) top    right / 1px 14px no-repeat,
+                linear-gradient(to right, var(--brand-400) 14px, transparent 14px) bottom left  / 14px 1px no-repeat,
+                linear-gradient(to top,    var(--brand-400) 14px, transparent 14px) bottom left  / 1px 14px no-repeat,
+                linear-gradient(to left,  var(--brand-400) 14px, transparent 14px) bottom right / 14px 1px no-repeat,
+                linear-gradient(to top,    var(--brand-400) 14px, transparent 14px) bottom right / 1px 14px no-repeat;
+            opacity: 0.55;
+        }
+
+        .scope {
+            width: 56px;
+            height: 56px;
+            margin: 0 auto 20px;
+            color: var(--brand-500);
+            position: relative;
+        }
+        .scope svg { width: 100%; height: 100%; }
+        .scope::before {
+            content: '';
+            position: absolute;
+            inset: -6px;
+            border: 1px solid var(--hairline-brand);
             border-radius: 50%;
-            width: 40px;
-            height: 40px;
-            animation: spin 1s linear infinite;
-            margin: 0 auto 20px auto;
+            animation: scope-pulse 1.6s ease-out infinite;
+        }
+        @keyframes scope-pulse {
+            0%   { transform: scale(0.92); opacity: 0.9; }
+            100% { transform: scale(1.5);  opacity: 0; }
+        }
+        .scope-rotor {
+            animation: rotate 4s linear infinite;
+            transform-origin: 50% 50%;
+        }
+        @keyframes rotate {
+            to { transform: rotate(360deg); }
         }
 
-        @keyframes spin {
-            0% {
-                transform: rotate(0deg);
-            }
+        h2 {
+            font-size: 18px;
+            font-weight: 600;
+            letter-spacing: -0.01em;
+            margin: 0 0 8px;
+        }
 
-            100% {
-                transform: rotate(360deg);
-            }
+        p {
+            font-family: var(--font-mono);
+            font-size: 11px;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            color: var(--text-muted);
+            margin: 0;
+        }
+
+        .status {
+            margin-top: 18px;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 5px 10px;
+            border: 1px solid var(--hairline-brand);
+            border-radius: 999px;
+            background: rgba(239, 68, 68, 0.08);
+            color: var(--brand-400);
+            font-family: var(--font-mono);
+            font-size: 10px;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+        }
+        .status::before {
+            content: '';
+            width: 5px; height: 5px;
+            border-radius: 50%;
+            background: var(--brand-400);
+            box-shadow: 0 0 6px var(--brand-400);
+            animation: blip 1.4s ease-in-out infinite;
+        }
+        @keyframes blip {
+            0%, 60%, 100% { opacity: 1; }
+            70%, 90%      { opacity: 0.25; }
         }
     </style>
 </head>
 
 <body>
     <div class="container">
-        <div class="loader"></div>
-        <h2>Securely signing you in...</h2>
+        <div class="scope" aria-hidden="true">
+            <svg viewBox="0 0 128 128" fill="none">
+                <path d="M20 16h76v96H20z" stroke="currentColor" stroke-width="9" stroke-linejoin="round"/>
+                <path d="M20 88h76" stroke="currentColor" stroke-width="9" stroke-linecap="round"/>
+                <circle cx="60" cy="52" r="22" stroke="currentColor" stroke-width="9"/>
+                <line x1="76" y1="68" x2="100" y2="92" stroke="currentColor" stroke-width="9" stroke-linecap="round"/>
+            </svg>
+        </div>
+        <h2>Securing your scope…</h2>
         <p>You can close this tab if it doesn't close automatically.</p>
+        <div class="status">Locking on</div>
     </div>
     <script src="oauth-callback.js"></script>
 </body>

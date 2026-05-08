@@ -86,7 +86,7 @@ const SEARCH_DEBOUNCE_MS = 150;
 const OVERLAY_SEARCH_DEBOUNCE_MS = 75;
 const MAX_HISTORY = 10;
 const SLASH_RESULT_LIMIT = 18;
-const DEFAULT_SEARCH_PLACEHOLDER = "e.g., 'lecture 7' or 'midterm'";
+const DEFAULT_SEARCH_PLACEHOLDER = 'Search · type, title, course';
 const SLASH_SEARCH_PLACEHOLDER = 'Type a command or alias'; // Unused — slash moved to in-page overlay
 const KEY_LIKE_CONTENT_RE = /\b(?:answer\s+keys?|worked\s+solutions?|solutions?|keys?)\b/i;
 const KEY_LIKE_CONTENT_STRIP_RE = /\b(?:answer\s+keys?|worked\s+solutions?|solutions?|keys?)\b/gi;
@@ -1091,6 +1091,65 @@ function parseDueTs(item) {
   if (!item.dueAt) return 0;
   const ts = new Date(item.dueAt).getTime();
   return isNaN(ts) ? 0 : ts;
+}
+
+/**
+ * Classify a task item's submission state for badge display.
+ * Returns one of: 'graded' | 'submitted' | 'missing' | 'overdue' | 'upcoming' | null
+ *  - 'graded'   → workflow is graded and has a score
+ *  - 'submitted' → submission accepted but not yet graded
+ *  - 'missing'  → server flagged missing
+ *  - 'overdue'  → past due, no submission evidence
+ *  - 'upcoming' → due within 48h, no submission yet
+ *  - null       → non-task, or no actionable signal to show
+ */
+function getSubmissionBadgeState(item, now = Date.now()) {
+  if (!item || !isTaskType(item)) return null;
+  const sub = item.submission;
+  if (sub && typeof sub === 'object') {
+    if (sub.missing === true) return 'missing';
+    const workflow = String(sub.workflowState || '').trim().toLowerCase();
+    const hasScore = sub.score !== null && sub.score !== undefined
+      || (typeof sub.grade === 'string' && sub.grade.trim() !== '');
+    if (workflow === 'graded' && hasScore) return 'graded';
+    if (hasConcreteTaskSubmissionEvidence(sub)) return 'submitted';
+  }
+  // Fall through: no submission object or it's empty.
+  const dueTs = parseDueTs(item);
+  if (!dueTs) return null;
+  if (dueTs < now) return 'overdue';
+  if (dueTs - now < 48 * 60 * 60 * 1000) return 'upcoming';
+  return null;
+}
+
+function formatBadgeScore(submission) {
+  if (!submission || typeof submission !== 'object') return null;
+  const grade = typeof submission.grade === 'string' ? submission.grade.trim() : '';
+  const score = submission.score;
+  if (grade && grade !== '0' && /^[A-Za-z+\-]/.test(grade)) return grade; // letter grade
+  if (typeof score === 'number' && Number.isFinite(score)) {
+    return Number.isInteger(score) ? String(score) : score.toFixed(1);
+  }
+  if (grade) return grade;
+  return null;
+}
+
+/**
+ * Look up open count for an item from searchHabits.globalClicks.
+ * Returns 0 when the user has not opened it (or learning is off).
+ */
+function getItemOpenCount(item) {
+  if (!state.extensionSettings?.enableAdaptiveLearning) return 0;
+  if (!state.searchHabits?.globalClicks) return 0;
+  return getItemOpenCountFromMap(item, state.searchHabits.globalClicks);
+}
+
+function getItemOpenCountFromMap(item, globalClicks) {
+  if (!globalClicks) return 0;
+  const key = getClickKey(item);
+  if (!key) return 0;
+  const entry = globalClicks[key];
+  return Number(entry?.openCount || 0);
 }
 
 function canonicalTaskId(item) {
@@ -3387,7 +3446,7 @@ function isCourseSelected(courseName, selectedCourses = state.filters.course) {
     .some(course => normalizeText(course) === normalizeText(courseName));
 }
 
-function buildCourseOption(label, { value = label, selected = false } = {}) {
+function buildCourseOption(label, { value = label, selected = false, doneness = null } = {}) {
   const option = document.createElement('div');
   option.className = 'custom-option custom-option-multiselect';
   option.dataset.value = value;
@@ -3407,7 +3466,45 @@ function buildCourseOption(label, { value = label, selected = false } = {}) {
 
   option.appendChild(checkbox);
   option.appendChild(text);
+
+  if (doneness && doneness.total > 0) {
+    const pct = doneness.done / doneness.total;
+    const tone = pct >= 0.85 ? 'go' : pct >= 0.5 ? 'mid' : 'low';
+    const pill = document.createElement('span');
+    pill.className = `cs-doneness-pill cs-doneness-pill--${tone}`;
+    pill.textContent = `${doneness.done}/${doneness.total}`;
+    pill.title = `${doneness.done} of ${doneness.total} graded assignments complete`;
+    pill.setAttribute('aria-label', pill.title);
+    option.appendChild(pill);
+  }
   return option;
+}
+
+/**
+ * Roll up assignment completion across indexedContent, keyed by courseName.
+ * Counts only assignments with a real dueAt and submission record (skips items
+ * without a server-side gradebook signal so the ratio is honest).
+ * Returns { [courseName]: { done, total } }.
+ */
+function computeCourseDoneness() {
+  const map = new Map();
+  if (!Array.isArray(state.indexedContent)) return map;
+  for (const item of state.indexedContent) {
+    if (!item || item.type !== 'assignment') continue;
+    if (!item.courseName) continue;
+    if (!item.submission || typeof item.submission !== 'object') continue;
+    // Skip practice/optional shells where the server didn't return any grading hooks
+    const sub = item.submission;
+    const workflow = String(sub.workflowState || '').trim().toLowerCase();
+    if (!workflow && sub.attempt == null && sub.score == null && !sub.submittedAt && sub.missing !== true) continue;
+
+    const key = item.courseName.trim();
+    const entry = map.get(key) || { done: 0, total: 0 };
+    entry.total += 1;
+    if (isCompletedTask(item)) entry.done += 1;
+    map.set(key, entry);
+  }
+  return map;
 }
 
 async function setSelectedCourseFilters(nextSelectedCourses) {
@@ -3441,6 +3538,786 @@ async function setSelectedCourseFilters(nextSelectedCourses) {
 // ============================================
 // INITIALIZATION
 // ============================================
+
+// ============================================================================
+// v2 — TACTICAL HUD MODULE
+// Pinned items · Hero (Up Next / Radar / Timeline) · Overflow menu · Lock-on
+// ============================================================================
+const csV2 = (() => {
+  const PIN_STORAGE_KEY = 'pinnedItems';
+  const TIMELINE_SEEN_KEY = 'timelineSeenAt';
+  const TIMELINE_LIMIT = 30;
+
+  let countdownTimer = null;
+  let resultsObserver = null;
+  let pinDecorateRaf = 0;
+  let radarRenderToken = 0;
+
+  // ---- Pinned items ---------------------------------------------------------
+  state.pinnedItems = new Set();
+  state.heroView = 'next';
+  state.timelineSeenAt = 0;
+
+  async function loadPinnedItems() {
+    try {
+      const result = await chrome.storage.local.get([PIN_STORAGE_KEY, TIMELINE_SEEN_KEY]);
+      const ids = Array.isArray(result[PIN_STORAGE_KEY]) ? result[PIN_STORAGE_KEY] : [];
+      state.pinnedItems = new Set(ids.filter(Boolean).map(String));
+      state.timelineSeenAt = Number(result[TIMELINE_SEEN_KEY] || 0);
+    } catch (e) {
+      state.pinnedItems = new Set();
+      state.timelineSeenAt = 0;
+    }
+  }
+
+  async function persistPinnedItems() {
+    try {
+      await chrome.storage.local.set({ [PIN_STORAGE_KEY]: Array.from(state.pinnedItems) });
+    } catch (e) {
+      console.warn('[Canvascope] Could not persist pinned items:', e);
+    }
+  }
+
+  async function persistTimelineSeenAt() {
+    state.timelineSeenAt = Date.now();
+    try {
+      await chrome.storage.local.set({ [TIMELINE_SEEN_KEY]: state.timelineSeenAt });
+    } catch (e) { /* non-fatal */ }
+  }
+
+  function isPinned(item) {
+    if (!item) return false;
+    return state.pinnedItems.has(getCanonicalId(item));
+  }
+
+  function findPinnedItem(id) {
+    if (!Array.isArray(state.indexedContent)) return null;
+    for (const item of state.indexedContent) {
+      if (getCanonicalId(item) === id) return item;
+    }
+    // Fallback: pinned items may have been removed from index since pin time.
+    // Look in recently opened.
+    if (Array.isArray(state.recentlyOpened)) {
+      for (const item of state.recentlyOpened) {
+        if (getCanonicalId(item) === id) return item;
+      }
+    }
+    return null;
+  }
+
+  async function togglePin(item, { fromButton = null } = {}) {
+    if (!item) return;
+    const id = getCanonicalId(item);
+    if (state.pinnedItems.has(id)) {
+      state.pinnedItems.delete(id);
+    } else {
+      state.pinnedItems.add(id);
+      if (fromButton) {
+        fromButton.classList.remove('is-flash');
+        // Force reflow to restart animation
+        void fromButton.offsetWidth;
+        fromButton.classList.add('is-flash');
+      }
+    }
+    await persistPinnedItems();
+    renderPinnedRow();
+    syncPinTogglesInDom();
+  }
+
+  // ---- Hero view dispatch ---------------------------------------------------
+  function selectHeroView(view) {
+    if (!['next', 'radar', 'timeline'].includes(view)) view = 'next';
+    state.heroView = view;
+
+    document.querySelectorAll('.cs-hero-tab').forEach(tab => {
+      const isActive = tab.dataset.csHeroTab === view;
+      tab.classList.toggle('is-active', isActive);
+      tab.setAttribute('aria-selected', isActive ? 'true' : 'false');
+    });
+
+    const panels = {
+      next:     document.getElementById('cs-hero-next'),
+      radar:    document.getElementById('cs-hero-radar'),
+      timeline: document.getElementById('cs-hero-timeline')
+    };
+    Object.entries(panels).forEach(([k, el]) => {
+      if (!el) return;
+      el.classList.toggle('hidden', k !== view);
+    });
+
+    // Body class drives layout: in radar/timeline tabs we hide the lower
+    // results pane so the hero panel can take the room it needs.
+    document.body.classList.remove('cs-hero-mode-next', 'cs-hero-mode-radar', 'cs-hero-mode-timeline');
+    document.body.classList.add(`cs-hero-mode-${view}`);
+
+    renderHero();
+
+    // Re-fire bracket lock-on animation each time the hero view switches
+    replayBracketSnap();
+
+    if (view === 'timeline') void persistTimelineSeenAt();
+  }
+
+  function replayBracketSnap() {
+    const brackets = document.querySelectorAll('.cs-bracket');
+    brackets.forEach(b => {
+      b.style.animation = 'none';
+      void b.offsetWidth;
+      b.style.animation = '';
+    });
+  }
+
+  function renderHero() {
+    if (state.isOverlayMode) return;
+    if (state.heroView === 'next') renderUpNext();
+    else if (state.heroView === 'radar') renderRadarPanel();
+    else if (state.heroView === 'timeline') renderTimeline();
+  }
+
+  // ---- Selectors over the existing data model ------------------------------
+  function getNextUp() {
+    if (!Array.isArray(state.indexedContent) || state.indexedContent.length === 0) return null;
+    const buckets = bucketTasks(state.indexedContent, Date.now());
+    const candidates = [...buckets.overdue, ...buckets.today, ...buckets.next7Days];
+    return candidates.length ? candidates[0] : null;
+  }
+
+  function getRecentItems(limit = TIMELINE_LIMIT) {
+    if (!Array.isArray(state.indexedContent)) return [];
+    const items = state.indexedContent
+      .filter(item => item && item.url)
+      .slice()
+      .sort((a, b) => {
+        const at = Number(a.lastSeenAt || a.indexedAt || a.scrapedAt || a.updatedAt || 0);
+        const bt = Number(b.lastSeenAt || b.indexedAt || b.scrapedAt || b.updatedAt || 0);
+        return bt - at;
+      });
+    return items.slice(0, limit);
+  }
+
+  function getRadarItems(limit = 18) {
+    if (!Array.isArray(state.indexedContent)) return [];
+    const buckets = bucketTasks(state.indexedContent, Date.now(), 14);
+    return [...buckets.overdue, ...buckets.today, ...buckets.next7Days].slice(0, limit);
+  }
+
+  /**
+   * Predict the item the user is most likely to want next, based on their open
+   * history. Score = openCount × log(1+x) + recency decay. Excludes completed
+   * tasks (they don't need re-opening) and the currently-urgent item.
+   *
+   * Returns null when habit data is too thin to be confident (no item with
+   * >=2 opens within last 30d).
+   */
+  function getLikelyNextItem(excludeUrl = null) {
+    if (!state.extensionSettings?.enableAdaptiveLearning) return null;
+    const habits = state.searchHabits;
+    if (!habits || !habits.globalClicks) return null;
+    if (!Array.isArray(state.indexedContent) || state.indexedContent.length === 0) return null;
+
+    const now = Date.now();
+    const THIRTY_DAYS = 30 * 24 * 60 * 60 * 1000;
+    const indexByPath = new Map();
+    for (const item of state.indexedContent) {
+      const key = getClickKey(item);
+      if (key) indexByPath.set(key, item);
+    }
+
+    let best = null;
+    let bestScore = 0;
+    for (const [path, click] of Object.entries(habits.globalClicks)) {
+      const item = indexByPath.get(path);
+      if (!item) continue;
+      if (excludeUrl && item.url === excludeUrl) continue;
+      // Skip done tasks — re-opening a graded assignment isn't actionable
+      if (isTaskType(item) && isCompletedTask(item)) continue;
+      // Respect active course filter
+      if (typeof itemMatchesSelectedCourses === 'function' && !itemMatchesSelectedCourses(item)) continue;
+
+      const openCount = Number(click?.openCount || 0);
+      const lastOpenedAt = Number(click?.lastOpenedAt || 0);
+      if (openCount < 1 || !lastOpenedAt) continue;
+      const ageMs = now - lastOpenedAt;
+      if (ageMs > THIRTY_DAYS) continue;
+
+      // Frequency: log scaled so 1→1, 2→1.6, 4→2.3, 8→3.2
+      const freq = Math.log2(1 + openCount);
+      // Recency: decay across 14 days, 0..1
+      const recency = Math.max(0, 1 - ageMs / (14 * 24 * 60 * 60 * 1000));
+      const score = freq * (0.4 + 0.6 * recency);
+
+      if (score > bestScore) {
+        bestScore = score;
+        best = item;
+      }
+    }
+
+    // Confidence threshold: at least one item with 2+ opens, or a single very recent open
+    return bestScore >= 1.0 ? best : null;
+  }
+
+  // ---- UP NEXT --------------------------------------------------------------
+  function renderUpNext() {
+    const mount = document.getElementById('cs-hero-next');
+    if (!mount) return;
+
+    const item = getNextUp();
+
+    // Clear running countdown
+    if (countdownTimer) {
+      clearInterval(countdownTimer);
+      countdownTimer = null;
+    }
+
+    if (!item) {
+      // Prefer the predicted "likely next" item (uses click habits) over the raw
+      // most-recent recentlyOpened entry. Fall back to recentlyOpened only when
+      // habit signal is too thin.
+      const predicted = getLikelyNextItem();
+      const recentRaw = (state.recentlyOpened && state.recentlyOpened[0]) || null;
+      const fallback = predicted || recentRaw;
+      const usingPrediction = !!predicted && predicted !== recentRaw;
+      mount.innerHTML = '';
+      const wrap = document.createElement('div');
+      wrap.className = 'cs-upnext-empty';
+      wrap.innerHTML = `
+        <span class="cs-upnext-empty-kicker"><span class="cs-status-dot"></span>${usingPrediction ? 'Likely next · habit signal' : 'All clear · no targets'}</span>
+        <span class="cs-upnext-empty-title">${fallback ? (usingPrediction ? 'You keep coming back to this' : 'Pick up where you left off') : 'Nothing on the radar'}</span>
+        <span class="cs-upnext-empty-copy">${fallback
+          ? escapeHtml(fallback.title || 'Untitled') + ' <span class="cs-upnext-empty-sep">·</span> ' + escapeHtml(fallback.courseName || '')
+          : 'Sync a course to populate your scope.'}</span>
+        ${fallback ? '<span class="cs-upnext-empty-cta">Open ↗</span>' : ''}
+      `;
+      if (fallback) {
+        wrap.style.cursor = 'pointer';
+        wrap.addEventListener('click', (e) => openResult(fallback, e));
+      }
+      mount.appendChild(wrap);
+      return;
+    }
+
+    const tone = dueTone(item);
+    const renderCard = () => {
+      const readout = computeCountdown(item);
+      mount.innerHTML = `
+        <div class="cs-upnext cs-upnext--simple">
+          <div class="cs-upnext-head">
+            <span class="cs-upnext-kicker tone-${tone}"><span class="cs-status-dot"></span><span class="cs-upnext-kicker-label"></span></span>
+            <button class="cs-upnext-dismiss" type="button" data-cs-upnext-dismiss>Dismiss</button>
+          </div>
+          <span class="cs-upnext-title"></span>
+          <span class="cs-upnext-meta">
+            <span class="cs-upnext-course"></span>
+            <span class="cs-upnext-typechip"></span>
+            <span class="cs-upnext-due tone-${tone}" data-cs-countdown></span>
+          </span>
+          <div class="cs-upnext-actions">
+            <button class="cs-btn cs-btn--primary" type="button" data-cs-upnext-open>
+              Open
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 17L17 7M9 7h8v8" stroke-linecap="round"/></svg>
+            </button>
+            <button class="cs-btn cs-btn--ghost" type="button" data-cs-upnext-pin>
+              ${isPinned(item) ? '★ Pinned' : '☆ Pin'}
+            </button>
+          </div>
+        </div>
+      `;
+      mount.querySelector('.cs-upnext-kicker-label').textContent = readout.label;
+      mount.querySelector('.cs-upnext-title').textContent = item.title || 'Untitled';
+      mount.querySelector('.cs-upnext-course').textContent = item.courseName || '—';
+      mount.querySelector('.cs-upnext-typechip').textContent = formatTypeName(item.type || '') || 'Item';
+      mount.querySelector('[data-cs-countdown]').textContent = formatUpNextDue(readout);
+
+      mount.querySelector('[data-cs-upnext-open]').addEventListener('click', (e) => openResult(item, e));
+      mount.querySelector('[data-cs-upnext-pin]').addEventListener('click', async (e) => {
+        e.preventDefault();
+        const btn = e.currentTarget;
+        await togglePin(item);
+        btn.textContent = isPinned(item) ? '★ Pinned' : '☆ Pin';
+      });
+      mount.querySelector('[data-cs-upnext-dismiss]').addEventListener('click', async (e) => {
+        e.preventDefault();
+        await dismissUpNextItem(item);
+      });
+    };
+
+    renderCard();
+
+    // Tick countdown — update only the readout value
+    countdownTimer = setInterval(() => {
+      const node = mount.querySelector('[data-cs-countdown]');
+      if (!node) return;
+      const readout = computeCountdown(item);
+      node.textContent = formatUpNextDue(readout);
+      const labelNode = mount.querySelector('.cs-upnext-kicker-label');
+      if (labelNode) labelNode.textContent = readout.label;
+    }, 30000);
+  }
+
+  function formatUpNextDue(readout) {
+    if (!readout) return '';
+    const unit = readout.unit === 'HRS:MIN' ? 'left' : readout.unit.toLowerCase();
+    return `${readout.value} ${unit}`;
+  }
+
+  async function dismissUpNextItem(item) {
+    if (!item) return;
+    const id = getCanonicalId(item);
+    if (!state.dismissedTasks.includes(id)) {
+      state.dismissedTasks.push(id);
+      await chrome.storage.local.set({ dismissedTasks: state.dismissedTasks });
+    }
+    renderUpNext();
+    renderDuePlanner();
+  }
+
+  function dueTone(item) {
+    const klass = dueUrgencyClass(item);
+    if (klass === 'overdue') return 'stop';
+    if (klass === 'today')   return 'warn';
+    if (klass === 'upcoming') return 'go';
+    return 'go';
+  }
+
+  function computeCountdown(item) {
+    const ts = parseDueTs(item);
+    if (!ts) return { value: '—', unit: 'NO DUE', label: 'Pending' };
+    const diffMs = ts - Date.now();
+    const abs = Math.abs(diffMs);
+    const days  = Math.floor(abs / (24 * 60 * 60 * 1000));
+    const hours = Math.floor((abs % (24 * 60 * 60 * 1000)) / (60 * 60 * 1000));
+    const mins  = Math.floor((abs % (60 * 60 * 1000)) / (60 * 1000));
+
+    let value, unit;
+    if (abs >= 24 * 60 * 60 * 1000) {
+      value = `${days}d ${hours.toString().padStart(2, '0')}h`;
+      unit = diffMs < 0 ? 'OVERDUE' : 'TO DUE';
+    } else {
+      value = `${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}`;
+      unit = diffMs < 0 ? 'OVERDUE' : 'HRS:MIN';
+    }
+
+    const label = diffMs < 0 ? 'Locked · overdue' :
+                  abs <= 24 * 60 * 60 * 1000 ? 'Lock-on · today' : 'Tracking';
+    return { value, unit, label };
+  }
+
+  // ---- TIMELINE -------------------------------------------------------------
+  function renderTimeline() {
+    const mount = document.getElementById('cs-hero-timeline');
+    if (!mount) return;
+    const items = getRecentItems();
+    if (items.length === 0) {
+      mount.innerHTML = `<div class="cs-radar-empty">— no synced items yet —</div>`;
+      return;
+    }
+
+    const groups = groupTimeline(items, state.timelineSeenAt || 0);
+    mount.innerHTML = '';
+    const list = document.createElement('div');
+    list.className = 'cs-timeline';
+
+    groups.forEach(group => {
+      if (!group.items.length) return;
+      const groupEl = document.createElement('div');
+      groupEl.className = 'cs-timeline-group';
+
+      const label = document.createElement('div');
+      label.className = 'cs-timeline-group-label';
+      label.textContent = group.label;
+      groupEl.appendChild(label);
+
+      group.items.forEach(({ item, isNew, ts }) => {
+        const row = document.createElement('button');
+        row.type = 'button';
+        row.className = 'cs-timeline-row';
+        row.setAttribute('aria-label', buildItemAriaLabel(item));
+
+        const dot = document.createElement('span');
+        dot.className = 'cs-timeline-dot' + (isNew ? ' is-new' : '');
+        row.appendChild(dot);
+
+        const text = document.createElement('span');
+        text.className = 'cs-timeline-text';
+        const title = document.createElement('span');
+        title.className = 'cs-timeline-title';
+        title.textContent = item.title || 'Untitled';
+        const meta = document.createElement('span');
+        meta.className = 'cs-timeline-meta';
+        meta.textContent = [
+          (item.courseName || '').toUpperCase(),
+          formatTypeName(item.type || '')
+        ].filter(Boolean).join(' · ');
+        text.appendChild(title);
+        text.appendChild(meta);
+        row.appendChild(text);
+
+        const time = document.createElement('span');
+        time.className = 'cs-timeline-time';
+        time.textContent = ts ? formatRelativeTime(ts).toUpperCase() : '';
+        row.appendChild(time);
+
+        row.addEventListener('click', (e) => openResult(item, e));
+        groupEl.appendChild(row);
+      });
+
+      list.appendChild(groupEl);
+    });
+
+    mount.appendChild(list);
+  }
+
+  function groupTimeline(items, seenAt) {
+    const now = new Date();
+    const startOfToday = new Date(now); startOfToday.setHours(0, 0, 0, 0);
+    const startOfYday  = new Date(startOfToday.getTime() - 24 * 60 * 60 * 1000);
+    const startOfWeek  = new Date(startOfToday.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+    const buckets = {
+      today:    { label: 'TODAY',     items: [] },
+      yesterday:{ label: 'YESTERDAY', items: [] },
+      week:     { label: 'THIS WEEK', items: [] },
+      earlier:  { label: 'EARLIER',   items: [] }
+    };
+
+    items.forEach(item => {
+      const ts = Number(item.lastSeenAt || item.indexedAt || item.scrapedAt || item.updatedAt || 0);
+      const isNew = ts > seenAt;
+      const entry = { item, ts, isNew };
+      if (ts >= startOfToday.getTime())      buckets.today.items.push(entry);
+      else if (ts >= startOfYday.getTime())  buckets.yesterday.items.push(entry);
+      else if (ts >= startOfWeek.getTime())  buckets.week.items.push(entry);
+      else                                    buckets.earlier.items.push(entry);
+    });
+
+    return [buckets.today, buckets.yesterday, buckets.week, buckets.earlier];
+  }
+
+  // ---- RADAR ----------------------------------------------------------------
+  function renderRadarPanel() {
+    const mount = document.getElementById('cs-hero-radar');
+    if (!mount) return;
+    if (typeof window.CanvascopeRadar?.render !== 'function') {
+      mount.innerHTML = `<div class="cs-radar-empty">— radar unavailable —</div>`;
+      return;
+    }
+    const items = getRadarItems();
+    radarRenderToken += 1;
+    const myToken = radarRenderToken;
+    const windowToQuery = {
+      overdue: 'overdue',
+      h24:     'due today',
+      d3:      'due this week',
+      d7:      'due this week',
+      d14:     'due'
+    };
+    window.CanvascopeRadar.render(mount, {
+      items,
+      now: Date.now(),
+      onOpen: (item, evt) => {
+        if (myToken !== radarRenderToken) return;
+        openResult(item, evt);
+      },
+      onFilterCourse: (courseName) => {
+        if (myToken !== radarRenderToken) return;
+        const input = elements.searchInput;
+        if (!input) return;
+        const label = (courseName || '').toString().trim();
+        if (!label) return;
+        input.value = label;
+        input.focus();
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+      },
+      onFilterCourseWindow: (courseName, windowKey) => {
+        if (myToken !== radarRenderToken) return;
+        const input = elements.searchInput;
+        if (!input) return;
+        const courseLabel = (courseName || '').toString().trim();
+        const winQ = windowToQuery[windowKey] || '';
+        const q = [winQ, courseLabel].filter(Boolean).join(' ');
+        input.value = q;
+        input.focus();
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+      },
+      isPinned: (item) => isPinned(item),
+      onTogglePin: async (item) => {
+        await togglePin(item);
+        return isPinned(item);
+      }
+    });
+    renderRadarResume(mount);
+  }
+
+  function renderRadarResume(mount) {
+    const nextUp = getNextUp();
+    const predicted = getLikelyNextItem(nextUp?.url || null);
+    if (!predicted) return;
+
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'cs-radar-resume';
+    chip.title = 'Predicted from your open habits';
+    chip.innerHTML = `
+      <span class="cs-radar-resume-kicker">Resume</span>
+      <span class="cs-radar-resume-title"></span>
+      <span class="cs-radar-resume-arrow" aria-hidden="true">↗</span>
+    `;
+    chip.querySelector('.cs-radar-resume-title').textContent = predicted.title || 'Untitled';
+    chip.addEventListener('click', (e) => openResult(predicted, e));
+    mount.appendChild(chip);
+  }
+
+  // ---- PINNED ROW -----------------------------------------------------------
+  function renderPinnedRow() {
+    const row = document.getElementById('cs-pinned-row');
+    if (!row || state.isOverlayMode) return;
+    row.innerHTML = '';
+
+    const ids = Array.from(state.pinnedItems);
+    const items = ids.map(findPinnedItem).filter(Boolean);
+
+    if (items.length === 0) {
+      row.classList.add('hidden');
+      return;
+    }
+    row.classList.remove('hidden');
+
+    items.slice(0, 12).forEach(item => {
+      const pill = document.createElement('button');
+      pill.type = 'button';
+      pill.className = 'cs-pin-pill';
+      pill.setAttribute('aria-label', `Open pinned: ${item.title || 'Untitled'}`);
+
+      const star = document.createElement('span');
+      star.className = 'cs-pin-pill-star';
+      star.textContent = '★';
+
+      const title = document.createElement('span');
+      title.className = 'cs-pin-pill-title';
+      title.textContent = item.title || 'Untitled';
+
+      const unpin = document.createElement('span');
+      unpin.className = 'cs-pin-pill-unpin';
+      unpin.setAttribute('role', 'button');
+      unpin.setAttribute('aria-label', 'Unpin');
+      unpin.textContent = '×';
+      unpin.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        await togglePin(item);
+      });
+
+      pill.appendChild(star);
+      pill.appendChild(title);
+      pill.appendChild(unpin);
+      pill.addEventListener('click', (e) => openResult(item, e));
+      row.appendChild(pill);
+    });
+  }
+
+  // ---- PIN TOGGLES ON RESULT ROWS (via MutationObserver) -------------------
+  function attachPinTogglesToResults() {
+    const container = document.getElementById('results-container');
+    if (!container || resultsObserver) return;
+    decoratePinsIn(container);
+    resultsObserver = new MutationObserver(() => {
+      if (pinDecorateRaf) return;
+      pinDecorateRaf = requestAnimationFrame(() => {
+        pinDecorateRaf = 0;
+        decoratePinsIn(container);
+      });
+    });
+    resultsObserver.observe(container, { childList: true, subtree: true });
+  }
+
+  function decoratePinsIn(root) {
+    if (!root) return;
+    const candidates = root.querySelectorAll('.result-item:not([data-cs-pin-decorated]), .due-item:not([data-cs-pin-decorated]), .browse-item:not([data-cs-pin-decorated])');
+    candidates.forEach(node => {
+      node.dataset.csPinDecorated = '1';
+      const item = guessItemFromNode(node);
+      if (!item) return;
+      const toggle = makePinToggle(item);
+      node.appendChild(toggle);
+    });
+  }
+
+  function makePinToggle(item) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'cs-pin-toggle' + (isPinned(item) ? ' is-pinned' : '');
+    btn.setAttribute('aria-label', isPinned(item) ? 'Unpin item' : 'Pin item');
+    btn.textContent = isPinned(item) ? '★' : '☆';
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      await togglePin(item, { fromButton: btn });
+      const pinned = isPinned(item);
+      btn.classList.toggle('is-pinned', pinned);
+      btn.textContent = pinned ? '★' : '☆';
+      btn.setAttribute('aria-label', pinned ? 'Unpin item' : 'Pin item');
+    });
+    return btn;
+  }
+
+  // Find the item the row was rendered from. Falls back to URL match in indexedContent.
+  function guessItemFromNode(node) {
+    // result rows store __item via property on the dataset's hidden anchor or via `_item` JS property
+    if (node.__csItem) return node.__csItem;
+    if (node._csItem) return node._csItem;
+    const url = node.dataset?.url || node.getAttribute('data-url') || (node.querySelector('[data-url]')?.dataset?.url);
+    if (url && Array.isArray(state.indexedContent)) {
+      const match = state.indexedContent.find(i => i.url === url);
+      if (match) return match;
+    }
+    // Fallback: match by title text + course meta — best effort
+    const title = node.querySelector('.result-title, .due-item-title, .browse-item-title, .recent-item-title, .continue-card-title')?.textContent?.trim();
+    if (title && Array.isArray(state.indexedContent)) {
+      const match = state.indexedContent.find(i => (i.title || '').trim() === title);
+      if (match) return match;
+    }
+    return null;
+  }
+
+  function syncPinTogglesInDom() {
+    document.querySelectorAll('.cs-pin-toggle').forEach(btn => {
+      const node = btn.closest('[data-cs-pin-decorated]');
+      const item = guessItemFromNode(node);
+      if (!item) return;
+      const pinned = isPinned(item);
+      btn.classList.toggle('is-pinned', pinned);
+      btn.textContent = pinned ? '★' : '☆';
+    });
+  }
+
+  // ---- OVERFLOW MENU --------------------------------------------------------
+  function bindOverflowMenu() {
+    const trigger = document.getElementById('cs-overflow-btn');
+    const menu = document.getElementById('cs-overflow-menu');
+    if (!trigger || !menu) return;
+
+    const close = () => {
+      menu.classList.add('hidden');
+      trigger.setAttribute('aria-expanded', 'false');
+    };
+    const open = () => {
+      menu.classList.remove('hidden');
+      trigger.setAttribute('aria-expanded', 'true');
+    };
+
+    trigger.addEventListener('click', (e) => {
+      e.stopPropagation();
+      menu.classList.contains('hidden') ? open() : close();
+    });
+    document.addEventListener('click', (e) => {
+      if (!menu.contains(e.target) && e.target !== trigger) close();
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') close();
+    });
+
+    // Proxy to legacy buttons (popup.js binds those)
+    const proxy = (id, legacyId) => {
+      const item = document.getElementById(id);
+      if (!item) return;
+      item.addEventListener('click', () => {
+        close();
+        const legacy = document.getElementById(legacyId);
+        if (legacy) legacy.click();
+      });
+    };
+    proxy('cs-overflow-refresh', 'refresh-btn');
+    proxy('cs-overflow-send-pdf', 'send-pdf-btn');
+    proxy('cs-overflow-signin', 'google-signin-btn');
+
+    // Reflect signed-in label
+    const updateSignInLabel = () => {
+      const lbl = document.getElementById('cs-overflow-signin-label');
+      if (!lbl) return;
+      lbl.textContent = state.isSignedIn ? 'Account' : 'Sign in with Google';
+    };
+    updateSignInLabel();
+    document.addEventListener('cs:auth-changed', updateSignInLabel);
+
+    // Reflect refresh busy state
+    const refreshBtn = document.getElementById('refresh-btn');
+    const refreshItem = document.getElementById('cs-overflow-refresh');
+    if (refreshBtn && refreshItem) {
+      const obs = new MutationObserver(() => {
+        refreshItem.classList.toggle('is-busy', refreshBtn.disabled);
+      });
+      obs.observe(refreshBtn, { attributes: true, attributeFilter: ['disabled'] });
+    }
+  }
+
+  // ---- HERO TABS ------------------------------------------------------------
+  function bindHeroTabs() {
+    document.querySelectorAll('.cs-hero-tab').forEach(tab => {
+      tab.addEventListener('click', () => selectHeroView(tab.dataset.csHeroTab));
+    });
+  }
+
+  // ---- Listen for content/auth events to refresh hero -----------------------
+  function bindStateRefreshHooks() {
+    // Re-render hero when indexedContent updates (storage broadcast)
+    try {
+      chrome.storage.onChanged.addListener((changes, areaName) => {
+        if (areaName !== 'local') return;
+        if (changes.indexedContent || changes.recentlyOpened || changes.dismissedTasks) {
+          renderHero();
+          renderPinnedRow();
+        }
+        if (changes[PIN_STORAGE_KEY]) {
+          const ids = Array.isArray(changes[PIN_STORAGE_KEY].newValue) ? changes[PIN_STORAGE_KEY].newValue : [];
+          state.pinnedItems = new Set(ids.map(String));
+          renderPinnedRow();
+          syncPinTogglesInDom();
+        }
+      });
+    } catch (e) { /* extension restart edge cases */ }
+  }
+
+  function bindSearchEscape() {
+    // Radar grid clicks write into the search field programmatically; flip back
+    // to the standard results layout so the filtered results are visible.
+    const input = document.getElementById('search-input');
+    if (!input) return;
+    input.addEventListener('input', () => {
+      const q = (input.value || '').trim();
+      if (q.length === 0) return;
+      if (state.heroView !== 'next') selectHeroView('next');
+    });
+  }
+
+  // ---- Public init ----------------------------------------------------------
+  async function init() {
+    if (state.isOverlayMode) return; // Overlay mode bypasses the v2 home
+    await loadPinnedItems();
+    bindHeroTabs();
+    bindOverflowMenu();
+    bindSearchEscape();
+    attachPinTogglesToResults();
+    bindStateRefreshHooks();
+    renderPinnedRow();
+    selectHeroView('next');
+  }
+
+  // ---- Util -----------------------------------------------------------------
+  function escapeHtml(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  return {
+    init,
+    renderHero,
+    renderPinnedRow,
+    selectHeroView,
+    togglePin,
+    isPinned
+  };
+})();
 
 document.addEventListener('DOMContentLoaded', async () => {
   // Check if we're in overlay mode
@@ -3487,6 +4364,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   updateUI();
   renderDuePlanner();
   renderHomeSections();
+  await csV2.init();
+  csV2.renderHero();
   updateAuthButtonUi();
   updateSettingsModalContent();
   updateSearchFieldAffordances();
@@ -3845,6 +4724,7 @@ function handleSignedInState(user) {
   if (state.slashMode.active) {
     renderSlashCommandSheet();
   }
+  document.dispatchEvent(new CustomEvent('cs:auth-changed'));
   void warmDropBridgeReceiver('popup-post-login');
 }
 
@@ -3856,6 +4736,7 @@ function handleSignedOutState() {
   if (state.slashMode.active) {
     renderSlashCommandSheet();
   }
+  document.dispatchEvent(new CustomEvent('cs:auth-changed'));
 }
 
 function getPopupErrorMessage(error, fallback = 'Action failed.') {
@@ -4748,6 +5629,22 @@ function executeSlashBrowse() {
   openBrowseModal(elements.searchInput);
 }
 
+function handleResultsContainerClick(event) {
+  const row = event.target.closest('.result-item');
+  if (!row || !elements.resultsContainer.contains(row)) return;
+  if (event.target.closest('.cs-pin-toggle, button, a, input, select, textarea')) return;
+  if (row.__csItem) openResult(row.__csItem, event);
+}
+
+function handleResultsContainerKeydown(event) {
+  if (event.key !== 'Enter' && event.key !== ' ') return;
+  const row = event.target.closest('.result-item');
+  if (!row || !elements.resultsContainer.contains(row)) return;
+  if (!row.__csItem) return;
+  event.preventDefault();
+  openResult(row.__csItem, event);
+}
+
 function beginGoogleSignIn() {
   updateAuthButtonUi({ label: 'Signing in...', disabled: true });
 
@@ -5010,6 +5907,8 @@ function setupEventListeners() {
 
   // Keyboard navigation for search results
   elements.searchInput.addEventListener('keydown', handleSearchInputKeydown);
+  elements.resultsContainer.addEventListener('click', handleResultsContainerClick);
+  elements.resultsContainer.addEventListener('keydown', handleResultsContainerKeydown);
 
   // Close search history when clicking outside
   document.addEventListener('click', (e) => {
@@ -5681,6 +6580,9 @@ function populateCourseFilter() {
     }
   });
 
+  // Pre-compute per-course assignment doneness (e.g., "12/14" graded/submitted)
+  const doneness = computeCourseDoneness();
+
   // Rebuild the full option list so the checkbox state always matches the
   // persisted course selection, including classes that are currently saved
   // but may not be present in the latest index yet.
@@ -5703,7 +6605,8 @@ function populateCourseFilter() {
 
     elements.courseOptions.appendChild(
       buildCourseOption(course, {
-        selected: state.filters.course.includes(course)
+        selected: state.filters.course.includes(course),
+        doneness: doneness.get(course) || null
       })
     );
   });
@@ -5717,6 +6620,7 @@ function handleSearchInput(event) {
   const query = rawValue.trim();
   updateSearchFieldAffordances();
   hideSearchHistory();
+  renderQuerySuggestions(query);
 
   if (state.searchTimeout) {
     clearTimeout(state.searchTimeout);
@@ -5732,6 +6636,97 @@ function handleSearchInput(event) {
   state.searchTimeout = setTimeout(() => {
     performSearch(query);
   }, getSearchDebounceMs());
+}
+
+/**
+ * Compute up to N historical queries that match the current input prefix.
+ * Sourced from queryAffinity (highest aggregate click affinity wins).
+ */
+function getQuerySuggestions(prefix, limit = 3) {
+  if (!state.extensionSettings?.enableAdaptiveLearning) return [];
+  const habits = state.searchHabits;
+  if (!habits || !habits.queryAffinity) return [];
+  const cleanPrefix = String(prefix || '').toLowerCase().trim();
+  if (cleanPrefix.length < 1) return [];
+
+  const candidates = [];
+  for (const [q, urlMap] of Object.entries(habits.queryAffinity)) {
+    if (q === cleanPrefix) continue;            // skip exact match
+    if (!q.startsWith(cleanPrefix)) continue;
+    if (q.length < cleanPrefix.length + 1) continue;
+    let score = 0;
+    if (urlMap && typeof urlMap === 'object') {
+      for (const v of Object.values(urlMap)) score += Number(v) || 0;
+    }
+    if (score <= 0) continue;
+    candidates.push({ query: q, score });
+  }
+  candidates.sort((a, b) => b.score - a.score || a.query.length - b.query.length);
+  return candidates.slice(0, limit);
+}
+
+function renderQuerySuggestions(prefix) {
+  const row = document.getElementById('cs-suggest-row');
+  if (!row) return;
+  if (state.isOverlayMode) { // overlay has its own results UI; skip noise
+    row.classList.add('hidden');
+    row.replaceChildren();
+    return;
+  }
+  const suggestions = getQuerySuggestions(prefix, 3);
+  if (suggestions.length === 0) {
+    row.classList.add('hidden');
+    row.replaceChildren();
+    return;
+  }
+  row.replaceChildren();
+  const cleanPrefix = String(prefix || '').toLowerCase().trim();
+  for (const { query: q, score } of suggestions) {
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'cs-suggest-chip';
+    chip.setAttribute('role', 'option');
+    chip.dataset.suggestion = q;
+
+    // Match prefix gets muted; the rest is emphasized so the user sees what's new
+    const matchSpan = document.createElement('span');
+    matchSpan.className = 'cs-suggest-prefix';
+    matchSpan.textContent = q.slice(0, cleanPrefix.length);
+    chip.appendChild(matchSpan);
+
+    const restSpan = document.createElement('span');
+    restSpan.className = 'cs-suggest-rest';
+    restSpan.textContent = q.slice(cleanPrefix.length);
+    chip.appendChild(restSpan);
+
+    if (score >= 2) {
+      const meta = document.createElement('span');
+      meta.className = 'cs-suggest-score';
+      meta.textContent = `${score}×`;
+      meta.title = `Opened ${score} time${score === 1 ? '' : 's'} from this query`;
+      chip.appendChild(meta);
+    }
+
+    chip.addEventListener('click', () => applyQuerySuggestion(q));
+    row.appendChild(chip);
+  }
+  row.classList.remove('hidden');
+}
+
+function applyQuerySuggestion(query) {
+  if (!elements.searchInput) return;
+  elements.searchInput.value = query;
+  elements.searchInput.focus();
+  if (elements.clearSearchBtn) elements.clearSearchBtn.classList.add('visible');
+  hideQuerySuggestions();
+  performSearch(query);
+}
+
+function hideQuerySuggestions() {
+  const row = document.getElementById('cs-suggest-row');
+  if (!row) return;
+  row.classList.add('hidden');
+  row.replaceChildren();
 }
 
 function performSearch(query) {
@@ -6607,22 +7602,33 @@ function displayResults(results) {
   // Reset highlight index
   state.overlayHighlightIndex = 0;
 
-  results.forEach((result, index) => {
+  // Render into a fragment first so we only touch the live DOM once.
+  const fragment = document.createDocumentFragment();
+  // Cache hot-path lookups so we don't re-resolve them per row.
+  const inOverlay = state.isOverlayMode;
+  const adaptiveOn = !!state.extensionSettings?.enableAdaptiveLearning;
+  const globalClicks = adaptiveOn ? (state.searchHabits?.globalClicks || null) : null;
+  const nowMs = Date.now();
+
+  for (let index = 0; index < results.length; index++) {
+    const result = results[index];
     const item = result.item;
 
     const resultElement = document.createElement('div');
     resultElement.className = 'result-item';
-    resultElement.setAttribute('tabindex', '0');
+    resultElement.tabIndex = 0;
     resultElement.setAttribute('role', 'button');
     resultElement.setAttribute('aria-label', buildItemAriaLabel(item));
 
-    // Auto-highlight first result in overlay mode
-    if (state.isOverlayMode && index === 0) {
+    if (inOverlay && index === 0) {
       resultElement.classList.add('overlay-highlighted');
     }
 
+    const submissionState = getSubmissionBadgeState(item, nowMs);
+    const openCount = globalClicks ? getItemOpenCountFromMap(item, globalClicks) : 0;
+
     // In overlay mode: title + course on left, type badge on right
-    if (state.isOverlayMode) {
+    if (inOverlay) {
       const textCol = document.createElement('div');
       textCol.className = 'overlay-result-text';
 
@@ -6653,15 +7659,32 @@ function displayResults(results) {
         dueSpan.className = `due-chip-search ${dueUrgencyClass(item)}`;
         dueSpan.textContent = formatDueLabel(item);
         dueRow.appendChild(dueSpan);
+        if (submissionState) {
+          dueRow.appendChild(buildSubmissionBadge(submissionState, item));
+        }
         textCol.appendChild(dueRow);
+      } else if (submissionState) {
+        const stateRow = document.createElement('div');
+        stateRow.className = 'overlay-result-due';
+        stateRow.appendChild(buildSubmissionBadge(submissionState, item));
+        textCol.appendChild(stateRow);
       }
 
       resultElement.appendChild(textCol);
 
+      const rightCol = document.createElement('div');
+      rightCol.className = 'overlay-result-right';
+
       const typeBadge = document.createElement('span');
       typeBadge.className = `overlay-type-badge type-${(item.type || 'link').toLowerCase()}`;
       typeBadge.textContent = formatOverlayType(item.type || 'link');
-      resultElement.appendChild(typeBadge);
+      rightCol.appendChild(typeBadge);
+
+      if (openCount > 0) {
+        rightCol.appendChild(buildOpenCountChip(openCount));
+      }
+
+      resultElement.appendChild(rightCol);
     } else {
       // Normal popup mode — title then meta row
       const titleElement = document.createElement('div');
@@ -6685,12 +7708,20 @@ function displayResults(results) {
         metaElement.appendChild(courseElement);
       }
 
+      if (submissionState) {
+        metaElement.appendChild(buildSubmissionBadge(submissionState, item));
+      }
+
       // Due-date chip for task items in search results
       if (item.dueAt && isTaskType(item)) {
         const dueChip = document.createElement('span');
         dueChip.className = `due-chip-search ${dueUrgencyClass(item)}`;
         dueChip.textContent = formatDueLabel(item);
         metaElement.appendChild(dueChip);
+      }
+
+      if (openCount > 0) {
+        metaElement.appendChild(buildOpenCountChip(openCount));
       }
 
       resultElement.appendChild(metaElement);
@@ -6703,16 +7734,49 @@ function displayResults(results) {
       }
     }
 
-    resultElement.addEventListener('click', (e) => openResult(item, e));
-    resultElement.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault();
-        openResult(item, e);
-      }
-    });
+    resultElement.__csItem = item;
+    fragment.appendChild(resultElement);
+  }
 
-    elements.resultsContainer.appendChild(resultElement);
-  });
+  // One reflow instead of N
+  elements.resultsContainer.appendChild(fragment);
+}
+
+/**
+ * Build a submission-status badge element (graded / submitted / missing / overdue / upcoming).
+ */
+function buildSubmissionBadge(stateName, item) {
+  const span = document.createElement('span');
+  span.className = `cs-status-pill cs-status-pill--${stateName}`;
+  let label;
+  switch (stateName) {
+    case 'graded': {
+      const score = formatBadgeScore(item.submission);
+      label = score ? `Graded · ${score}` : 'Graded';
+      break;
+    }
+    case 'submitted': label = 'Submitted'; break;
+    case 'missing':   label = 'Missing'; break;
+    case 'overdue':   label = 'Overdue'; break;
+    case 'upcoming':  label = 'Due soon'; break;
+    default:          label = stateName;
+  }
+  span.textContent = label;
+  span.title = label;
+  return span;
+}
+
+/**
+ * Build a small "opened N×" chip for results the user has clicked before.
+ * Shows nothing for 0; subtle for 1; emphasized once you've opened it 3+ times.
+ */
+function buildOpenCountChip(count) {
+  const span = document.createElement('span');
+  span.className = 'cs-opens-chip' + (count >= 3 ? ' is-frequent' : '');
+  span.textContent = `${count}×`;
+  span.title = `Opened ${count} time${count === 1 ? '' : 's'}`;
+  span.setAttribute('aria-label', span.title);
+  return span;
 }
 
 /**
@@ -6836,9 +7900,10 @@ function showOverlayRecents() {
   state.recentlyOpened.forEach((item, index) => {
     const el = document.createElement('div');
     el.className = 'result-item overlay-recent-item';
-    el.setAttribute('tabindex', '0');
+    el.tabIndex = 0;
     el.setAttribute('role', 'button');
     el.setAttribute('aria-label', buildItemAriaLabel(item, { includeOpenedAt: true }));
+    el.__csItem = item;
 
     const textCol = document.createElement('div');
     textCol.className = 'overlay-result-text';
@@ -6861,14 +7926,6 @@ function showOverlayRecents() {
     typeBadge.className = `overlay-type-badge type-${(item.type || 'link').toLowerCase()}`;
     typeBadge.textContent = formatOverlayType(item.type || 'link');
     el.appendChild(typeBadge);
-
-    el.addEventListener('click', (e) => openResult(item, e));
-    el.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault();
-        openResult(item, e);
-      }
-    });
 
     recentsSection.appendChild(el);
   });
@@ -6925,6 +7982,7 @@ function clearSearch() {
 
   elements.searchInput.value = '';
   updateSearchFieldAffordances();
+  hideQuerySuggestions();
 
   if (!state.isScanning) {
     setUiState(UI_STATE.READY);

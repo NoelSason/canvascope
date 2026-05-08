@@ -385,23 +385,42 @@
         const button = document.createElement('button');
         button.type = 'button';
         button.id = 'canvascope-send-to-lectra-btn';
-        button.textContent = 'Send to Lectra';
+        button.innerHTML = `
+            <span class="cs-lectra-reticle" aria-hidden="true">
+                <svg viewBox="0 0 16 16" width="14" height="14" fill="none">
+                    <circle cx="8" cy="8" r="4.2" stroke="currentColor" stroke-width="1.4"/>
+                    <line x1="8" y1="1.5" x2="8" y2="3.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+                    <line x1="8" y1="12.5" x2="8" y2="14.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+                    <line x1="1.5" y1="8" x2="3.5" y2="8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+                    <line x1="12.5" y1="8" x2="14.5" y2="8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+                    <circle cx="8" cy="8" r="1" fill="currentColor"/>
+                </svg>
+            </span>
+            <span class="cs-lectra-label">Send to Lectra</span>
+        `;
         button.style.cssText = `
             position: fixed;
             right: 20px;
             bottom: 96px;
             z-index: 2147483000;
-            padding: 10px 14px;
-            border-radius: 12px;
-            border: 1px solid rgba(255, 255, 255, 0.24);
-            background: linear-gradient(135deg, #d43c3c 0%, #b72c2c 100%);
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 9px 14px 9px 12px;
+            border-radius: 999px;
+            border: 1px solid rgba(239, 68, 68, 0.55);
+            background: #ef4444;
             color: #fff;
-            font-size: 13px;
-            font-weight: 600;
-            box-shadow: 0 10px 24px rgba(0, 0, 0, 0.32);
+            font: 600 13px/1 'SF Pro Text', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+            letter-spacing: 0.01em;
+            box-shadow:
+                0 0 0 1px rgba(255, 255, 255, 0.06) inset,
+                0 8px 28px rgba(220, 38, 38, 0.42),
+                0 0 0 4px rgba(239, 68, 68, 0.14);
             cursor: pointer;
             transition: ${BUTTON_DEFAULT_TRANSITION};
             touch-action: none;
+            -webkit-font-smoothing: antialiased;
         `;
         button.title = 'Send to Lectra. Press and hold to move.';
         button.addEventListener('mouseenter', () => {
@@ -441,12 +460,17 @@
 
     function setSendButtonState(text, state = 'idle') {
         const button = ensureSendButton();
-        button.textContent = text;
+        const label = button.querySelector('.cs-lectra-label');
+        if (label) {
+            label.textContent = text;
+        } else {
+            button.textContent = text;
+        }
 
         if (state === 'sending') {
             sendButtonBusy = true;
             button.disabled = true;
-            button.style.opacity = '0.8';
+            button.style.opacity = '0.85';
             button.style.cursor = 'default';
             return;
         }
@@ -457,16 +481,23 @@
         button.style.cursor = 'pointer';
 
         if (state === 'success') {
-            button.style.background = 'linear-gradient(135deg, #1f9f5a 0%, #187a45 100%)';
+            // Lock-acquired green — matches in-popup signal-go
+            button.style.background = '#10b981';
+            button.style.borderColor = 'rgba(52, 211, 153, 0.6)';
+            button.style.boxShadow = '0 0 0 1px rgba(255, 255, 255, 0.08) inset, 0 8px 28px rgba(16, 185, 129, 0.42), 0 0 0 4px rgba(52, 211, 153, 0.14)';
             return;
         }
 
         if (state === 'error') {
-            button.style.background = 'linear-gradient(135deg, #a43b3b 0%, #7f2a2a 100%)';
+            button.style.background = '#b91c1c';
+            button.style.borderColor = 'rgba(248, 113, 113, 0.7)';
+            button.style.boxShadow = '0 0 0 1px rgba(255, 255, 255, 0.08) inset, 0 8px 28px rgba(185, 28, 28, 0.5), 0 0 0 4px rgba(248, 113, 113, 0.16)';
             return;
         }
 
-        button.style.background = 'linear-gradient(135deg, #d43c3c 0%, #b72c2c 100%)';
+        button.style.background = '#ef4444';
+        button.style.borderColor = 'rgba(239, 68, 68, 0.55)';
+        button.style.boxShadow = '0 0 0 1px rgba(255, 255, 255, 0.06) inset, 0 8px 28px rgba(220, 38, 38, 0.42), 0 0 0 4px rgba(239, 68, 68, 0.14)';
     }
 
     function collectPdfCandidates() {

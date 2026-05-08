@@ -5,6 +5,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Canvascope</title>
+  <link rel="icon" href="icons/icon32.png">
   <link rel="stylesheet" href="styles.css">
   <!-- Detect overlay mode BEFORE body renders to prevent flash of popup UI -->
   <script>
@@ -14,6 +15,8 @@
   </script>
   <style>
     /* Hide popup-only chrome immediately when in overlay (pre-JS) */
+    html.in-overlay-early body .cs-topbar,
+    html.in-overlay-early body .cs-hero,
     html.in-overlay-early body .header,
     html.in-overlay-early body .filter-bar,
     html.in-overlay-early body .home-sections,
@@ -22,6 +25,7 @@
     html.in-overlay-early body .footer-actions,
     html.in-overlay-early body .search-history,
     html.in-overlay-early body .due-item-planner,
+    html.in-overlay-early body .cs-pinned-row,
     html.in-overlay-early body .empty-state { display: none !important; }
     html.in-overlay-early body { width: 100%; height: 100vh; min-height: 0; }
     html.in-overlay-early body .container { min-height: auto; height: 100%; padding: 0; gap: 0; }
@@ -30,49 +34,141 @@
 
 <body>
   <div class="container">
-    <!-- Header Section -->
-    <header class="header">
-      <div class="header-top-row">
-        <div class="header-brand">
-          <h1 class="title">
-            <svg class="title-icon" viewBox="0 0 128 128" fill="none">
-              <path d="M20 16h76v96H20z" stroke="#D32F2F" stroke-width="10" stroke-linecap="round" stroke-linejoin="round">
-              </path>
-              <path d="M20 88h76" stroke="#D32F2F" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"></path>
-              <circle cx="60" cy="52" r="22" stroke="#D32F2F" stroke-width="10" stroke-linecap="round"
-                stroke-linejoin="round"></circle>
-              <line x1="76" y1="68" x2="104" y2="96" stroke="#D32F2F" stroke-width="10" stroke-linecap="round"
-                stroke-linejoin="round"></line>
-            </svg>
-            Canvascope
-          </h1>
-          <p class="subtitle" id="status-text" aria-live="polite">Search your course content</p>
-        </div>
-        <div class="header-actions" aria-label="Popup controls">
-          <button id="help-btn" class="header-icon-btn" type="button" aria-label="Open help and shortcuts" title="Help">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-              <circle cx="12" cy="12" r="9"></circle>
-              <path d="M9.5 9a2.5 2.5 0 1 1 4.33 1.7c-.62.66-1.33 1.1-1.83 1.8-.3.4-.5.83-.5 1.5"></path>
-              <circle cx="12" cy="17" r="1"></circle>
+    <!-- ============================================
+         TOPBAR — scope reticle logomark · context · controls
+         ============================================ -->
+    <header class="cs-topbar" role="banner">
+      <div class="cs-brand">
+        <span class="cs-mark" aria-hidden="true">
+          <svg viewBox="0 0 128 128" fill="none">
+            <path d="M20 16h76v96H20z" stroke="currentColor" stroke-width="9" stroke-linejoin="round"/>
+            <path d="M20 88h76" stroke="currentColor" stroke-width="9" stroke-linecap="round"/>
+            <circle cx="60" cy="52" r="22" stroke="currentColor" stroke-width="9"/>
+            <line x1="76" y1="68" x2="100" y2="92" stroke="currentColor" stroke-width="9" stroke-linecap="round"/>
+          </svg>
+        </span>
+        <span class="cs-wordmark">Canvascope</span>
+      </div>
+
+      <div class="cs-topbar-controls" aria-label="Popup controls">
+        <button id="help-btn" class="cs-icon-btn" type="button" aria-label="Open help and shortcuts" title="Help">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+            <circle cx="12" cy="12" r="9"></circle>
+            <path d="M9.5 9a2.5 2.5 0 1 1 4.33 1.7c-.62.66-1.33 1.1-1.83 1.8-.3.4-.5.83-.5 1.5"></path>
+            <circle cx="12" cy="17" r="1"></circle>
+          </svg>
+        </button>
+        <button id="settings-btn" class="cs-icon-btn" type="button" aria-label="Open settings" title="Settings">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 8.92 4.6H9A1.65 1.65 0 0 0 10 3.09V3a2 2 0 0 1 4 0v.09A1.65 1.65 0 0 0 15 4.6a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9c.22.52.73.87 1.3.91H21a2 2 0 0 1 0 4h-.09c-.57.04-1.08.39-1.3.91Z"></path>
+          </svg>
+        </button>
+        <div class="cs-overflow-wrapper">
+          <button id="cs-overflow-btn" class="cs-icon-btn" type="button" aria-label="More actions" aria-haspopup="menu" aria-expanded="false" title="More">
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <circle cx="6" cy="12" r="1.6"/>
+              <circle cx="12" cy="12" r="1.6"/>
+              <circle cx="18" cy="12" r="1.6"/>
             </svg>
           </button>
-          <button id="settings-btn" class="header-icon-btn" type="button" aria-label="Open settings" title="Settings">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-              <circle cx="12" cy="12" r="3"></circle>
-              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 8.92 4.6H9A1.65 1.65 0 0 0 10 3.09V3a2 2 0 0 1 4 0v.09A1.65 1.65 0 0 0 15 4.6a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9c.22.52.73.87 1.3.91H21a2 2 0 0 1 0 4h-.09c-.57.04-1.08.39-1.3.91Z"></path>
-            </svg>
-          </button>
+          <div id="cs-overflow-menu" class="cs-overflow-menu hidden" role="menu" aria-label="More actions">
+            <button id="cs-overflow-refresh" class="cs-overflow-item" role="menuitem" type="button">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+                <polyline points="23 4 23 10 17 10"></polyline>
+                <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+              </svg>
+              <span>Refresh sync</span>
+              <kbd>R</kbd>
+            </button>
+            <button id="cs-overflow-send-pdf" class="cs-overflow-item" role="menuitem" type="button">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                <polyline points="14 2 14 8 20 8"></polyline>
+                <line x1="8" y1="13" x2="16" y2="13"></line>
+                <line x1="8" y1="17" x2="13" y2="17"></line>
+              </svg>
+              <span>Send PDF to Lectra</span>
+            </button>
+            <div class="cs-overflow-divider" role="separator"></div>
+            <button id="cs-overflow-signin" class="cs-overflow-item" role="menuitem" type="button">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+                <path d="M20 21a8 8 0 0 0-16 0"></path>
+                <circle cx="12" cy="8" r="4"></circle>
+              </svg>
+              <span id="cs-overflow-signin-label">Sign in with Google</span>
+            </button>
+          </div>
         </div>
       </div>
+      <p class="cs-status-line" id="status-text" aria-live="polite">Search your course content</p>
     </header>
+
+    <!-- Hidden legacy mount points — popup.js still binds these IDs.
+         Visible controls live in .cs-overflow-menu above. -->
+    <div class="cs-legacy-actions hidden" aria-hidden="true">
+      <button id="refresh-btn" type="button" tabindex="-1"><span class="btn-text">Refresh</span></button>
+      <button id="send-pdf-btn" type="button" tabindex="-1"><span class="btn-text">Send PDF</span></button>
+      <button id="google-signin-btn" type="button" tabindex="-1" aria-label="Sign in">
+        <svg class="btn-icon auth-icon auth-icon-google hidden" viewBox="0 0 24 24" aria-hidden="true"></svg>
+        <svg class="btn-icon auth-icon auth-icon-account hidden" viewBox="0 0 24 24" aria-hidden="true"></svg>
+        <span class="btn-text">Sign in</span>
+      </button>
+    </div>
+
+    <!-- ============================================
+         HERO — Up Next · Radar · Timeline (segmented)
+         ============================================ -->
+    <section class="cs-hero" id="cs-hero" aria-label="Today">
+      <div class="cs-hero-tabs" role="tablist" aria-label="Hero view">
+        <button class="cs-hero-tab is-active" role="tab" aria-selected="true" aria-controls="cs-hero-next" data-cs-hero-tab="next" type="button">
+          <span class="cs-hero-tab-dot" aria-hidden="true"></span>Up Next
+        </button>
+        <button class="cs-hero-tab" role="tab" aria-selected="false" aria-controls="cs-hero-radar" data-cs-hero-tab="radar" type="button">
+          <span class="cs-hero-tab-dot" aria-hidden="true"></span>Radar
+        </button>
+        <button class="cs-hero-tab" role="tab" aria-selected="false" aria-controls="cs-hero-timeline" data-cs-hero-tab="timeline" type="button">
+          <span class="cs-hero-tab-dot" aria-hidden="true"></span>Recents
+        </button>
+      </div>
+
+      <div class="cs-hero-stage" id="cs-hero-stage">
+        <!-- L-bracket reticle frames the active hero panel -->
+        <span class="cs-bracket cs-bracket--tl" aria-hidden="true"></span>
+        <span class="cs-bracket cs-bracket--tr" aria-hidden="true"></span>
+        <span class="cs-bracket cs-bracket--bl" aria-hidden="true"></span>
+        <span class="cs-bracket cs-bracket--br" aria-hidden="true"></span>
+
+        <div id="cs-hero-next"     class="cs-hero-panel" role="tabpanel" aria-labelledby="cs-hero-tab-next"></div>
+        <div id="cs-hero-radar"    class="cs-hero-panel hidden" role="tabpanel" aria-labelledby="cs-hero-tab-radar"></div>
+        <div id="cs-hero-timeline" class="cs-hero-panel hidden" role="tabpanel" aria-labelledby="cs-hero-tab-timeline"></div>
+      </div>
+    </section>
 
     <!-- Search Section -->
     <div class="search-section">
       <div class="search-wrapper">
-        <input type="text" id="search-input" class="search-input" placeholder="e.g., 'lecture 7' or 'midterm'"
+        <span class="cs-search-glyph" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">
+            <circle cx="11" cy="11" r="6.5"></circle>
+            <line x1="16" y1="16" x2="20.5" y2="20.5" stroke-linecap="round"></line>
+          </svg>
+        </span>
+        <input type="text" id="search-input" class="search-input" placeholder="Search assignments, files, lectures…"
           autocomplete="off" spellcheck="false" aria-label="Search your course content">
-        <button id="clear-search" class="clear-btn" type="button" title="Clear search" aria-label="Clear search">×</button>
+        <button id="clear-search" class="clear-btn" type="button" title="Clear search" aria-label="Clear search">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true">
+            <line x1="4" y1="4" x2="12" y2="12"></line>
+            <line x1="12" y1="4" x2="4" y2="12"></line>
+          </svg>
+        </button>
       </div>
+
+      <!-- Query suggestions — surfaces queries you've used before that match what you're typing -->
+      <div class="cs-suggest-row hidden" id="cs-suggest-row" role="listbox" aria-label="Suggested searches"></div>
+
+      <!-- Pinned row — visible only when state.pinnedItems is non-empty -->
+      <div class="cs-pinned-row hidden" id="cs-pinned-row" aria-label="Pinned items"></div>
 
 
 
@@ -141,69 +237,24 @@
       </div>
     </div>
 
-    <!-- Sync Status Section -->
-    <div id="sync-status" class="sync-status synced">
-      <span id="sync-icon" class="sync-icon">✓</span>
-      <span id="sync-text" class="sync-text">Synced</span>
-      <progress id="scan-progress" max="100" value="0" class="hidden"></progress>
+    <!-- Footer rail — sync status + stats inline as a quiet HUD readout -->
+    <div class="cs-rail">
+      <div id="sync-status" class="sync-status synced">
+        <span id="sync-icon" class="sync-icon">✓</span>
+        <span id="sync-text" class="sync-text">Synced</span>
+        <progress id="scan-progress" max="100" value="0" class="hidden"></progress>
+      </div>
+
+      <div class="stats-section">
+        <button id="stats-btn" class="stats-btn" type="button" aria-label="Browse all indexed content">
+          <span id="stats-text" class="stats-text">Loading…</span>
+          <span class="stats-hint" id="stats-hint"></span>
+        </button>
+      </div>
     </div>
 
-    <!-- Stats Section -->
-    <div class="stats-section">
-      <button id="stats-btn" class="stats-btn" type="button" aria-label="Browse all indexed content">
-        <span id="stats-text" class="stats-text">Loading...</span>
-        <span class="stats-hint" id="stats-hint"></span>
-      </button>
-    </div>
-
-    <!-- Footer Actions -->
-    <div class="footer-actions">
-      <button id="refresh-btn" class="action-btn secondary-btn">
-        <svg class="btn-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-          stroke-width="2">
-          <polyline points="23 4 23 10 17 10"></polyline>
-          <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
-        </svg>
-        <span class="btn-text">Refresh Now</span>
-      </button>
-
-      <button id="send-pdf-btn" class="action-btn secondary-btn">
-        <svg class="btn-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-          stroke-width="2">
-          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-          <polyline points="14 2 14 8 20 8"></polyline>
-          <line x1="8" y1="13" x2="16" y2="13"></line>
-          <line x1="8" y1="17" x2="13" y2="17"></line>
-        </svg>
-        <span class="btn-text">Send PDF to Lectra</span>
-      </button>
-
-      <!-- Auth Integration -->
-      <button id="google-signin-btn" class="action-btn" type="button" aria-label="Sign in with Google">
-        <svg class="btn-icon auth-icon auth-icon-google" width="16" height="16" viewBox="0 0 24 24" fill="none"
-          xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-          <path
-            d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
-            fill="#4285F4" />
-          <path
-            d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
-            fill="#34A853" />
-          <path
-            d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"
-            fill="#FBBC05" />
-          <path
-            d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
-            fill="#EA4335" />
-        </svg>
-        <svg class="btn-icon auth-icon auth-icon-account hidden" width="16" height="16" viewBox="0 0 24 24" fill="none"
-          stroke="currentColor" stroke-width="2" aria-hidden="true">
-          <path d="M20 21a8 8 0 0 0-16 0"></path>
-          <circle cx="12" cy="8" r="4"></circle>
-        </svg>
-        <span class="btn-text">Sign in</span>
-      </button>
-
-    </div>
+    <!-- Footer actions moved into the topbar overflow menu (#cs-overflow-menu).
+         Legacy bindings live in .cs-legacy-actions above. -->
 
     <!-- Browse Modal -->
     <div id="browse-modal" class="browse-modal hidden" role="dialog" aria-modal="true" aria-labelledby="browse-title">
@@ -453,6 +504,7 @@
   </div>
 
   <script src="lib/fuse.min.js"></script>
+  <script src="components/radar.js"></script>
   <script src="popup.js"></script>
 </body>
 

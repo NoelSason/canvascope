@@ -340,6 +340,46 @@
     } catch { return { signedIn: false }; }
   }
 
+  async function fetchPinnedIds() {
+    try {
+      const result = await chrome.storage.local.get(['pinnedItems']);
+      const ids = Array.isArray(result.pinnedItems) ? result.pinnedItems : [];
+      return new Set(ids.filter(Boolean).map(String));
+    } catch { return new Set(); }
+  }
+
+  async function persistPinnedIds(ids) {
+    try {
+      await chrome.storage.local.set({ pinnedItems: Array.from(ids) });
+    } catch (e) { /* non-fatal */ }
+  }
+
+  function canonicalIdForItem(item) {
+    if (!item || !item.url) return '__hash__' + ((item?.title || '') + '|' + (item?.courseName || '') + '|' + (item?.type || ''));
+    try {
+      const u = new URL(item.url);
+      return `${u.origin}${u.pathname}`;
+    } catch { return item.url; }
+  }
+
+  async function togglePinFromOverlay(item, btn) {
+    if (!item) return;
+    const id = canonicalIdForItem(item);
+    if (pinnedIds.has(id)) {
+      pinnedIds.delete(id);
+    } else {
+      pinnedIds.add(id);
+      if (btn) {
+        btn.classList.remove('is-flash');
+        void btn.offsetWidth;
+        btn.classList.add('is-flash');
+      }
+    }
+    await persistPinnedIds(pinnedIds);
+    // Re-render to refresh pinned section visibility + star states
+    renderResults();
+  }
+
   async function sendPdfToLectra(item) {
     return chrome.runtime.sendMessage({
       action: 'sendPdfToLectra',
@@ -421,6 +461,7 @@
   let indexedContent = [];
   let extensionSettings = {};
   let authStatus = { signedIn: false };
+  let pinnedIds = new Set();
   let highlightedIndex = 0;
   let currentEntries = [];
   let feedbackMessage = null;
@@ -431,11 +472,22 @@
   // ============================================
 
   const OVERLAY_CSS = `
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
-
     :host {
       all: initial;
       display: block;
+      --brand-500: #ef4444;
+      --brand-400: #f87171;
+      --brand-300: rgba(239, 68, 68, 0.32);
+      --hairline: rgba(255, 255, 255, 0.08);
+      --hairline-strong: rgba(255, 255, 255, 0.12);
+      --hairline-brand: rgba(239, 68, 68, 0.18);
+      --surface-0: #0a0708;
+      --surface-1: #120a0c;
+      --surface-2: #180e10;
+      --text-primary: rgba(255, 255, 255, 0.94);
+      --text-muted: rgba(255, 255, 255, 0.42);
+      --font-display: 'SF Pro Display', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+      --font-mono: 'SF Mono', ui-monospace, 'JetBrains Mono', Menlo, monospace;
     }
 
     * {
@@ -448,9 +500,9 @@
       position: fixed;
       inset: 0;
       z-index: 2147483646;
-      background: rgba(0, 0, 0, 0.45);
-      backdrop-filter: blur(5px);
-      -webkit-backdrop-filter: blur(5px);
+      background: rgba(8, 4, 5, 0.62);
+      backdrop-filter: blur(8px) saturate(1.1);
+      -webkit-backdrop-filter: blur(8px) saturate(1.1);
       opacity: 0;
       transition: opacity ${ANIMATION_DURATION_MS}ms ease;
       pointer-events: none;
@@ -465,16 +517,19 @@
       position: fixed;
       top: 18%;
       left: 50%;
-      transform: translateX(-50%) scale(0.92);
+      transform: translateX(-50%) scale(0.96);
       z-index: 2147483647;
       width: 640px;
       max-width: calc(100vw - 40px);
       opacity: 0;
       transition: opacity ${ANIMATION_DURATION_MS}ms ease, transform ${ANIMATION_DURATION_MS}ms cubic-bezier(0.16, 1, 0.3, 1);
       pointer-events: none;
-      font-family: 'Inter', system-ui, -apple-system, sans-serif;
-      color: rgba(255, 255, 255, 0.92);
+      font-family: var(--font-display);
+      font-size: 14px;
+      color: var(--text-primary);
+      letter-spacing: -0.005em;
       -webkit-font-smoothing: antialiased;
+      font-variant-numeric: tabular-nums;
     }
 
     .slash-container.visible {
@@ -484,33 +539,44 @@
     }
 
     .slash-panel {
-      background: linear-gradient(
-        145deg,
-        rgba(32, 10, 10, 0.95) 0%,
-        rgba(20, 8, 8, 0.96) 45%,
-        rgba(38, 10, 10, 0.94) 100%
-      );
-      border: 1px solid rgba(239, 68, 68, 0.35);
-      border-radius: 20px;
+      background: var(--surface-1);
+      border: 1px solid var(--hairline-strong);
+      border-radius: 14px;
       box-shadow:
-        0 24px 56px rgba(0, 0, 0, 0.55),
-        0 0 0 1px rgba(255, 255, 255, 0.04) inset,
-        0 1px 0 rgba(255, 255, 255, 0.07) inset;
-      backdrop-filter: blur(28px) saturate(1.5);
-      -webkit-backdrop-filter: blur(28px) saturate(1.5);
+        0 30px 80px rgba(0, 0, 0, 0.7),
+        0 0 0 1px rgba(255, 255, 255, 0.04) inset;
       overflow: hidden;
       position: relative;
     }
 
+    /* Brand vignette behind everything */
     .slash-panel::before {
       content: '';
       position: absolute;
       inset: 0;
-      border-radius: 20px;
-      background:
-        radial-gradient(circle at 20% 0%, rgba(239, 68, 68, 0.12), transparent 40%),
-        radial-gradient(circle at 80% 100%, rgba(239, 68, 68, 0.06), transparent 30%);
       pointer-events: none;
+      background:
+        radial-gradient(ellipse 60% 40% at 18% 0%, rgba(239, 68, 68, 0.10), transparent 60%),
+        radial-gradient(ellipse 50% 35% at 90% 100%, rgba(239, 68, 68, 0.05), transparent 60%);
+    }
+
+    /* L-bracket reticle on the four panel corners */
+    .slash-panel::after {
+      content: '';
+      position: absolute;
+      inset: 6px;
+      pointer-events: none;
+      border: 0 solid transparent;
+      background:
+        linear-gradient(to right, var(--brand-400) 14px, transparent 14px) top    left  / 14px 1px no-repeat,
+        linear-gradient(to bottom, var(--brand-400) 14px, transparent 14px) top    left  / 1px 14px no-repeat,
+        linear-gradient(to left,  var(--brand-400) 14px, transparent 14px) top    right / 14px 1px no-repeat,
+        linear-gradient(to bottom, var(--brand-400) 14px, transparent 14px) top    right / 1px 14px no-repeat,
+        linear-gradient(to right, var(--brand-400) 14px, transparent 14px) bottom left  / 14px 1px no-repeat,
+        linear-gradient(to top,    var(--brand-400) 14px, transparent 14px) bottom left  / 1px 14px no-repeat,
+        linear-gradient(to left,  var(--brand-400) 14px, transparent 14px) bottom right / 14px 1px no-repeat,
+        linear-gradient(to top,    var(--brand-400) 14px, transparent 14px) bottom right / 1px 14px no-repeat;
+      opacity: 0.55;
     }
 
     /* ---------- SEARCH BAR ---------- */
@@ -518,26 +584,26 @@
       position: relative;
       display: flex;
       align-items: center;
-      padding: 0 18px;
-      gap: 12px;
-      border-bottom: 1px solid rgba(239, 68, 68, 0.16);
+      padding: 0 16px;
+      gap: 10px;
+      border-bottom: 1px solid var(--hairline);
     }
 
     .slash-prefix {
       flex-shrink: 0;
-      width: 32px;
-      height: 32px;
+      width: 26px;
+      height: 26px;
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      border-radius: 10px;
-      border: 1px solid rgba(248, 113, 113, 0.35);
-      background: rgba(239, 68, 68, 0.14);
-      color: #f87171;
-      font-size: 1.05rem;
+      border-radius: 6px;
+      border: 1px solid var(--hairline-brand);
+      background: rgba(239, 68, 68, 0.10);
+      color: var(--brand-400);
+      font-family: var(--font-mono);
+      font-size: 14px;
       font-weight: 700;
       line-height: 1;
-      box-shadow: 0 0 12px rgba(239, 68, 68, 0.15);
     }
 
     .slash-input {
@@ -545,39 +611,42 @@
       background: none;
       border: none;
       outline: none;
-      color: rgba(255, 255, 255, 0.95);
-      font-size: 1.08rem;
+      color: var(--text-primary);
+      font-size: 16px;
       font-family: inherit;
       font-weight: 500;
-      padding: 18px 0;
-      caret-color: #f87171;
+      letter-spacing: -0.01em;
+      padding: 16px 0;
+      caret-color: var(--brand-400);
     }
 
     .slash-input::placeholder {
-      color: rgba(255, 255, 255, 0.32);
+      color: var(--text-muted);
       font-weight: 400;
     }
 
     .slash-close-btn {
       flex-shrink: 0;
-      width: 28px;
-      height: 28px;
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      border: 1px solid rgba(255, 255, 255, 0.1);
-      border-radius: 8px;
-      background: rgba(255, 255, 255, 0.06);
-      color: rgba(255, 255, 255, 0.5);
-      font-size: 0.85rem;
+      padding: 3px 8px;
+      border: 1px solid var(--hairline);
+      border-radius: 4px;
+      background: var(--surface-2);
+      color: var(--text-muted);
+      font-family: var(--font-mono);
+      font-size: 10px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
       cursor: pointer;
       transition: all 0.15s ease;
     }
 
     .slash-close-btn:hover {
-      background: rgba(239, 68, 68, 0.18);
-      border-color: rgba(248, 113, 113, 0.3);
-      color: rgba(255, 255, 255, 0.9);
+      background: rgba(239, 68, 68, 0.14);
+      border-color: var(--hairline-brand);
+      color: var(--brand-400);
     }
 
     /* ---------- RESULTS ---------- */
@@ -601,53 +670,79 @@
     }
 
     .slash-section-label {
-      font-size: 0.7rem;
-      font-weight: 700;
-      letter-spacing: 0.08em;
+      font-family: var(--font-mono);
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.12em;
       text-transform: uppercase;
-      color: rgba(255, 255, 255, 0.4);
-      padding: 10px 10px 6px;
+      color: var(--text-muted);
+      padding: 12px 10px 6px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .slash-section-label::before {
+      content: '⟫';
+      color: var(--brand-400);
+      font-family: inherit;
+    }
+    .slash-section-label::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: var(--hairline);
     }
 
     .slash-item {
       display: flex;
       align-items: center;
-      gap: 12px;
-      padding: 11px 12px;
-      border-radius: 14px;
+      gap: 10px;
+      padding: 9px 10px;
+      border-radius: 8px;
       border: 1px solid transparent;
       cursor: pointer;
-      transition: all 0.12s ease;
+      transition: background 120ms cubic-bezier(.2,.8,.2,1),
+                  border-color 120ms cubic-bezier(.2,.8,.2,1);
       width: 100%;
       text-align: left;
       background: none;
       color: inherit;
       font-family: inherit;
       font-size: inherit;
+      position: relative;
     }
 
     .slash-item:hover,
     .slash-item.active {
-      background: rgba(239, 68, 68, 0.12);
-      border-color: rgba(248, 113, 113, 0.22);
+      background: rgba(239, 68, 68, 0.08);
+      border-color: var(--hairline-brand);
     }
 
     .slash-item.active {
-      background: rgba(239, 68, 68, 0.16);
-      border-color: rgba(248, 113, 113, 0.32);
+      background: rgba(239, 68, 68, 0.14);
+      border-color: rgba(239, 68, 68, 0.34);
+    }
+    .slash-item.active::after {
+      content: '';
+      position: absolute;
+      left: 0;
+      top: 8px; bottom: 8px;
+      width: 2px;
+      background: var(--brand-500);
+      border-radius: 1px;
     }
 
     .slash-item-icon {
-      width: 36px;
-      height: 36px;
+      width: 28px;
+      height: 28px;
       flex-shrink: 0;
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      border-radius: 10px;
-      background: rgba(255, 255, 255, 0.05);
-      border: 1px solid rgba(255, 255, 255, 0.06);
-      font-size: 1.1rem;
+      border-radius: 6px;
+      background: var(--surface-2);
+      border: 1px solid var(--hairline);
+      font-size: 14px;
     }
 
     .slash-item-copy {
@@ -656,33 +751,74 @@
     }
 
     .slash-item-title {
-      font-size: 0.92rem;
-      font-weight: 600;
-      color: rgba(255, 255, 255, 0.94);
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--text-primary);
+      letter-spacing: -0.005em;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
     }
 
     .slash-item-subtitle {
-      font-size: 0.78rem;
-      color: rgba(255, 255, 255, 0.45);
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text-muted);
+      letter-spacing: 0.02em;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
-      margin-top: 2px;
+      margin-top: 1px;
     }
 
     .slash-item-badge {
       flex-shrink: 0;
-      font-size: 0.7rem;
+      font-family: var(--font-mono);
+      font-size: 10px;
       font-weight: 600;
-      letter-spacing: 0.04em;
-      padding: 4px 10px;
-      border-radius: 20px;
-      background: rgba(239, 68, 68, 0.14);
-      color: #f87171;
-      border: 1px solid rgba(248, 113, 113, 0.2);
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      padding: 3px 7px;
+      border-radius: 999px;
+      background: rgba(239, 68, 68, 0.10);
+      color: var(--brand-400);
+      border: 1px solid var(--hairline-brand);
+    }
+
+    /* ---------- PIN TOGGLE ---------- */
+    .slash-pin-toggle {
+      flex-shrink: 0;
+      width: 22px;
+      height: 22px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border: none;
+      background: transparent;
+      color: rgba(255, 255, 255, 0.22);
+      cursor: pointer;
+      font-size: 13px;
+      line-height: 1;
+      border-radius: 50%;
+      transition: color 120ms cubic-bezier(.2,.8,.2,1),
+                  background 120ms cubic-bezier(.2,.8,.2,1),
+                  transform 200ms cubic-bezier(.2,.8,.2,1);
+    }
+    .slash-pin-toggle:hover {
+      color: var(--brand-400);
+      background: rgba(239, 68, 68, 0.08);
+    }
+    .slash-pin-toggle.is-pinned {
+      color: var(--brand-400);
+      text-shadow: 0 0 4px var(--brand-300);
+    }
+    .slash-pin-toggle.is-flash {
+      animation: slash-pin-flash 360ms cubic-bezier(.2,.8,.2,1);
+    }
+    @keyframes slash-pin-flash {
+      0%   { transform: scale(1);    color: rgba(255,255,255,.22); }
+      40%  { transform: scale(1.3);  color: #fbbf24; }
+      100% { transform: scale(1);    color: var(--brand-400); }
     }
 
     .slash-item-badge.badge-setup {
@@ -730,31 +866,35 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 10px 18px;
-      border-top: 1px solid rgba(239, 68, 68, 0.1);
-      font-size: 0.72rem;
-      color: rgba(255, 255, 255, 0.28);
+      padding: 8px 16px;
+      border-top: 1px solid var(--hairline);
+      font-family: var(--font-mono);
+      font-size: 10px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--text-muted);
       position: relative;
       z-index: 1;
     }
 
     .slash-footer-keys {
       display: flex;
-      gap: 8px;
+      gap: 6px;
+      align-items: center;
     }
 
     .slash-footer-keys kbd {
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      min-width: 20px;
-      padding: 2px 6px;
-      border-radius: 5px;
-      border: 1px solid rgba(255, 255, 255, 0.12);
-      background: rgba(255, 255, 255, 0.05);
+      min-width: 18px;
+      padding: 2px 5px;
+      border-radius: 3px;
+      border: 1px solid var(--hairline);
+      background: var(--surface-2);
       font-family: inherit;
-      font-size: 0.68rem;
-      color: rgba(255, 255, 255, 0.44);
+      font-size: 9px;
+      color: var(--text-muted);
     }
 
     @media (prefers-reduced-motion: reduce) {
@@ -883,14 +1023,16 @@
     feedbackMessage = null;
 
     // Fetch data in parallel
-    const [content, settings, auth] = await Promise.all([
+    const [content, settings, auth, pins] = await Promise.all([
       fetchIndexedContent(),
       fetchExtensionSettings(),
-      fetchAuthStatus()
+      fetchAuthStatus(),
+      fetchPinnedIds()
     ]);
     indexedContent = content;
     extensionSettings = settings;
     authStatus = auth;
+    pinnedIds = pins;
 
     // Show with animation
     const backdrop = getBackdrop();
@@ -986,6 +1128,28 @@
   // RENDERING
   // ============================================
 
+  function getPinnedEntries() {
+    if (!pinnedIds || pinnedIds.size === 0) return [];
+    if (!Array.isArray(indexedContent) || indexedContent.length === 0) return [];
+    const byId = new Map();
+    indexedContent.forEach(item => byId.set(canonicalIdForItem(item), item));
+    const out = [];
+    pinnedIds.forEach(id => {
+      const item = byId.get(id);
+      if (!item) return;
+      out.push({
+        kind: 'item',
+        item,
+        title: item.title || 'Untitled',
+        subtitle: [item.courseName, item.moduleName].filter(Boolean).join(' › '),
+        icon: '★',
+        badge: 'Pinned',
+        onSelect: () => executeOpenUrl(item.url)
+      });
+    });
+    return out.slice(0, 12);
+  }
+
   function renderResults() {
     const body = getBody();
     if (!body) return;
@@ -996,12 +1160,12 @@
     const lookup = buildSlashCommandLookup(commands);
     const parsed = parseSlashInput(rawValue, lookup);
 
-    let entries = [];
+    let primaryEntries = [];
+    let primaryLabel = '';
 
     if (parsed.mode === 'commands') {
-      // Show command palette
       const matching = rankSlashCommands(commands, parsed.commandQuery);
-      entries = matching.map(cmd => ({
+      primaryEntries = matching.map(cmd => ({
         kind: 'command',
         command: cmd,
         title: `/${cmd.primaryAlias}`,
@@ -1010,17 +1174,27 @@
         badge: cmd.badge,
         onSelect: () => selectCommand(cmd)
       }));
+      primaryLabel = 'Commands';
     } else if (parsed.exactCommand) {
-      const cmd = parsed.exactCommand;
-      entries = buildCommandResults(cmd, parsed.argumentText);
+      primaryEntries = buildCommandResults(parsed.exactCommand, parsed.argumentText);
+      primaryLabel = `/${parsed.exactCommand.primaryAlias}`;
     }
 
-    currentEntries = entries;
-    highlightedIndex = entries.length > 0 ? Math.min(highlightedIndex, entries.length - 1) : 0;
+    // Pinned section is shown only when input is empty (the bare "/" case)
+    const showPinned = parsed.mode === 'commands' && !parsed.commandQuery;
+    const pinnedEntries = showPinned ? getPinnedEntries() : [];
+
+    const sections = [];
+    if (pinnedEntries.length > 0) sections.push({ label: 'Pinned', entries: pinnedEntries });
+    if (primaryEntries.length > 0) sections.push({ label: primaryLabel, entries: primaryEntries });
+
+    const flatEntries = sections.flatMap(s => s.entries);
+    currentEntries = flatEntries;
+    highlightedIndex = flatEntries.length > 0 ? Math.min(highlightedIndex, flatEntries.length - 1) : 0;
 
     body.innerHTML = '';
 
-    if (entries.length === 0) {
+    if (flatEntries.length === 0) {
       const empty = document.createElement('div');
       empty.className = 'slash-empty';
       empty.textContent = parsed.mode === 'commands'
@@ -1030,56 +1204,77 @@
       return;
     }
 
-    // Section label
-    const label = document.createElement('div');
-    label.className = 'slash-section-label';
-    label.textContent = parsed.mode === 'commands' ? 'Commands' : `/${parsed.exactCommand.primaryAlias}`;
-    body.appendChild(label);
+    let runningIdx = 0;
+    sections.forEach(section => {
+      const label = document.createElement('div');
+      label.className = 'slash-section-label';
+      label.textContent = section.label;
+      body.appendChild(label);
 
-    entries.forEach((entry, idx) => {
-      const btn = document.createElement('button');
-      btn.className = `slash-item${idx === highlightedIndex ? ' active' : ''}`;
-      btn.setAttribute('role', 'option');
-      btn.setAttribute('aria-selected', idx === highlightedIndex ? 'true' : 'false');
-      btn.addEventListener('mousedown', e => e.preventDefault());
-      btn.addEventListener('click', () => {
-        highlightedIndex = idx;
-        executeEntry(entry);
+      section.entries.forEach(entry => {
+        const idx = runningIdx++;
+        const btn = document.createElement('button');
+        btn.className = `slash-item${idx === highlightedIndex ? ' active' : ''}`;
+        btn.setAttribute('role', 'option');
+        btn.setAttribute('aria-selected', idx === highlightedIndex ? 'true' : 'false');
+        btn.addEventListener('mousedown', e => e.preventDefault());
+        btn.addEventListener('click', () => {
+          highlightedIndex = idx;
+          executeEntry(entry);
+        });
+        btn.addEventListener('mouseenter', () => {
+          highlightedIndex = idx;
+          renderHighlight();
+        });
+
+        const iconEl = document.createElement('span');
+        iconEl.className = 'slash-item-icon';
+        iconEl.textContent = entry.icon || '⚡';
+        btn.appendChild(iconEl);
+
+        const copy = document.createElement('div');
+        copy.className = 'slash-item-copy';
+
+        const titleEl = document.createElement('div');
+        titleEl.className = 'slash-item-title';
+        titleEl.textContent = entry.title;
+        copy.appendChild(titleEl);
+
+        if (entry.subtitle) {
+          const subEl = document.createElement('div');
+          subEl.className = 'slash-item-subtitle';
+          subEl.textContent = entry.subtitle;
+          copy.appendChild(subEl);
+        }
+        btn.appendChild(copy);
+
+        if (entry.badge) {
+          const badgeEl = document.createElement('span');
+          badgeEl.className = `slash-item-badge${entry.badgeClass ? ' ' + entry.badgeClass : ''}`;
+          badgeEl.textContent = entry.badge;
+          btn.appendChild(badgeEl);
+        }
+
+        // Pin toggle on real item rows (skip commands / actions / guidance)
+        if (entry.kind === 'item' && entry.item && entry.item.url) {
+          const id = canonicalIdForItem(entry.item);
+          const pinned = pinnedIds.has(id);
+          const pinBtn = document.createElement('button');
+          pinBtn.type = 'button';
+          pinBtn.className = 'slash-pin-toggle' + (pinned ? ' is-pinned' : '');
+          pinBtn.textContent = pinned ? '★' : '☆';
+          pinBtn.setAttribute('aria-label', pinned ? 'Unpin item' : 'Pin item');
+          pinBtn.addEventListener('mousedown', e => e.preventDefault());
+          pinBtn.addEventListener('click', async (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            await togglePinFromOverlay(entry.item, pinBtn);
+          });
+          btn.appendChild(pinBtn);
+        }
+
+        body.appendChild(btn);
       });
-      btn.addEventListener('mouseenter', () => {
-        highlightedIndex = idx;
-        renderHighlight();
-      });
-
-      const iconEl = document.createElement('span');
-      iconEl.className = 'slash-item-icon';
-      iconEl.textContent = entry.icon || '⚡';
-      btn.appendChild(iconEl);
-
-      const copy = document.createElement('div');
-      copy.className = 'slash-item-copy';
-
-      const titleEl = document.createElement('div');
-      titleEl.className = 'slash-item-title';
-      titleEl.textContent = entry.title;
-      copy.appendChild(titleEl);
-
-      if (entry.subtitle) {
-        const subEl = document.createElement('div');
-        subEl.className = 'slash-item-subtitle';
-        subEl.textContent = entry.subtitle;
-        copy.appendChild(subEl);
-      }
-      btn.appendChild(copy);
-
-      if (entry.badge) {
-        const badgeEl = document.createElement('span');
-        badgeEl.className = `slash-item-badge${entry.badgeClass ? ' ' + entry.badgeClass : ''}`;
-        badgeEl.textContent = entry.badge;
-        btn.appendChild(badgeEl);
-      }
-
-      body.appendChild(btn);
     });
 
     scrollHighlightIntoView();
