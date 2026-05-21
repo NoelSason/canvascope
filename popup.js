@@ -1454,16 +1454,20 @@ function renderDuePlanner() {
       const meta = document.createElement('div');
       meta.className = 'due-item-meta';
 
+      if (item.courseName) {
+        const course = document.createElement('span');
+        const dot = document.createElement('span');
+        dot.className = 'cs-course-dot';
+        dot.style.background = csCourseColor(item.courseName);
+        course.appendChild(dot);
+        course.appendChild(document.createTextNode(csShortCourse(item.courseName)));
+        meta.appendChild(course);
+      }
+
       const typeBadge = document.createElement('span');
       typeBadge.className = 'result-type';
       typeBadge.textContent = item.type || 'task';
       meta.appendChild(typeBadge);
-
-      if (item.courseName) {
-        const course = document.createElement('span');
-        course.textContent = item.courseName;
-        meta.appendChild(course);
-      }
       left.appendChild(meta);
 
       const right = document.createElement('div');
@@ -8557,3 +8561,344 @@ function showBrowseCategory(type, items) {
     elements.browseContent.appendChild(itemEl);
   });
 }
+
+// ============================================
+// DIRECTION B — Calm Productivity enhancements
+// ============================================
+(function csDirectionB() {
+  'use strict';
+
+  const COURSE_PALETTE = [
+    '#4ea874', // green
+    '#d18b4a', // orange
+    '#5d8bd9', // blue
+    '#a070d0', // purple
+    '#d05c7a', // pink
+    '#e8b87a', // amber
+    '#7cc296', // mint
+    '#a890e8', // plum
+    '#e88a8a', // coral
+    '#5fbac4', // teal
+  ];
+
+  function hashStr(s) {
+    let h = 0;
+    s = String(s || '');
+    for (let i = 0; i < s.length; i++) {
+      h = ((h << 5) - h) + s.charCodeAt(i);
+      h |= 0;
+    }
+    return Math.abs(h);
+  }
+
+  window.csCourseColor = function csCourseColor(name) {
+    if (!name) return 'var(--accent)';
+    return COURSE_PALETTE[hashStr(name) % COURSE_PALETTE.length];
+  };
+
+  // Short course label: "2026 Spring Biology 1A" -> "BIO 1A"
+  //                    "Chem 3BL — Organic Chemistry Lab" -> "CHEM 3BL"
+  //                    "CS 61A — Structure & Interp." -> "CS 61A"
+  window.csShortCourse = function csShortCourse(name) {
+    if (!name) return '';
+    const raw = String(name).split(/[—\-:|]/)[0].trim();
+    const stripped = raw.replace(/^(\d{4}\s+)?(spring|fall|summer|winter|autumn)\s+/i, '').trim();
+    const tokenMatch = stripped.match(/([A-Za-z]{2,8})\s*([0-9][A-Za-z0-9]{0,4})/);
+    if (tokenMatch) {
+      return (tokenMatch[1].toUpperCase() + ' ' + tokenMatch[2]).trim();
+    }
+    const words = stripped.split(/\s+/).filter(Boolean);
+    if (words.length === 0) return raw.slice(0, 18);
+    if (words.length === 1) return words[0].slice(0, 12);
+    return (words[0].slice(0, 6) + ' ' + words[1].slice(0, 6)).toUpperCase();
+  };
+
+  // ── Greeting headline ─────────────────────────────────────────────
+  function timeBasedGreeting() {
+    const h = new Date().getHours();
+    if (h < 5)  return 'Working late';
+    if (h < 12) return 'Good morning';
+    if (h < 18) return 'Good afternoon';
+    return 'Good evening';
+  }
+
+  function formatGreetingDate() {
+    const d = new Date();
+    return d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+  }
+
+  function getFirstName() {
+    try {
+      const u = (typeof state !== 'undefined' && state && state.user) || null;
+      if (u && (u.name || u.displayName)) {
+        const full = String(u.name || u.displayName);
+        return full.split(/\s+/)[0];
+      }
+    } catch (_) { /* noop */ }
+    return null;
+  }
+
+  function countOverdueToday() {
+    try {
+      if (typeof state === 'undefined' || !state || !Array.isArray(state.indexedContent)) {
+        return { overdue: 0, today: 0 };
+      }
+      const TASK_TYPES = new Set(['assignment', 'quiz', 'discussion']);
+      const now = Date.now();
+      const dayMs = 24 * 60 * 60 * 1000;
+      const dismissed = new Set(Array.isArray(state.dismissedTasks) ? state.dismissedTasks : []);
+      let overdue = 0, today = 0;
+      for (const it of state.indexedContent) {
+        const t = String(it.type || '').toLowerCase();
+        if (!TASK_TYPES.has(t)) continue;
+        if (!it.dueAt) continue;
+        const ts = new Date(it.dueAt).getTime();
+        if (!ts || isNaN(ts)) continue;
+        const id = (typeof getCanonicalId === 'function') ? getCanonicalId(it) : null;
+        if (id && dismissed.has(id)) continue;
+        const diff = ts - now;
+        if (diff < 0 && diff > -30 * dayMs) overdue++;
+        else if (diff >= 0 && diff < dayMs) today++;
+      }
+      return { overdue, today };
+    } catch (_) {
+      return { overdue: 0, today: 0 };
+    }
+  }
+
+  function renderGreeting() {
+    const dateEl  = document.getElementById('cs-greeting-date');
+    const titleEl = document.getElementById('cs-greeting-title');
+    const metaEl  = document.getElementById('cs-greeting-meta');
+    if (!dateEl || !titleEl || !metaEl) return;
+
+    dateEl.textContent = formatGreetingDate();
+
+    const firstName = getFirstName();
+    titleEl.textContent = firstName
+      ? `${timeBasedGreeting()}, ${firstName}.`
+      : `${timeBasedGreeting()}.`;
+
+    const { overdue, today } = countOverdueToday();
+    metaEl.innerHTML = '';
+    if (overdue > 0 && today > 0) {
+      metaEl.append('You have ');
+      const bad = document.createElement('span');
+      bad.className = 'cs-bad';
+      bad.textContent = `${overdue} overdue`;
+      metaEl.appendChild(bad);
+      metaEl.append(` · ${today} due today.`);
+    } else if (overdue > 0) {
+      metaEl.append('You have ');
+      const bad = document.createElement('span');
+      bad.className = 'cs-bad';
+      bad.textContent = `${overdue} overdue`;
+      metaEl.appendChild(bad);
+      metaEl.append('.');
+    } else if (today > 0) {
+      const ok = document.createElement('span');
+      ok.className = 'cs-ok';
+      ok.textContent = `${today} due today`;
+      metaEl.appendChild(ok);
+      metaEl.append(' · all caught up otherwise.');
+    } else {
+      metaEl.append('All caught up — nothing due today.');
+    }
+  }
+
+  // ── Filter chips ──────────────────────────────────────────────────
+  function setChipActive(value) {
+    document.querySelectorAll('#cs-chip-row .cs-chip').forEach(el => {
+      const isActive = el.dataset.csFilter === value;
+      el.classList.toggle('is-active', isActive);
+      el.setAttribute('aria-selected', isActive ? 'true' : 'false');
+    });
+  }
+
+  function setLegacyTypeFilter(typeValue) {
+    try {
+      if (typeof state !== 'undefined' && state && state.filters) {
+        state.filters.type = typeValue || '';
+      }
+      const typeText = document.getElementById('type-text');
+      if (typeText) typeText.textContent = typeValue ? labelForType(typeValue) : 'All Types';
+      const options = document.querySelectorAll('#type-options .custom-option');
+      options.forEach(o => o.classList.toggle('selected', (o.dataset.value || '') === (typeValue || '')));
+    } catch (_) { /* noop */ }
+  }
+
+  function labelForType(t) {
+    switch ((t || '').toLowerCase()) {
+      case 'assignment': return 'Assignments';
+      case 'quiz': return 'Quizzes';
+      case 'discussion': return 'Discussions';
+      case 'page': return 'Pages';
+      case 'file': return 'Files';
+      default: return 'All Types';
+    }
+  }
+
+  function applyAgendaFilter(filter) {
+    const planner = document.getElementById('due-planner');
+    if (!planner) return;
+
+    switch (filter) {
+      case 'all':
+        setLegacyTypeFilter('');
+        planner.removeAttribute('data-cs-view');
+        break;
+      case 'due':
+        setLegacyTypeFilter('');
+        planner.setAttribute('data-cs-view', 'due');
+        break;
+      case 'assignment':
+        setLegacyTypeFilter('assignment');
+        planner.removeAttribute('data-cs-view');
+        break;
+      case 'quiz':
+        setLegacyTypeFilter('quiz');
+        planner.removeAttribute('data-cs-view');
+        break;
+      case 'pinned':
+        setLegacyTypeFilter('');
+        planner.setAttribute('data-cs-view', 'pinned');
+        break;
+    }
+
+    if (typeof renderDuePlanner === 'function') {
+      try { renderDuePlanner(); } catch (_) { /* noop */ }
+    }
+    if (typeof applyClientFilters === 'function') {
+      try { applyClientFilters(); } catch (_) { /* noop */ }
+    }
+    csFilterPlannerRows(filter);
+  }
+
+  function csFilterPlannerRows(filter) {
+    const planner = document.getElementById('due-planner');
+    if (!planner) return;
+
+    if (filter === 'pinned') {
+      const pins = new Set(((typeof state !== 'undefined' && state && Array.isArray(state.pinnedItems))
+        ? state.pinnedItems : []).map(String));
+
+      planner.querySelectorAll('.due-item').forEach(row => {
+        const title = (row.querySelector('.due-item-title')?.textContent || '').trim();
+        const isPinned = pins.size > 0 && Array.from(pins).some(id => id.includes(title) || title.includes(id));
+        row.style.display = isPinned ? '' : 'none';
+      });
+    } else {
+      planner.querySelectorAll('.due-item').forEach(row => { row.style.display = ''; });
+    }
+
+    // hide section headers whose body is empty
+    planner.querySelectorAll('.due-section').forEach(sec => {
+      const anyVisible = Array.from(sec.querySelectorAll('.due-item')).some(r => r.style.display !== 'none');
+      sec.style.display = anyVisible ? '' : 'none';
+    });
+  }
+
+  function wireChipRow() {
+    const row = document.getElementById('cs-chip-row');
+    if (!row) return;
+    row.addEventListener('click', (e) => {
+      const btn = e.target.closest('.cs-chip');
+      if (!btn) return;
+      const value = btn.dataset.csFilter || 'all';
+      setChipActive(value);
+      applyAgendaFilter(value);
+    });
+  }
+
+  // ── Top-bar control overrides ─────────────────────────────────────
+  function wireTopBarSearch() {
+    // The "search" icon (formerly help-btn) focuses the search input on the popup.
+    // In overlay mode this is hidden, so it's only the main-popup interaction.
+    const helpBtn = document.getElementById('help-btn');
+    if (!helpBtn) return;
+    helpBtn.addEventListener('click', (e) => {
+      const input = document.getElementById('search-input');
+      if (input) {
+        e.preventDefault();
+        e.stopPropagation();
+        input.focus();
+        input.select();
+      }
+    }, true);
+  }
+
+  function wireThemeBtn() {
+    const btn = document.getElementById('cs-theme-btn');
+    if (!btn) return;
+    btn.addEventListener('click', () => {
+      // Decorative — flash the icon as feedback
+      btn.style.transform = 'rotate(60deg)';
+      setTimeout(() => { btn.style.transform = ''; }, 220);
+    });
+  }
+
+  // ── Stats line — compact "items · courses" ────────────────────────
+  function refreshStatsCompact() {
+    const txt = document.getElementById('stats-text');
+    const hint = document.getElementById('stats-hint');
+    if (!txt) return;
+    try {
+      if (typeof state === 'undefined' || !state || !Array.isArray(state.indexedContent)) return;
+      const items = state.indexedContent.length;
+      const courses = new Set(state.indexedContent.map(i => i.courseName).filter(Boolean)).size;
+      txt.textContent = `${items.toLocaleString()} items`;
+      if (hint) hint.textContent = `· ${courses} courses`;
+    } catch (_) { /* noop */ }
+  }
+
+  // ── Init + refresh hooks ──────────────────────────────────────────
+  function init() {
+    renderGreeting();
+    wireChipRow();
+    wireTopBarSearch();
+    wireThemeBtn();
+    refreshStatsCompact();
+
+    // Refresh greeting every minute (in case hour rolls over)
+    setInterval(renderGreeting, 60_000);
+  }
+
+  // Periodically refresh greeting + stats once data loads
+  function watchData() {
+    let lastCount = 0;
+    setInterval(() => {
+      try {
+        if (typeof state === 'undefined' || !state) return;
+        const c = Array.isArray(state.indexedContent) ? state.indexedContent.length : 0;
+        if (c !== lastCount) {
+          lastCount = c;
+          renderGreeting();
+          refreshStatsCompact();
+        }
+      } catch (_) { /* noop */ }
+    }, 1200);
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => { init(); watchData(); });
+  } else {
+    init();
+    watchData();
+  }
+
+  // ── Bulletproof Escape handler for overlay (cmd+K) ──
+  // The existing handler at popup.js:4490 can throw before postMessage fires
+  // (e.g. if clearSearch errors). Attach a parallel handler that *only*
+  // postMessages, so Escape always closes the overlay.
+  function isInOverlay() {
+    return window.self !== window.top
+      || new URLSearchParams(window.location.search).get('mode') === 'overlay';
+  }
+  if (isInOverlay()) {
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        try { window.parent.postMessage({ type: 'CLOSE_OVERLAY' }, '*'); } catch (_) { /* noop */ }
+      }
+    }, true);
+  }
+})();

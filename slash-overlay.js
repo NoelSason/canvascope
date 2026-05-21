@@ -403,52 +403,86 @@
       {
         order: 0, id: 'lectra-send', primaryAlias: 'ls',
         aliases: ['lectra', 'lectra-send'],
-        title: 'Lectra Send',
-        description: 'Find an indexed PDF and send it straight to Lectra.',
+        title: 'Send to Lectra',
+        description: 'Find an indexed PDF and send it to Lectra.',
         keywords: ['pdf', 'send', 'lectra', 'annotate'],
-        icon: '📄', badge: 'Send', needsArgument: true
+        icon: 'pdf', badge: 'Send', needsArgument: true
       },
       {
         order: 1, id: 'gradescope', primaryAlias: 'gs',
         aliases: ['gradescope'],
-        title: 'Open Gradescope',
+        title: 'Gradescope',
         description: 'Open gradescope.com in a new tab.',
         keywords: ['gradescope', 'grade', 'open'],
-        icon: '🎓', badge: 'Open', needsArgument: false
+        icon: 'cap', badge: 'Open', needsArgument: false
       },
       {
         order: 2, id: 'course', primaryAlias: 'course',
         aliases: ['class', 'courses'],
-        title: 'Open Course',
-        description: 'Jump straight into one of your indexed courses.',
+        title: 'Jump to course',
+        description: 'Open one of your indexed courses.',
         keywords: ['course', 'class', 'dashboard', 'open'],
-        icon: '📚', badge: 'Go', needsArgument: true
+        icon: 'books', badge: 'Go', needsArgument: true
       },
       {
         order: 3, id: 'due', primaryAlias: 'due',
         aliases: ['todo', 'tasks'],
-        title: 'Due Items',
+        title: 'Planner',
         description: 'Browse upcoming and overdue work.',
         keywords: ['due', 'todo', 'task', 'assignment', 'quiz'],
-        icon: '📅', badge: 'View', needsArgument: true
+        icon: 'cal', badge: 'View', needsArgument: true
       },
       {
         order: 4, id: 'refresh', primaryAlias: 'refresh',
         aliases: ['sync'],
-        title: 'Refresh Index',
+        title: 'Re-sync',
         description: 'Kick off a fresh Canvascope sync.',
         keywords: ['refresh', 'sync', 'scan', 'index'],
-        icon: '🔄', badge: 'Sync', needsArgument: false
+        icon: 'sync', badge: 'Sync', needsArgument: false
       },
       {
         order: 5, id: 'browse', primaryAlias: 'browse',
         aliases: ['all'],
-        title: 'Browse All Content',
+        title: 'Browse all',
         description: 'Open all indexed content in the popup.',
         keywords: ['browse', 'all', 'index', 'content'],
-        icon: '📖', badge: 'Browse', needsArgument: false
+        icon: 'book', badge: 'Browse', needsArgument: false
+      },
+      {
+        order: 6, id: 'pin', primaryAlias: 'pin',
+        aliases: ['pinned', 'pins'],
+        title: 'View pinned',
+        description: "Show everything you've pinned.",
+        keywords: ['pin', 'pinned', 'favorite', 'starred'],
+        icon: 'pin', badge: 'View', needsArgument: false
+      },
+      {
+        order: 7, id: 'dash', primaryAlias: 'dash',
+        aliases: ['home', 'dashboard'],
+        title: 'Canvas dashboard',
+        description: 'Jump to your LMS home.',
+        keywords: ['dashboard', 'home', 'canvas'],
+        icon: 'home', badge: 'Open', needsArgument: false
       }
     ];
+  }
+
+  // Lightweight inline SVG icon set matching Direction B
+  const ICON_SVGS = {
+    pdf:   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3h7l4 4v12a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M14 3v4h4"/><path d="M9 14h6M9 17h4"/></svg>',
+    cap:   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-4 9 4-9 4z"/><path d="M7 11v4c0 1.5 2.5 3 5 3s5-1.5 5-3v-4"/></svg>',
+    books: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h5v16H4zM10 4h5v16h-5z"/><path d="m16 5 4 1-3 14-4-1z"/></svg>',
+    cal:   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>',
+    sync:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/><path d="M3 21v-5h5"/></svg>',
+    book:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5a2 2 0 0 1 2-2h13v17H6a2 2 0 0 0-2 2z"/><path d="M4 19a2 2 0 0 1 2-2h13"/></svg>',
+    pin:   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5"/><path d="M9 3h6l-1 5 3 4H7l3-4z"/></svg>',
+    home:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m3 11 9-8 9 8v9a1 1 0 0 1-1 1h-5v-7h-6v7H4a1 1 0 0 1-1-1z"/></svg>',
+    star:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l2.7 5.5 6 .9-4.4 4.2 1 6-5.3-2.8L6.7 19.6l1-6L3.3 9.4l6-.9z"/></svg>',
+    bolt:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L4 14h7l-1 8 9-12h-7z"/></svg>'
+  };
+
+  function getIconMarkup(name) {
+    return ICON_SVGS[name] || ICON_SVGS.bolt;
   }
 
   // ============================================
@@ -475,19 +509,27 @@
     :host {
       all: initial;
       display: block;
-      --brand-500: #ef4444;
-      --brand-400: #f87171;
-      --brand-300: rgba(239, 68, 68, 0.32);
-      --hairline: rgba(255, 255, 255, 0.08);
-      --hairline-strong: rgba(255, 255, 255, 0.12);
-      --hairline-brand: rgba(239, 68, 68, 0.18);
-      --surface-0: #0a0708;
-      --surface-1: #120a0c;
-      --surface-2: #180e10;
-      --text-primary: rgba(255, 255, 255, 0.94);
-      --text-muted: rgba(255, 255, 255, 0.42);
-      --font-display: 'SF Pro Display', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
-      --font-mono: 'SF Mono', ui-monospace, 'JetBrains Mono', Menlo, monospace;
+      --bg:           #16151a;
+      --bg-soft:      #1c1b22;
+      --surface:      #20202a;
+      --surface-2:    #272731;
+      --surface-3:    #2e2e3a;
+      --border:       rgba(255, 255, 255, 0.05);
+      --border-hi:    rgba(255, 255, 255, 0.10);
+      --border-hot:   rgba(168, 144, 232, 0.30);
+      --text:         #ece9f1;
+      --text-dim:     #b6b0c2;
+      --muted:        #7c7689;
+      --dim:          #4f4a5c;
+      --accent:       #a890e8;
+      --accent-sat:   #8a6fe0;
+      --accent-bg:    rgba(168, 144, 232, 0.10);
+      --accent-bg-hi: rgba(168, 144, 232, 0.18);
+      --ok:           #7cc296;
+      --warn:         #e8b87a;
+      --bad:          #e88a8a;
+      --font-sans: 'Geist', 'Inter', -apple-system, BlinkMacSystemFont, ui-sans-serif, system-ui, sans-serif;
+      --font-mono: 'Geist Mono', 'JetBrains Mono', ui-monospace, Menlo, monospace;
     }
 
     * {
@@ -500,9 +542,9 @@
       position: fixed;
       inset: 0;
       z-index: 2147483646;
-      background: rgba(8, 4, 5, 0.62);
-      backdrop-filter: blur(8px) saturate(1.1);
-      -webkit-backdrop-filter: blur(8px) saturate(1.1);
+      background: rgba(10, 8, 14, 0.55);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
       opacity: 0;
       transition: opacity ${ANIMATION_DURATION_MS}ms ease;
       pointer-events: none;
@@ -515,18 +557,19 @@
 
     .slash-container {
       position: fixed;
-      top: 18%;
+      top: 16%;
       left: 50%;
       transform: translateX(-50%) scale(0.96);
       z-index: 2147483647;
-      width: 640px;
+      width: 620px;
       max-width: calc(100vw - 40px);
       opacity: 0;
-      transition: opacity ${ANIMATION_DURATION_MS}ms ease, transform ${ANIMATION_DURATION_MS}ms cubic-bezier(0.16, 1, 0.3, 1);
+      transition: opacity ${ANIMATION_DURATION_MS}ms ease,
+                  transform ${ANIMATION_DURATION_MS}ms cubic-bezier(0.16, 1, 0.3, 1);
       pointer-events: none;
-      font-family: var(--font-display);
+      font-family: var(--font-sans);
       font-size: 14px;
-      color: var(--text-primary);
+      color: var(--text);
       letter-spacing: -0.005em;
       -webkit-font-smoothing: antialiased;
       font-variant-numeric: tabular-nums;
@@ -539,44 +582,14 @@
     }
 
     .slash-panel {
-      background: var(--surface-1);
-      border: 1px solid var(--hairline-strong);
+      background: var(--bg);
+      border: 1px solid var(--border-hi);
       border-radius: 14px;
       box-shadow:
-        0 30px 80px rgba(0, 0, 0, 0.7),
-        0 0 0 1px rgba(255, 255, 255, 0.04) inset;
+        0 32px 80px rgba(0, 0, 0, 0.55),
+        0 0 0 1px rgba(168, 144, 232, 0.05);
       overflow: hidden;
       position: relative;
-    }
-
-    /* Brand vignette behind everything */
-    .slash-panel::before {
-      content: '';
-      position: absolute;
-      inset: 0;
-      pointer-events: none;
-      background:
-        radial-gradient(ellipse 60% 40% at 18% 0%, rgba(239, 68, 68, 0.10), transparent 60%),
-        radial-gradient(ellipse 50% 35% at 90% 100%, rgba(239, 68, 68, 0.05), transparent 60%);
-    }
-
-    /* L-bracket reticle on the four panel corners */
-    .slash-panel::after {
-      content: '';
-      position: absolute;
-      inset: 6px;
-      pointer-events: none;
-      border: 0 solid transparent;
-      background:
-        linear-gradient(to right, var(--brand-400) 14px, transparent 14px) top    left  / 14px 1px no-repeat,
-        linear-gradient(to bottom, var(--brand-400) 14px, transparent 14px) top    left  / 1px 14px no-repeat,
-        linear-gradient(to left,  var(--brand-400) 14px, transparent 14px) top    right / 14px 1px no-repeat,
-        linear-gradient(to bottom, var(--brand-400) 14px, transparent 14px) top    right / 1px 14px no-repeat,
-        linear-gradient(to right, var(--brand-400) 14px, transparent 14px) bottom left  / 14px 1px no-repeat,
-        linear-gradient(to top,    var(--brand-400) 14px, transparent 14px) bottom left  / 1px 14px no-repeat,
-        linear-gradient(to left,  var(--brand-400) 14px, transparent 14px) bottom right / 14px 1px no-repeat,
-        linear-gradient(to top,    var(--brand-400) 14px, transparent 14px) bottom right / 1px 14px no-repeat;
-      opacity: 0.55;
     }
 
     /* ---------- SEARCH BAR ---------- */
@@ -584,25 +597,24 @@
       position: relative;
       display: flex;
       align-items: center;
-      padding: 0 16px;
-      gap: 10px;
-      border-bottom: 1px solid var(--hairline);
+      padding: 16px 18px;
+      gap: 12px;
+      border-bottom: 1px solid var(--border);
     }
 
     .slash-prefix {
       flex-shrink: 0;
-      width: 26px;
-      height: 26px;
+      width: 28px;
+      height: 28px;
       display: inline-flex;
       align-items: center;
       justify-content: center;
       border-radius: 6px;
-      border: 1px solid var(--hairline-brand);
-      background: rgba(239, 68, 68, 0.10);
-      color: var(--brand-400);
+      background: var(--accent-bg);
+      color: var(--accent);
       font-family: var(--font-mono);
       font-size: 14px;
-      font-weight: 700;
+      font-weight: 600;
       line-height: 1;
     }
 
@@ -611,17 +623,17 @@
       background: none;
       border: none;
       outline: none;
-      color: var(--text-primary);
-      font-size: 16px;
-      font-family: inherit;
+      color: var(--text);
+      font-size: 15px;
+      font-family: var(--font-mono);
       font-weight: 500;
-      letter-spacing: -0.01em;
-      padding: 16px 0;
-      caret-color: var(--brand-400);
+      letter-spacing: -0.005em;
+      padding: 0;
+      caret-color: var(--accent);
     }
 
     .slash-input::placeholder {
-      color: var(--text-muted);
+      color: var(--muted);
       font-weight: 400;
     }
 
@@ -630,80 +642,74 @@
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      padding: 3px 8px;
-      border: 1px solid var(--hairline);
+      min-width: 28px;
+      height: 18px;
+      padding: 0 6px;
+      border: 1px solid var(--border-hi);
       border-radius: 4px;
       background: var(--surface-2);
-      color: var(--text-muted);
+      color: var(--text-dim);
       font-family: var(--font-mono);
-      font-size: 10px;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
+      font-size: 10.5px;
+      letter-spacing: 0;
+      text-transform: lowercase;
       cursor: pointer;
-      transition: all 0.15s ease;
+      transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
     }
 
     .slash-close-btn:hover {
-      background: rgba(239, 68, 68, 0.14);
-      border-color: var(--hairline-brand);
-      color: var(--brand-400);
+      background: var(--surface-3);
+      border-color: var(--border-hot);
+      color: var(--accent);
     }
 
     /* ---------- RESULTS ---------- */
     .slash-body {
-      max-height: 380px;
+      max-height: 420px;
       overflow-y: auto;
-      padding: 8px;
+      padding: 8px 0;
       position: relative;
       z-index: 1;
     }
 
     .slash-body::-webkit-scrollbar {
-      width: 4px;
+      width: 6px;
     }
     .slash-body::-webkit-scrollbar-track {
       background: transparent;
     }
     .slash-body::-webkit-scrollbar-thumb {
-      background: rgba(239, 68, 68, 0.25);
+      background: rgba(168, 144, 232, 0.18);
       border-radius: 4px;
+    }
+    .slash-body::-webkit-scrollbar-thumb:hover {
+      background: rgba(168, 144, 232, 0.32);
     }
 
     .slash-section-label {
-      font-family: var(--font-mono);
-      font-size: 10px;
-      font-weight: 600;
-      letter-spacing: 0.12em;
-      text-transform: uppercase;
-      color: var(--text-muted);
-      padding: 12px 10px 6px;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-    .slash-section-label::before {
-      content: '⟫';
-      color: var(--brand-400);
-      font-family: inherit;
-    }
-    .slash-section-label::after {
-      content: '';
-      flex: 1;
-      height: 1px;
-      background: var(--hairline);
+      font-family: var(--font-sans);
+      font-size: 11px;
+      font-weight: 500;
+      letter-spacing: 0;
+      text-transform: none;
+      color: var(--muted);
+      padding: 8px 18px 4px;
+      display: block;
     }
 
     .slash-item {
-      display: flex;
+      display: grid;
+      grid-template-columns: 36px 1fr auto;
+      column-gap: 14px;
+      row-gap: 0;
       align-items: center;
-      gap: 10px;
-      padding: 9px 10px;
+      padding: 10px 12px;
+      margin: 0 8px;
       border-radius: 8px;
-      border: 1px solid transparent;
+      border: none;
       cursor: pointer;
-      transition: background 120ms cubic-bezier(.2,.8,.2,1),
-                  border-color 120ms cubic-bezier(.2,.8,.2,1);
-      width: 100%;
+      transition: background 120ms cubic-bezier(.2,.8,.2,1);
+      width: calc(100% - 16px);
       text-align: left;
       background: none;
       color: inherit;
@@ -712,77 +718,98 @@
       position: relative;
     }
 
-    .slash-item:hover,
-    .slash-item.active {
-      background: rgba(239, 68, 68, 0.08);
-      border-color: var(--hairline-brand);
+    .slash-item:hover {
+      background: var(--surface);
     }
-
     .slash-item.active {
-      background: rgba(239, 68, 68, 0.14);
-      border-color: rgba(239, 68, 68, 0.34);
-    }
-    .slash-item.active::after {
-      content: '';
-      position: absolute;
-      left: 0;
-      top: 8px; bottom: 8px;
-      width: 2px;
-      background: var(--brand-500);
-      border-radius: 1px;
+      background: var(--surface);
     }
 
     .slash-item-icon {
-      width: 28px;
-      height: 28px;
+      width: 36px;
+      height: 36px;
       flex-shrink: 0;
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      border-radius: 6px;
+      border-radius: 8px;
       background: var(--surface-2);
-      border: 1px solid var(--hairline);
-      font-size: 14px;
+      border: none;
+      color: var(--text-dim);
+      font-size: 16px;
+      grid-row: 1 / 2;
+      grid-column: 1 / 2;
+    }
+    .slash-item.active .slash-item-icon {
+      background: var(--accent-bg);
+      color: var(--accent);
     }
 
     .slash-item-copy {
-      flex: 1;
+      grid-row: 1 / 2;
+      grid-column: 2 / 3;
       min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
     }
 
     .slash-item-title {
-      font-size: 14px;
+      font-size: 13px;
       font-weight: 500;
-      color: var(--text-primary);
+      color: var(--text);
       letter-spacing: -0.005em;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+    }
+    .slash-item-title::first-line { color: var(--text); }
+
+    /* When title contains "/alias Label" pattern, the first token gets mono+accent on active.
+       The renderer concatenates "/<alias>  <Label>" with a span split below. */
+    .slash-item-title .slash-cmd-alias {
+      font-family: var(--font-mono);
+      font-size: 13.5px;
+      color: var(--text);
+    }
+    .slash-item.active .slash-item-title .slash-cmd-alias {
+      color: var(--accent);
+    }
+    .slash-item-title .slash-cmd-label {
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text);
     }
 
     .slash-item-subtitle {
-      font-family: var(--font-mono);
-      font-size: 11px;
-      color: var(--text-muted);
-      letter-spacing: 0.02em;
+      font-family: var(--font-sans);
+      font-size: 11.5px;
+      color: var(--muted);
+      letter-spacing: 0;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
-      margin-top: 1px;
     }
 
     .slash-item-badge {
-      flex-shrink: 0;
+      display: none;
+    }
+
+    .slash-item-enter {
+      grid-row: 1 / 2;
+      grid-column: 3 / 4;
       font-family: var(--font-mono);
-      font-size: 10px;
-      font-weight: 600;
-      letter-spacing: 0.06em;
-      text-transform: uppercase;
-      padding: 3px 7px;
-      border-radius: 999px;
-      background: rgba(239, 68, 68, 0.10);
-      color: var(--brand-400);
-      border: 1px solid var(--hairline-brand);
+      font-size: 12px;
+      color: var(--accent);
+      opacity: 0;
+      transition: opacity 120ms ease;
+      align-self: center;
+    }
+    .slash-item.active .slash-item-enter {
+      opacity: 1;
     }
 
     /* ---------- PIN TOGGLE ---------- */
@@ -795,92 +822,100 @@
       justify-content: center;
       border: none;
       background: transparent;
-      color: rgba(255, 255, 255, 0.22);
+      color: var(--dim);
       cursor: pointer;
       font-size: 13px;
       line-height: 1;
-      border-radius: 50%;
+      border-radius: 4px;
+      grid-row: 1 / 2;
+      grid-column: 3 / 4;
       transition: color 120ms cubic-bezier(.2,.8,.2,1),
                   background 120ms cubic-bezier(.2,.8,.2,1),
                   transform 200ms cubic-bezier(.2,.8,.2,1);
     }
     .slash-pin-toggle:hover {
-      color: var(--brand-400);
-      background: rgba(239, 68, 68, 0.08);
+      color: var(--accent);
+      background: var(--surface-2);
     }
     .slash-pin-toggle.is-pinned {
-      color: var(--brand-400);
-      text-shadow: 0 0 4px var(--brand-300);
+      color: var(--accent);
     }
     .slash-pin-toggle.is-flash {
       animation: slash-pin-flash 360ms cubic-bezier(.2,.8,.2,1);
     }
     @keyframes slash-pin-flash {
-      0%   { transform: scale(1);    color: rgba(255,255,255,.22); }
-      40%  { transform: scale(1.3);  color: #fbbf24; }
-      100% { transform: scale(1);    color: var(--brand-400); }
-    }
-
-    .slash-item-badge.badge-setup {
-      background: rgba(255, 255, 255, 0.06);
-      color: rgba(255, 255, 255, 0.45);
-      border-color: rgba(255, 255, 255, 0.1);
+      0%   { transform: scale(1);    color: var(--dim); }
+      40%  { transform: scale(1.3);  color: var(--warn); }
+      100% { transform: scale(1);    color: var(--accent); }
     }
 
     /* ---------- FEEDBACK ---------- */
     .slash-feedback {
-      margin: 8px 8px 0;
+      margin: 8px 16px 0;
       padding: 10px 14px;
-      border-radius: 12px;
-      font-size: 0.8rem;
+      border-radius: 8px;
+      font-size: 12.5px;
       line-height: 1.45;
       border: 1px solid transparent;
     }
     .slash-feedback.hidden { display: none; }
     .slash-feedback.tone-success {
-      background: rgba(74, 222, 128, 0.1);
-      border-color: rgba(74, 222, 128, 0.22);
-      color: rgba(210, 255, 225, 0.9);
+      background: rgba(124, 194, 150, 0.10);
+      border-color: rgba(124, 194, 150, 0.22);
+      color: var(--ok);
     }
     .slash-feedback.tone-error {
-      background: rgba(248, 113, 113, 0.12);
-      border-color: rgba(248, 113, 113, 0.24);
-      color: rgba(255, 220, 220, 0.9);
+      background: rgba(232, 138, 138, 0.10);
+      border-color: rgba(232, 138, 138, 0.24);
+      color: var(--bad);
     }
     .slash-feedback.tone-info {
-      background: rgba(255, 255, 255, 0.05);
-      border-color: rgba(255, 255, 255, 0.08);
-      color: rgba(255, 255, 255, 0.8);
+      background: var(--surface);
+      border-color: var(--border);
+      color: var(--text-dim);
     }
 
     /* ---------- EMPTY STATE ---------- */
     .slash-empty {
-      padding: 28px 16px;
+      padding: 40px 20px;
       text-align: center;
-      font-size: 0.85rem;
-      color: rgba(255, 255, 255, 0.35);
+      font-size: 12.5px;
+      color: var(--muted);
     }
 
     /* ---------- FOOTER ---------- */
     .slash-footer {
       display: flex;
       align-items: center;
-      justify-content: space-between;
-      padding: 8px 16px;
-      border-top: 1px solid var(--hairline);
-      font-family: var(--font-mono);
-      font-size: 10px;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-      color: var(--text-muted);
+      gap: 14px;
+      padding: 10px 18px;
+      border-top: 1px solid var(--border);
+      font-family: var(--font-sans);
+      font-size: 11px;
+      letter-spacing: 0;
+      text-transform: none;
+      color: var(--muted);
       position: relative;
       z-index: 1;
     }
 
+    .slash-footer-brand {
+      color: var(--accent);
+      font-weight: 500;
+    }
+
     .slash-footer-keys {
       display: flex;
-      gap: 6px;
+      gap: 14px;
       align-items: center;
+      margin-left: auto;
+    }
+
+    .slash-footer-key-group {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      color: var(--muted);
     }
 
     .slash-footer-keys kbd {
@@ -888,13 +923,29 @@
       align-items: center;
       justify-content: center;
       min-width: 18px;
-      padding: 2px 5px;
-      border-radius: 3px;
-      border: 1px solid var(--hairline);
+      height: 18px;
+      padding: 0 5px;
+      border-radius: 4px;
+      border: 1px solid var(--border-hi);
       background: var(--surface-2);
-      font-family: inherit;
-      font-size: 9px;
-      color: var(--text-muted);
+      font-family: var(--font-mono);
+      font-size: 10.5px;
+      color: var(--text-dim);
+      line-height: 1;
+    }
+
+    .slash-item-badge.badge-setup {
+      display: inline-flex;
+      background: var(--surface-2);
+      color: var(--warn);
+      border: 1px solid var(--border-hi);
+      padding: 3px 7px;
+      border-radius: 999px;
+      font-size: 10px;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      font-family: var(--font-mono);
+      align-self: center;
     }
 
     @media (prefers-reduced-motion: reduce) {
@@ -974,18 +1025,22 @@
     body.setAttribute('aria-label', 'Slash command results');
     panel.appendChild(body);
 
-    // Footer
+    // Footer (Direction B)
     const footer = document.createElement('div');
     footer.className = 'slash-footer';
 
     const brand = document.createElement('span');
+    brand.className = 'slash-footer-brand';
     brand.textContent = 'Canvascope';
+    footer.appendChild(brand);
 
     const keys = document.createElement('div');
     keys.className = 'slash-footer-keys';
-    keys.innerHTML = '<kbd>↑↓</kbd> navigate <kbd>↵</kbd> select <kbd>esc</kbd> close';
-
-    footer.appendChild(brand);
+    keys.innerHTML = `
+      <span class="slash-footer-key-group"><kbd>↑↓</kbd>Navigate</span>
+      <span class="slash-footer-key-group"><kbd>↵</kbd>Run</span>
+      <span class="slash-footer-key-group"><kbd>esc</kbd>Close</span>
+    `;
     footer.appendChild(keys);
     panel.appendChild(footer);
 
@@ -1169,9 +1224,10 @@
         kind: 'command',
         command: cmd,
         title: `/${cmd.primaryAlias}`,
+        commandLabel: cmd.title || '',
         subtitle: cmd.description,
         icon: cmd.icon,
-        badge: cmd.badge,
+        badge: null,
         onSelect: () => selectCommand(cmd)
       }));
       primaryLabel = 'Commands';
@@ -1229,7 +1285,13 @@
 
         const iconEl = document.createElement('span');
         iconEl.className = 'slash-item-icon';
-        iconEl.textContent = entry.icon || '⚡';
+        const iconKey = entry.icon || 'bolt';
+        // Use inline SVG when available, fall back to emoji/text
+        if (typeof iconKey === 'string' && ICON_SVGS[iconKey]) {
+          iconEl.innerHTML = getIconMarkup(iconKey);
+        } else {
+          iconEl.textContent = iconKey;
+        }
         btn.appendChild(iconEl);
 
         const copy = document.createElement('div');
@@ -1237,7 +1299,18 @@
 
         const titleEl = document.createElement('div');
         titleEl.className = 'slash-item-title';
-        titleEl.textContent = entry.title;
+        if (entry.kind === 'command' && entry.commandLabel) {
+          const alias = document.createElement('span');
+          alias.className = 'slash-cmd-alias';
+          alias.textContent = entry.title;
+          titleEl.appendChild(alias);
+          const label = document.createElement('span');
+          label.className = 'slash-cmd-label';
+          label.textContent = entry.commandLabel;
+          titleEl.appendChild(label);
+        } else {
+          titleEl.textContent = entry.title;
+        }
         copy.appendChild(titleEl);
 
         if (entry.subtitle) {
@@ -1248,11 +1321,19 @@
         }
         btn.appendChild(copy);
 
-        if (entry.badge) {
+        // Direction B: hide the badge chips for normal rows; only show
+        // for setup-warning rows (badge_setup styling).
+        if (entry.badge && entry.badgeClass === 'badge-setup') {
           const badgeEl = document.createElement('span');
-          badgeEl.className = `slash-item-badge${entry.badgeClass ? ' ' + entry.badgeClass : ''}`;
+          badgeEl.className = 'slash-item-badge ' + entry.badgeClass;
           badgeEl.textContent = entry.badge;
           btn.appendChild(badgeEl);
+        } else {
+          // Enter indicator — visible only on active row via CSS
+          const enterEl = document.createElement('span');
+          enterEl.className = 'slash-item-enter';
+          enterEl.textContent = '↵';
+          btn.appendChild(enterEl);
         }
 
         // Pin toggle on real item rows (skip commands / actions / guidance)

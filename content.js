@@ -1712,17 +1712,16 @@ function createOverlay() {
     overlayIframe.src = chrome.runtime.getURL('popup.html?mode=overlay');
     overlayIframe.allow = "clipboard-write"; // Allow copying
     overlayIframe.style.cssText = `
-        width: 420px;
-        height: 550px;
-        border: 1px solid rgba(239, 68, 68, 0.30);
-        border-radius: 20px;
+        width: 540px;
+        height: 480px;
+        border: none;
+        border-radius: 14px;
         box-shadow:
-            0 24px 56px rgba(0, 0, 0, 0.55),
-            0 0 0 1px rgba(255, 255, 255, 0.04) inset,
-            0 1px 0 rgba(255, 255, 255, 0.06) inset;
+            0 32px 80px rgba(0, 0, 0, 0.55),
+            0 0 0 1px rgba(255, 255, 255, 0.10);
         background: transparent;
         transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.2s ease;
-        transform: scale(0.92);
+        transform: scale(0.96);
         opacity: 0;
     `;
 

@@ -13,23 +13,6 @@
       document.documentElement.classList.add('in-overlay-early');
     }
   </script>
-  <style>
-    /* Hide popup-only chrome immediately when in overlay (pre-JS) */
-    html.in-overlay-early body .cs-topbar,
-    html.in-overlay-early body .cs-hero,
-    html.in-overlay-early body .header,
-    html.in-overlay-early body .filter-bar,
-    html.in-overlay-early body .home-sections,
-    html.in-overlay-early body .sync-status,
-    html.in-overlay-early body .stats-section,
-    html.in-overlay-early body .footer-actions,
-    html.in-overlay-early body .search-history,
-    html.in-overlay-early body .due-item-planner,
-    html.in-overlay-early body .cs-pinned-row,
-    html.in-overlay-early body .empty-state { display: none !important; }
-    html.in-overlay-early body { width: 100%; height: 100vh; min-height: 0; }
-    html.in-overlay-early body .container { min-height: auto; height: 100%; padding: 0; gap: 0; }
-  </style>
 </head>
 
 <body>
@@ -52,10 +35,15 @@
 
       <div class="cs-topbar-controls" aria-label="Popup controls">
         <button id="help-btn" class="cs-icon-btn" type="button" aria-label="Open help and shortcuts" title="Help">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
-            <circle cx="12" cy="12" r="9"></circle>
-            <path d="M9.5 9a2.5 2.5 0 1 1 4.33 1.7c-.62.66-1.33 1.1-1.83 1.8-.3.4-.5.83-.5 1.5"></path>
-            <circle cx="12" cy="17" r="1"></circle>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="11" cy="11" r="7"></circle>
+            <path d="m20 20-3.5-3.5"></path>
+          </svg>
+        </button>
+        <button id="cs-theme-btn" class="cs-icon-btn" type="button" aria-label="Theme" title="Theme">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="4"></circle>
+            <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"></path>
           </svg>
         </button>
         <button id="settings-btn" class="cs-icon-btn" type="button" aria-label="Open settings" title="Settings">
@@ -117,7 +105,16 @@
     </div>
 
     <!-- ============================================
-         HERO — Up Next · Radar · Timeline (segmented)
+         GREETING — date · headline · subline
+         ============================================ -->
+    <section class="cs-greeting" id="cs-greeting" aria-label="Today">
+      <div class="cs-greeting-date" id="cs-greeting-date">—</div>
+      <div class="cs-greeting-title" id="cs-greeting-title">Hi, there.</div>
+      <div class="cs-greeting-meta" id="cs-greeting-meta">Loading your agenda…</div>
+    </section>
+
+    <!-- ============================================
+         HERO (legacy — hidden by CSS, kept for JS bindings)
          ============================================ -->
     <section class="cs-hero" id="cs-hero" aria-label="Today">
       <div class="cs-hero-tabs" role="tablist" aria-label="Hero view">
@@ -172,7 +169,16 @@
 
 
 
-      <!-- Filter Bar -->
+      <!-- Filter chip row (Direction B) -->
+      <div class="cs-chip-row" id="cs-chip-row" role="tablist" aria-label="Filter agenda">
+        <button class="cs-chip is-active" data-cs-filter="all" type="button" role="tab" aria-selected="true">All</button>
+        <button class="cs-chip" data-cs-filter="due" type="button" role="tab" aria-selected="false">Due</button>
+        <button class="cs-chip" data-cs-filter="assignment" type="button" role="tab" aria-selected="false">Assignments</button>
+        <button class="cs-chip" data-cs-filter="quiz" type="button" role="tab" aria-selected="false">Quizzes</button>
+        <button class="cs-chip" data-cs-filter="pinned" type="button" role="tab" aria-selected="false">Pinned</button>
+      </div>
+
+      <!-- Legacy filter dropdowns — hidden by CSS, popup.js still binds these -->
       <div class="filter-bar" id="filter-bar">
         <!-- Custom Course Dropdown -->
         <div class="custom-select-wrapper" id="course-select-wrapper">
