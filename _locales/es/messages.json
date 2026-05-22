@@ -1,0 +1,40 @@
+{
+  "extName": {
+    "message": "Canvascope",
+    "description": "El nombre de la extensión."
+  },
+  "extDescription": {
+    "message": "Busca al instante contenido de Canvas y Brightspace, personaliza cualquier LMS y gestiona tu vida académica desde un menú slash.",
+    "description": "Descripción de la tienda."
+  },
+
+  "slashTheme":   { "message": "Aplicar tema" },
+  "slashFont":    { "message": "Cambiar fuente" },
+  "slashDensity": { "message": "Densidad de tarjetas" },
+  "slashPaint":   { "message": "Pintar tarjeta de curso" },
+  "slashSkin":    { "message": "Ajustes de tema" },
+  "slashPreview": { "message": "Vistas previas al pasar el cursor" },
+  "slashGpa":     { "message": "Calculadora de promedio" },
+  "slashGrades":  { "message": "Resumen de calificaciones" },
+  "slashNote":    { "message": "Nota rápida" },
+  "slashNotes":   { "message": "Ver notas" },
+  "slashTodo":    { "message": "Tarea personalizada" },
+  "slashRemind":  { "message": "Crear recordatorio" },
+  "slashSync":    { "message": "Forzar sincronización" },
+
+  "gpaScale_college_4":   { "message": "Universidad (4.0)" },
+  "gpaScale_hs_4":        { "message": "Bachillerato (4.0 sin ponderar)" },
+  "gpaScale_hs_43":       { "message": "Bachillerato (4.3)" },
+  "gpaScale_hs_5_w":      { "message": "Bachillerato (5.0 ponderado)" },
+
+  "reminderTitle":  { "message": "$1 — vence en $2", "placeholders": {
+    "1": { "content": "$1", "example": "Lab Report 3" },
+    "2": { "content": "$2", "example": "24 horas" }
+  }},
+  "reminderBody":   { "message": "De $1", "placeholders": {
+    "1": { "content": "$1", "example": "BIO 1A" }
+  }},
+
+  "syncOk":   { "message": "Sincronizado ✓" },
+  "syncFail": { "message": "Sincronización fallida." }
+}

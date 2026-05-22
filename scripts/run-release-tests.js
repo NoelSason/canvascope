@@ -11,7 +11,9 @@ const steps = [
       '--experimental-transform-types',
       '--test',
       'tests/backend-search-habits.test.mjs',
-      'tests/legacy-regressions.test.mjs'
+      'tests/legacy-regressions.test.mjs',
+      'tests/skin-themes.test.mjs',
+      'tests/academic-tools-gpa.test.mjs'
     ]
   },
   {

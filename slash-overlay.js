@@ -36,8 +36,16 @@
 
   function buildSlashCommandLookup(commands) {
     const lookup = new Map();
-    for (const cmd of Array.isArray(commands) ? commands : []) {
-      const aliases = [cmd?.primaryAlias, ...(Array.isArray(cmd?.aliases) ? cmd.aliases : [])];
+    const list = Array.isArray(commands) ? commands : [];
+    // Primary aliases are canonical commands and should win over someone
+    // else's secondary alias. Example: external `/sync` must not be shadowed
+    // by the built-in `/refresh` command's `sync` alias.
+    for (const cmd of list) {
+      const n = normalizeSlashAlias(cmd?.primaryAlias);
+      if (n) lookup.set(n, cmd);
+    }
+    for (const cmd of list) {
+      const aliases = Array.isArray(cmd?.aliases) ? cmd.aliases : [];
       for (const alias of aliases) {
         const n = normalizeSlashAlias(alias);
         if (!n || lookup.has(n)) continue;
@@ -51,7 +59,8 @@
     const nq = normalizeSlashAlias(query);
     if (!nq) return 1;
 
-    const aliases = [command?.primaryAlias, ...(Array.isArray(command?.aliases) ? command.aliases : [])]
+    const primaryAlias = normalizeSlashAlias(command?.primaryAlias);
+    const aliases = (Array.isArray(command?.aliases) ? command.aliases : [])
       .map(normalizeSlashAlias).filter(Boolean);
     const title = (command?.title || '').toLowerCase();
     const description = (command?.description || '').toLowerCase();
@@ -59,6 +68,11 @@
       .map(k => (k || '').toLowerCase()).filter(Boolean);
 
     let score = -Infinity;
+    if (primaryAlias) {
+      if (primaryAlias === nq) return 240;
+      if (primaryAlias.startsWith(nq)) score = Math.max(score, 170 - primaryAlias.length);
+      if (primaryAlias.includes(nq)) score = Math.max(score, 140 - primaryAlias.length);
+    }
     for (const alias of aliases) {
       if (alias === nq) return 200;
       if (alias.startsWith(nq)) score = Math.max(score, 150 - alias.length);
@@ -398,8 +412,55 @@
   // COMMAND DEFINITIONS
   // ============================================
 
+  // External command pack registry. Other content scripts (e.g.
+  // slash-commands-pack.js) call window.__canvascopeRegisterSlashCommands(cmds)
+  // to add commands without editing this file. Each external command may
+  // provide a buildResults(argumentText, ctx) function returning entries with
+  // { kind, title, subtitle, icon, badge, onSelect }.
+  const EXTERNAL_COMMANDS = [];
+  const EXTERNAL_COMMAND_IDS = new Set();
+
+  function registerExternalSlashCommands(commands) {
+    if (!Array.isArray(commands)) return false;
+    let added = 0;
+    for (const cmd of commands) {
+      if (!cmd || typeof cmd !== 'object') continue;
+      const id = String(cmd.id || cmd.primaryAlias || '').trim();
+      if (!id || EXTERNAL_COMMAND_IDS.has(id)) continue;
+      EXTERNAL_COMMAND_IDS.add(id);
+      EXTERNAL_COMMANDS.push({ ...cmd, id });
+      added += 1;
+    }
+    if (added > 0 && isOpen) {
+      try { renderResults(); } catch (_) { /* ignore */ }
+    }
+    return added > 0;
+  }
+
+  // Expose globally so other content scripts can register their own commands.
+  try {
+    window.__canvascopeRegisterSlashCommands = registerExternalSlashCommands;
+  } catch (_) { /* ignore */ }
+
+  function getSlashContext() {
+    return {
+      indexedContent,
+      extensionSettings,
+      authStatus,
+      pinnedIds,
+      setFeedbackMsg,
+      clearFeedback,
+      closeOverlay,
+      executeOpenUrl,
+      filterItems,
+      parseDueTs,
+      formatDueLabel,
+      SLASH_RESULT_LIMIT
+    };
+  }
+
   function getCommandRegistry() {
-    return [
+    const builtIns = [
       {
         order: 0, id: 'lectra-send', primaryAlias: 'ls',
         aliases: ['lectra', 'lectra-send'],
@@ -426,10 +487,10 @@
       },
       {
         order: 3, id: 'due', primaryAlias: 'due',
-        aliases: ['todo', 'tasks'],
+        aliases: ['tasks'],
         title: 'Planner',
         description: 'Browse upcoming and overdue work.',
-        keywords: ['due', 'todo', 'task', 'assignment', 'quiz'],
+        keywords: ['due', 'task', 'assignment', 'quiz'],
         icon: 'cal', badge: 'View', needsArgument: true
       },
       {
@@ -465,6 +526,10 @@
         icon: 'home', badge: 'Open', needsArgument: false
       }
     ];
+    // Merge external commands (registered via window.__canvascopeRegisterSlashCommands).
+    // External commands are pushed after built-ins so their default `order` slots them
+    // below built-ins unless they specify a lower value.
+    return [...builtIns, ...EXTERNAL_COMMANDS];
   }
 
   // Lightweight inline SVG icon set matching Direction B
@@ -1392,7 +1457,25 @@
       case 'due': return buildDueResults(cmd, argumentText);
       case 'refresh': return buildRefreshResults(cmd);
       case 'browse': return buildBrowseResults(cmd);
-      default: return [];
+      case 'dash': return buildDashResults(cmd);
+      default: {
+        // External commands provide their own buildResults handler.
+        if (typeof cmd.buildResults === 'function') {
+          try {
+            const entries = cmd.buildResults(argumentText, getSlashContext()) || [];
+            return Array.isArray(entries) ? entries : [];
+          } catch (err) {
+            console.error('[Canvascope Slash] External command failed:', cmd?.id, err);
+            return [{
+              kind: 'guidance', command: cmd,
+              title: 'Command failed to load',
+              subtitle: String(err?.message || err),
+              icon: 'bolt'
+            }];
+          }
+        }
+        return [];
+      }
     }
   }
 
@@ -1476,6 +1559,25 @@
     }];
   }
 
+  function buildDashResults(cmd) {
+    let dashUrl = '';
+    try { dashUrl = window.location.origin + '/'; } catch (_) { dashUrl = ''; }
+    let host = '';
+    try { host = window.location.hostname; } catch (_) { host = ''; }
+    return [{
+      kind: 'action', command: cmd,
+      title: 'Open LMS dashboard',
+      subtitle: dashUrl ? `Go to ${host || dashUrl}` : 'Open this LMS at its root URL.',
+      icon: 'home', badge: 'Open',
+      onSelect: () => {
+        if (dashUrl) {
+          try { window.location.href = dashUrl; }
+          catch (_) { executeOpenUrl(dashUrl); }
+        }
+      }
+    }];
+  }
+
   function buildBrowseResults(cmd) {
     return [{
       kind: 'action', command: cmd,
@@ -1492,7 +1594,11 @@
       case 'lectra-send': return q ? `No PDFs matched "${q}".` : 'No indexed PDFs found.';
       case 'course': return q ? `No courses matched "${q}".` : 'No indexed courses found.';
       case 'due': return q ? `No due items matched "${q}".` : 'No upcoming due items.';
-      default: return 'No results.';
+      default:
+        if (typeof cmd?.emptyCopy === 'function') {
+          try { return cmd.emptyCopy(q) || 'No results.'; } catch (_) { return 'No results.'; }
+        }
+        return cmd?.emptyCopy || 'No results.';
     }
   }
 

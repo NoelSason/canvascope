@@ -322,6 +322,158 @@ input:focus-visible, button:focus-visible, [tabindex]:focus-visible {
   color: var(--bad);
   font-weight: 500;
 }
+.cs-greeting-meta button.cs-overdue-trigger {
+  background: transparent;
+  border: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: var(--bad);
+  font-weight: 500;
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  text-decoration-color: rgba(232, 138, 138, 0.45);
+  transition: text-decoration-color var(--dur-fast), color var(--dur-fast);
+}
+.cs-greeting-meta button.cs-overdue-trigger:hover,
+.cs-greeting-meta button.cs-overdue-trigger:focus-visible {
+  text-decoration-color: var(--bad);
+  outline: none;
+}
+
+/* ── Overdue modal ── */
+.cs-overdue-modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(10, 9, 14, 0.55);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  animation: cs-modal-in 180ms var(--ease-spring, ease-out);
+  padding: 20px;
+}
+.cs-overdue-panel {
+  width: 100%;
+  max-width: 420px;
+  max-height: 80vh;
+  background: var(--bg-soft);
+  border: 1px solid var(--border-hi);
+  border-radius: 14px;
+  box-shadow: 0 20px 50px rgba(0,0,0,0.45);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.cs-overdue-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px 8px;
+}
+.cs-overdue-heading {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: -0.3px;
+}
+.cs-overdue-close {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font-size: 20px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background var(--dur-fast), color var(--dur-fast);
+}
+.cs-overdue-close:hover { background: var(--surface); color: var(--text); }
+.cs-overdue-sub {
+  padding: 0 16px 10px;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.cs-overdue-list {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 4px 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.cs-overdue-row {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+  border-radius: 9px;
+  background: var(--surface);
+  border: 1px solid transparent;
+  transition: border-color var(--dur-fast), background var(--dur-fast);
+}
+.cs-overdue-row:hover { border-color: var(--border-hi); }
+.cs-overdue-main {
+  flex: 1 1 auto;
+  text-align: left;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  padding: 10px 12px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  border-radius: 9px 0 0 9px;
+}
+.cs-overdue-main:focus-visible { outline: 1px solid var(--border-hot); outline-offset: -1px; }
+.cs-overdue-title {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text);
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  word-break: break-word;
+}
+.cs-overdue-meta {
+  font-size: 10.5px;
+  color: var(--bad);
+  letter-spacing: 0.15px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cs-overdue-dismiss {
+  flex: 0 0 auto;
+  width: 32px;
+  background: transparent;
+  border: none;
+  border-left: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 18px;
+  cursor: pointer;
+  border-radius: 0 9px 9px 0;
+  transition: background var(--dur-fast), color var(--dur-fast);
+}
+.cs-overdue-dismiss:hover { background: rgba(232, 138, 138, 0.12); color: var(--bad); }
+.cs-overdue-empty {
+  padding: 28px 16px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--muted);
+}
 .cs-greeting-meta .cs-warn {
   color: var(--warn);
   font-weight: 500;
@@ -1258,9 +1410,84 @@ input:focus-visible, button:focus-visible, [tabindex]:focus-visible {
   height: auto;
   overflow-y: auto !important;
   overflow-x: hidden;
-  padding: 8px 0;
+  padding: 8px 10px 12px;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
+}
+
+.tab-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 16px;
+  padding: 0 5px;
+  margin-left: 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-dim);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0;
+  line-height: 1;
+}
+.browse-tab.active .tab-count {
+  background: rgba(26, 22, 35, 0.18);
+  color: #1a1623;
+}
+
+.browse-item {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 9px 12px;
+  margin: 2px 0;
+  border-radius: 8px;
+  background: transparent;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background var(--dur-fast), border-color var(--dur-fast);
+  outline: none;
+}
+.browse-item:hover,
+.browse-item:focus-visible {
+  background: var(--surface);
+  border-color: var(--border-hi);
+}
+.browse-item:focus-visible {
+  border-color: var(--border-hot);
+}
+
+.browse-item-title {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text);
+  line-height: 1.35;
+  letter-spacing: -0.1px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  word-break: break-word;
+}
+
+.browse-item-meta {
+  font-size: 10.5px;
+  font-weight: 500;
+  color: var(--muted);
+  letter-spacing: 0.15px;
+  text-transform: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.browse-empty {
+  padding: 32px 16px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 12px;
 }
 
 /* ============================================

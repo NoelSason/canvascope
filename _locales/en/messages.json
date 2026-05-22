@@ -1,0 +1,40 @@
+{
+  "extName": {
+    "message": "Canvascope",
+    "description": "The name of the extension."
+  },
+  "extDescription": {
+    "message": "Instantly search Canvas and Brightspace content, theme any LMS, and run your academic life from one slash menu.",
+    "description": "Tooltip / store description."
+  },
+
+  "slashTheme":   { "message": "Apply theme" },
+  "slashFont":    { "message": "Swap font" },
+  "slashDensity": { "message": "Card density" },
+  "slashPaint":   { "message": "Paint course card" },
+  "slashSkin":    { "message": "Skin settings" },
+  "slashPreview": { "message": "Hover previews" },
+  "slashGpa":     { "message": "GPA calculator" },
+  "slashGrades":  { "message": "Grades summary" },
+  "slashNote":    { "message": "Quick note" },
+  "slashNotes":   { "message": "Browse notes" },
+  "slashTodo":    { "message": "Custom todo" },
+  "slashRemind":  { "message": "Set reminder" },
+  "slashSync":    { "message": "Force cloud sync" },
+
+  "gpaScale_college_4":   { "message": "College (4.0)" },
+  "gpaScale_hs_4":        { "message": "High School (4.0 Unweighted)" },
+  "gpaScale_hs_43":       { "message": "High School (4.3)" },
+  "gpaScale_hs_5_w":      { "message": "High School (5.0 Weighted)" },
+
+  "reminderTitle":  { "message": "$1 — due in $2", "placeholders": {
+    "1": { "content": "$1", "example": "Lab Report 3" },
+    "2": { "content": "$2", "example": "24 hours" }
+  }},
+  "reminderBody":   { "message": "From $1", "placeholders": {
+    "1": { "content": "$1", "example": "BIO 1A" }
+  }},
+
+  "syncOk":   { "message": "Synced ✓" },
+  "syncFail": { "message": "Sync failed." }
+}

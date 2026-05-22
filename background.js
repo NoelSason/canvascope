@@ -6113,10 +6113,40 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return true;
     }
 
-    // Slash overlay: fetch full indexed content array
+    // Slash overlay: fetch full indexed content array. Merges in user-authored
+    // custom todos and dashboard notes so they are searchable in the slash
+    // palette alongside Canvas content (mirrors popup.js's loadContent merge).
     if (message.action === 'getIndexedContent') {
-        chrome.storage.local.get(['indexedContent']).then(data => {
-            sendResponse({ items: data.indexedContent || [] });
+        chrome.storage.local.get(['indexedContent', 'customTodos', 'dashboardNotes']).then(data => {
+            const base = Array.isArray(data.indexedContent) ? data.indexedContent.slice() : [];
+            const todos = Array.isArray(data.customTodos) ? data.customTodos : [];
+            const notes = Array.isArray(data.dashboardNotes) ? data.dashboardNotes : [];
+            for (const t of todos) {
+                if (!t || !t.id) continue;
+                base.push({
+                    id: 'todo:' + t.id,
+                    type: 'todo',
+                    title: t.title || 'Untitled todo',
+                    url: '#cs-todo-' + t.id,
+                    dueAt: t.dueAt || null,
+                    courseName: t.courseName || '',
+                    moduleName: 'My todos',
+                    searchAliases: ['todo', 'task']
+                });
+            }
+            for (const n of notes) {
+                if (!n || !n.id) continue;
+                base.push({
+                    id: 'note:' + n.id,
+                    type: 'note',
+                    title: n.title || 'Untitled note',
+                    url: '#cs-note-' + n.id,
+                    moduleName: 'Notes',
+                    folderPath: (n.body || '').slice(0, 240),
+                    searchAliases: ['note']
+                });
+            }
+            sendResponse({ items: base });
         });
         return true;
     }

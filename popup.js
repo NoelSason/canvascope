@@ -1048,7 +1048,10 @@ function getStarredCourseBoost(item) {
 // DUE PLANNER HELPERS
 // ============================================
 
-const TASK_TYPES = new Set(['assignment', 'quiz', 'discussion']);
+// 'todo' is included so user-authored custom todos (academic-tools.js) flow
+// through the same Up Next / Radar pipeline as Canvas assignments. 'note' is
+// NOT a task type — notes are indexed for search only and never bucketed.
+const TASK_TYPES = new Set(['assignment', 'quiz', 'discussion', 'todo']);
 
 function isTaskType(item) {
   return TASK_TYPES.has((item.type || '').toLowerCase());
@@ -8117,11 +8120,51 @@ function clearResultsContainer() {
 
 async function loadContent() {
   try {
-    const result = await chrome.storage.local.get(['indexedContent', 'starredCourseIds', 'dismissedTasks']);
+    const result = await chrome.storage.local.get([
+      'indexedContent', 'starredCourseIds', 'dismissedTasks',
+      'customTodos', 'dashboardNotes'
+    ]);
     let content = result.indexedContent || [];
 
     // Deduplicate by normalizing URLs (strip module_item_id)
     content = deduplicateCrossType(deduplicateContent(content));
+
+    // Merge in user-authored items so search + Up Next + Radar pick them up.
+    // Todos have a due date so they bucket alongside assignments; notes are
+    // searchable only (no dueAt) so they appear in popup/slash search results.
+    const todos = Array.isArray(result.customTodos) ? result.customTodos : [];
+    const notes = Array.isArray(result.dashboardNotes) ? result.dashboardNotes : [];
+    for (const t of todos) {
+      if (!t || !t.id) continue;
+      content.push({
+        id: 'todo:' + t.id,
+        type: 'todo',
+        title: t.title || 'Untitled todo',
+        url: '#cs-todo-' + t.id,
+        dueAt: t.dueAt || null,
+        courseName: t.courseName || '',
+        courseId: t.courseId || null,
+        moduleName: 'My todos',
+        searchAliases: ['todo', 'task'],
+        __isCustomTodo: true,
+        __color: t.color || null,
+        __done: !!t.done
+      });
+    }
+    for (const n of notes) {
+      if (!n || !n.id) continue;
+      content.push({
+        id: 'note:' + n.id,
+        type: 'note',
+        title: n.title || 'Untitled note',
+        url: '#cs-note-' + n.id,
+        moduleName: 'Notes',
+        folderPath: (n.body || '').slice(0, 240),
+        searchAliases: ['note'],
+        __isNote: true,
+        __body: n.body || ''
+      });
+    }
 
     state.indexedContent = content;
     state.dismissedTasks = result.dismissedTasks || [];
@@ -8638,6 +8681,169 @@ function showBrowseCategory(type, items) {
     return null;
   }
 
+  function getOverdueItems() {
+    try {
+      if (typeof state === 'undefined' || !state || !Array.isArray(state.indexedContent)) return [];
+      const TASK_TYPES = new Set(['assignment', 'quiz', 'discussion']);
+      const now = Date.now();
+      const dayMs = 24 * 60 * 60 * 1000;
+      const dismissed = new Set(Array.isArray(state.dismissedTasks) ? state.dismissedTasks : []);
+      const out = [];
+      for (const it of state.indexedContent) {
+        const t = String(it.type || '').toLowerCase();
+        if (!TASK_TYPES.has(t)) continue;
+        if (!it.dueAt) continue;
+        const ts = new Date(it.dueAt).getTime();
+        if (!ts || isNaN(ts)) continue;
+        const id = (typeof getCanonicalId === 'function') ? getCanonicalId(it) : null;
+        if (id && dismissed.has(id)) continue;
+        const diff = ts - now;
+        if (diff < 0 && diff > -30 * dayMs) {
+          out.push({ item: it, id, dueTs: ts });
+        }
+      }
+      out.sort((a, b) => b.dueTs - a.dueTs); // most recently overdue first
+      return out;
+    } catch (_) {
+      return [];
+    }
+  }
+
+  function formatOverdueAge(dueTs) {
+    const diffMs = Date.now() - dueTs;
+    const mins = Math.floor(diffMs / 60000);
+    const hrs = Math.floor(mins / 60);
+    const days = Math.floor(hrs / 24);
+    if (days >= 1) return `${days}d overdue`;
+    if (hrs >= 1) return `${hrs}h overdue`;
+    if (mins >= 1) return `${mins}m overdue`;
+    return 'Just overdue';
+  }
+
+  async function dismissOverdueItem(id) {
+    if (!id) return;
+    try {
+      if (!Array.isArray(state.dismissedTasks)) state.dismissedTasks = [];
+      if (!state.dismissedTasks.includes(id)) {
+        state.dismissedTasks.push(id);
+        await chrome.storage.local.set({ dismissedTasks: state.dismissedTasks });
+      }
+    } catch (_) { /* noop */ }
+  }
+
+  function closeOverdueModal() {
+    const existing = document.getElementById('cs-overdue-modal');
+    if (existing) existing.remove();
+    document.removeEventListener('keydown', overdueKeyHandler);
+  }
+
+  function overdueKeyHandler(e) {
+    if (e.key === 'Escape') closeOverdueModal();
+  }
+
+  function renderOverdueList(listEl) {
+    const items = getOverdueItems();
+    listEl.innerHTML = '';
+    if (items.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'cs-overdue-empty';
+      empty.textContent = 'No overdue items. Nice.';
+      listEl.appendChild(empty);
+      return;
+    }
+    items.forEach(({ item, id, dueTs }) => {
+      const row = document.createElement('div');
+      row.className = 'cs-overdue-row';
+
+      const main = document.createElement('button');
+      main.type = 'button';
+      main.className = 'cs-overdue-main';
+      const title = document.createElement('div');
+      title.className = 'cs-overdue-title';
+      title.textContent = item.title || 'Untitled';
+      const meta = document.createElement('div');
+      meta.className = 'cs-overdue-meta';
+      const parts = [];
+      if (item.type) parts.push(String(item.type).toUpperCase());
+      if (item.courseName) parts.push(item.courseName);
+      parts.push(formatOverdueAge(dueTs));
+      meta.textContent = parts.join(' · ');
+      main.appendChild(title);
+      main.appendChild(meta);
+      main.addEventListener('click', () => {
+        if (item.url) {
+          try { chrome.tabs.create({ url: item.url }); } catch (_) { /* noop */ }
+        }
+      });
+
+      const dismissBtn = document.createElement('button');
+      dismissBtn.type = 'button';
+      dismissBtn.className = 'cs-overdue-dismiss';
+      dismissBtn.setAttribute('aria-label', 'Dismiss this overdue item');
+      dismissBtn.title = 'Dismiss';
+      dismissBtn.textContent = '×';
+      dismissBtn.addEventListener('click', async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        row.style.opacity = '0.4';
+        await dismissOverdueItem(id);
+        renderOverdueList(listEl);
+        renderGreeting();
+      });
+
+      row.appendChild(main);
+      row.appendChild(dismissBtn);
+      listEl.appendChild(row);
+    });
+  }
+
+  function openOverdueModal() {
+    closeOverdueModal();
+    const overlay = document.createElement('div');
+    overlay.id = 'cs-overdue-modal';
+    overlay.className = 'cs-overdue-modal';
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
+    overlay.setAttribute('aria-label', 'Overdue items');
+
+    const panel = document.createElement('div');
+    panel.className = 'cs-overdue-panel';
+
+    const header = document.createElement('div');
+    header.className = 'cs-overdue-header';
+    const heading = document.createElement('h2');
+    heading.className = 'cs-overdue-heading';
+    heading.textContent = 'Overdue';
+    const close = document.createElement('button');
+    close.type = 'button';
+    close.className = 'cs-overdue-close';
+    close.setAttribute('aria-label', 'Close');
+    close.textContent = '×';
+    close.addEventListener('click', closeOverdueModal);
+    header.appendChild(heading);
+    header.appendChild(close);
+
+    const sub = document.createElement('div');
+    sub.className = 'cs-overdue-sub';
+    sub.textContent = 'Click an item to open it, or × to dismiss it.';
+
+    const list = document.createElement('div');
+    list.className = 'cs-overdue-list';
+    renderOverdueList(list);
+
+    panel.appendChild(header);
+    panel.appendChild(sub);
+    panel.appendChild(list);
+    overlay.appendChild(panel);
+
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) closeOverdueModal();
+    });
+
+    document.body.appendChild(overlay);
+    document.addEventListener('keydown', overdueKeyHandler);
+  }
+
   function countOverdueToday() {
     try {
       if (typeof state === 'undefined' || !state || !Array.isArray(state.indexedContent)) {
@@ -8681,28 +8887,47 @@ function showBrowseCategory(type, items) {
 
     const { overdue, today } = countOverdueToday();
     metaEl.innerHTML = '';
+    const makeOverdueBadge = (count) => {
+      const bad = document.createElement('button');
+      bad.type = 'button';
+      bad.className = 'cs-bad cs-overdue-trigger';
+      bad.textContent = `${count} overdue`;
+      bad.setAttribute('aria-label', `Show ${count} overdue items`);
+      bad.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        openOverdueModal();
+      });
+      return bad;
+    };
     if (overdue > 0 && today > 0) {
-      metaEl.append('You have ');
-      const bad = document.createElement('span');
-      bad.className = 'cs-bad';
-      bad.textContent = `${overdue} overdue`;
-      metaEl.appendChild(bad);
-      metaEl.append(` · ${today} due today.`);
+      const s1 = document.createElement('span');
+      s1.textContent = 'You have ';
+      metaEl.appendChild(s1);
+      metaEl.appendChild(makeOverdueBadge(overdue));
+      const s2 = document.createElement('span');
+      s2.textContent = ` · ${today} due today.`;
+      metaEl.appendChild(s2);
     } else if (overdue > 0) {
-      metaEl.append('You have ');
-      const bad = document.createElement('span');
-      bad.className = 'cs-bad';
-      bad.textContent = `${overdue} overdue`;
-      metaEl.appendChild(bad);
-      metaEl.append('.');
+      const s1 = document.createElement('span');
+      s1.textContent = 'You have ';
+      metaEl.appendChild(s1);
+      metaEl.appendChild(makeOverdueBadge(overdue));
+      const s2 = document.createElement('span');
+      s2.textContent = '.';
+      metaEl.appendChild(s2);
     } else if (today > 0) {
       const ok = document.createElement('span');
       ok.className = 'cs-ok';
       ok.textContent = `${today} due today`;
       metaEl.appendChild(ok);
-      metaEl.append(' · all caught up otherwise.');
+      const s2 = document.createElement('span');
+      s2.textContent = ' · all caught up otherwise.';
+      metaEl.appendChild(s2);
     } else {
-      metaEl.append('All caught up — nothing due today.');
+      const s = document.createElement('span');
+      s.textContent = 'All caught up — nothing due today.';
+      metaEl.appendChild(s);
     }
   }
 
@@ -8851,6 +9076,21 @@ function showBrowseCategory(type, items) {
     } catch (_) { /* noop */ }
   }
 
+  function safeSetInterval(fn, delay) {
+    // Avoid active timers in VM testing environments so they can exit cleanly
+    if (typeof chrome === 'undefined' || !chrome.runtime || typeof chrome.runtime.getManifest !== 'function') {
+      return null;
+    }
+    if (typeof setInterval !== 'undefined') {
+      return setInterval(fn, delay);
+    }
+    const run = () => {
+      try { fn(); } catch (_) {}
+      setTimeout(run, delay);
+    };
+    return setTimeout(run, delay);
+  }
+
   // ── Init + refresh hooks ──────────────────────────────────────────
   function init() {
     renderGreeting();
@@ -8860,13 +9100,13 @@ function showBrowseCategory(type, items) {
     refreshStatsCompact();
 
     // Refresh greeting every minute (in case hour rolls over)
-    setInterval(renderGreeting, 60_000);
+    safeSetInterval(renderGreeting, 60_000);
   }
 
   // Periodically refresh greeting + stats once data loads
   function watchData() {
     let lastCount = 0;
-    setInterval(() => {
+    safeSetInterval(() => {
       try {
         if (typeof state === 'undefined' || !state) return;
         const c = Array.isArray(state.indexedContent) ? state.indexedContent.length : 0;
@@ -8894,7 +9134,7 @@ function showBrowseCategory(type, items) {
     return window.self !== window.top
       || new URLSearchParams(window.location.search).get('mode') === 'overlay';
   }
-  if (isInOverlay()) {
+  if (isInOverlay() && typeof window.addEventListener === 'function') {
     window.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') {
         try { window.parent.postMessage({ type: 'CLOSE_OVERLAY' }, '*'); } catch (_) { /* noop */ }

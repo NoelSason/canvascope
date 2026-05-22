@@ -3,6 +3,7 @@
   "name": "Canvascope",
   "version": "6.0.0",
   "minimum_chrome_version": "116",
+  "default_locale": "en",
   "description": "Instantly search Canvas and Brightspace content",
   "icons": {
     "16": "icons/icon16.png",
@@ -26,7 +27,8 @@
     "offscreen",
     "scripting",
     "identity",
-    "downloads"
+    "downloads",
+    "notifications"
   ],
   "oauth2": {
     "client_id": "961806200943-6deqch1r87uthbarmr7te483u4h7fn9m.apps.googleusercontent.com",
@@ -63,8 +65,12 @@
       ],
       "js": [
         "lib/supabase.js",
+        "lib/skin-themes.js",
         "content.js",
-        "slash-overlay.js"
+        "canvas-skin.js",
+        "academic-tools.js",
+        "slash-overlay.js",
+        "slash-commands-pack.js"
       ],
       "run_at": "document_idle"
     }
