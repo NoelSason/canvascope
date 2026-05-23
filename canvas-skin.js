@@ -1624,9 +1624,9 @@ ${themesApi.buildCssVariables(merged)}
   box-shadow: none !important;
   text-shadow: none !important;
 }
-.${BODY_ROOT_CLASS} .ic-app-header a,
+.${BODY_ROOT_CLASS} .ic-app-header a:not(.ic-app-header__logomark),
 .${BODY_ROOT_CLASS} .ic-app-header button,
-.${BODY_ROOT_CLASS} #global_nav a,
+.${BODY_ROOT_CLASS} #global_nav a:not(.ic-app-header__logomark),
 .${BODY_ROOT_CLASS} #global_nav button {
   background: transparent !important;
   background-color: transparent !important;
@@ -1635,13 +1635,13 @@ ${themesApi.buildCssVariables(merged)}
   box-shadow: none !important;
   text-shadow: none !important;
 }
-.${BODY_ROOT_CLASS} .ic-app-header a:hover,
+.${BODY_ROOT_CLASS} .ic-app-header a:not(.ic-app-header__logomark):hover,
 .${BODY_ROOT_CLASS} .ic-app-header button:hover,
-.${BODY_ROOT_CLASS} #global_nav a:hover,
+.${BODY_ROOT_CLASS} #global_nav a:not(.ic-app-header__logomark):hover,
 .${BODY_ROOT_CLASS} #global_nav button:hover,
-.${BODY_ROOT_CLASS} .ic-app-header a:focus-visible,
+.${BODY_ROOT_CLASS} .ic-app-header a:not(.ic-app-header__logomark):focus-visible,
 .${BODY_ROOT_CLASS} .ic-app-header button:focus-visible,
-.${BODY_ROOT_CLASS} #global_nav a:focus-visible,
+.${BODY_ROOT_CLASS} #global_nav a:not(.ic-app-header__logomark):focus-visible,
 .${BODY_ROOT_CLASS} #global_nav button:focus-visible {
   background: color-mix(in srgb, var(--cs-skin-accent), transparent 84%) !important;
   color: var(--cs-skin-text) !important;
@@ -1824,6 +1824,157 @@ ${themesApi.buildCssVariables(merged)}
 .${BODY_ROOT_CLASS} .ic-Layout-contentMain .assignment-group,
 .${BODY_ROOT_CLASS} .ic-Layout-contentMain .announcements-v2__wrapper {
   box-shadow: none !important;
+}
+
+/* -- Final visual cleanup: kill every stray sidebar/dashboard border -- */
+.${BODY_ROOT_CLASS} #right-side,
+.${BODY_ROOT_CLASS} #right-side-wrapper,
+.${BODY_ROOT_CLASS} .ic-app-main-content__secondary,
+.${BODY_ROOT_CLASS} #right-side > *,
+.${BODY_ROOT_CLASS} .ic-app-main-content__secondary > * {
+  background: transparent !important;
+  background-color: transparent !important;
+}
+.${BODY_ROOT_CLASS} #right-side *:not(input):not(textarea):not(select):not(.ic-app-header__logomark),
+.${BODY_ROOT_CLASS} .ic-app-main-content__secondary *:not(input):not(textarea):not(select):not(.ic-app-header__logomark) {
+  border-color: transparent !important;
+  box-shadow: none !important;
+}
+.${BODY_ROOT_CLASS} #right-side hr,
+.${BODY_ROOT_CLASS} .ic-app-main-content__secondary hr {
+  display: none !important;
+}
+.${BODY_ROOT_CLASS} #right-side .Button,
+.${BODY_ROOT_CLASS} #right-side a.Button,
+.${BODY_ROOT_CLASS} #right-side button.Button,
+.${BODY_ROOT_CLASS} #right-side .btn,
+.${BODY_ROOT_CLASS} #right-side a.btn,
+.${BODY_ROOT_CLASS} #right-side button.btn,
+.${BODY_ROOT_CLASS} #right-side .button-sidebar-wide,
+.${BODY_ROOT_CLASS} .ic-app-main-content__secondary .Button,
+.${BODY_ROOT_CLASS} .ic-app-main-content__secondary a.Button,
+.${BODY_ROOT_CLASS} .ic-app-main-content__secondary button.Button,
+.${BODY_ROOT_CLASS} .ic-app-main-content__secondary .btn,
+.${BODY_ROOT_CLASS} .ic-app-main-content__secondary a.btn,
+.${BODY_ROOT_CLASS} .ic-app-main-content__secondary button.btn,
+.${BODY_ROOT_CLASS} .ic-app-main-content__secondary .button-sidebar-wide {
+  border: 0 !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+  background-color: color-mix(in srgb, var(--cs-skin-surface), var(--cs-skin-text) 6%) !important;
+}
+.${BODY_ROOT_CLASS} #right-side .Button:hover,
+.${BODY_ROOT_CLASS} #right-side .btn:hover,
+.${BODY_ROOT_CLASS} #right-side .button-sidebar-wide:hover,
+.${BODY_ROOT_CLASS} .ic-app-main-content__secondary .Button:hover,
+.${BODY_ROOT_CLASS} .ic-app-main-content__secondary .btn:hover,
+.${BODY_ROOT_CLASS} .ic-app-main-content__secondary .button-sidebar-wide:hover {
+  background-color: color-mix(in srgb, var(--cs-skin-surface), var(--cs-skin-text) 14%) !important;
+  border: 0 !important;
+  border-color: transparent !important;
+}
+.${BODY_ROOT_CLASS} .Sidebar__TodoListContainer .ToDoSidebar-Item,
+.${BODY_ROOT_CLASS} .Sidebar__TodoListContainer li,
+.${BODY_ROOT_CLASS} #right-side .events_list li,
+.${BODY_ROOT_CLASS} #right-side .todo-list li,
+.${BODY_ROOT_CLASS} #right-side ul li,
+.${BODY_ROOT_CLASS} .ic-app-main-content__secondary ul li {
+  border: 0 !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+  outline: none !important;
+}
+
+/* -- Card contrast boost: lift cards above the page background -- */
+.${BODY_ROOT_CLASS} .ic-DashboardCard {
+  background-color: color-mix(in srgb, var(--cs-skin-surface), var(--cs-skin-text) 4%) !important;
+  border: 0 !important;
+  border-color: transparent !important;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.08), 0 6px 16px rgba(0,0,0,0.18) !important;
+}
+.${BODY_ROOT_CLASS}.${BODY_MODE_CLASS_PREFIX}dark .ic-DashboardCard {
+  background-color: color-mix(in srgb, var(--cs-skin-surface), white 6%) !important;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.35), 0 10px 24px rgba(0,0,0,0.40) !important;
+}
+.${BODY_ROOT_CLASS} .ic-DashboardCard__header_content,
+.${BODY_ROOT_CLASS} .ic-DashboardCard__action-container,
+.${BODY_ROOT_CLASS} .ic-DashboardCard__box,
+.${BODY_ROOT_CLASS} .ic-DashboardCard__box__container {
+  background-color: transparent !important;
+  border: 0 !important;
+  border-color: transparent !important;
+}
+.${BODY_ROOT_CLASS} .ic-DashboardCard:hover {
+  transform: translateY(-2px) !important;
+  box-shadow: 0 4px 8px rgba(0,0,0,0.18), 0 16px 36px rgba(0,0,0,0.30) !important;
+  border: 0 !important;
+}
+
+/* -- Dashboard header & main content: same bg as page, no panel effect -- */
+.${BODY_ROOT_CLASS} #dashboard_header_container,
+.${BODY_ROOT_CLASS} .ic-Dashboard-header,
+.${BODY_ROOT_CLASS} .ic-Dashboard-header__layout,
+.${BODY_ROOT_CLASS} .ic-dashboard-header,
+.${BODY_ROOT_CLASS} .ic-dashboard-header__layout,
+.${BODY_ROOT_CLASS} #DashboardOptionsMenu_Container,
+.${BODY_ROOT_CLASS} .ic-Action-header,
+.${BODY_ROOT_CLASS} .ic-page-header,
+.${BODY_ROOT_CLASS} .page-title {
+  background: var(--cs-skin-bg) !important;
+  background-color: var(--cs-skin-bg) !important;
+  border: 0 !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+}
+
+/* -- InstUI <View> wrappers (emotion classes like css-xxx-view-flex/flexItem/listItem)
+      get an explicit background that doesn't match the page. Force transparent
+      everywhere we control the surface (header, right-side, sidebar). -- */
+.${BODY_ROOT_CLASS} #dashboard_header_container [class*="-view-flex"],
+.${BODY_ROOT_CLASS} .ic-Dashboard-header [class*="-view-flex"],
+.${BODY_ROOT_CLASS} .ic-Dashboard-header__actions [class*="-view-"],
+.${BODY_ROOT_CLASS} #right-side [class*="-view-"],
+.${BODY_ROOT_CLASS} .ic-app-main-content__secondary [class*="-view-"],
+.${BODY_ROOT_CLASS} #right-side [class*="-list-item"],
+.${BODY_ROOT_CLASS} #right-side [class*="ListItem"],
+.${BODY_ROOT_CLASS} .ic-app-main-content__secondary [class*="-list-item"],
+.${BODY_ROOT_CLASS} .ic-app-main-content__secondary [class*="ListItem"] {
+  background: transparent !important;
+  background-color: transparent !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+}
+
+/* -- Course card action icons: kill the assignment-icon "white box" so all
+      three icons blend with the card surface. Extra specificity needed because
+      the broad ".ic-Layout-contentMain .assignments" rule above also matches
+      the .assignments dashboard card icon. -- */
+.${BODY_ROOT_CLASS} .ic-DashboardCard .ic-DashboardCard__action-container,
+.${BODY_ROOT_CLASS} .ic-DashboardCard .ic-DashboardCard__action,
+.${BODY_ROOT_CLASS} .ic-DashboardCard__action-container .ic-DashboardCard__action,
+.${BODY_ROOT_CLASS} .ic-DashboardCard .ic-DashboardCard__action.announcements,
+.${BODY_ROOT_CLASS} .ic-DashboardCard .ic-DashboardCard__action.discussions,
+.${BODY_ROOT_CLASS} .ic-DashboardCard .ic-DashboardCard__action.assignments,
+.${BODY_ROOT_CLASS} .ic-DashboardCard .ic-DashboardCard__action.files,
+.${BODY_ROOT_CLASS} .ic-DashboardCard .ic-DashboardCard__action.todo,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .ic-DashboardCard__action.assignments,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .ic-DashboardCard .assignments {
+  background: transparent !important;
+  background-color: transparent !important;
+  border: 0 !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+}
+
+/* -- Logo: dark-only backplate. Light themes get a transparent treatment so the
+      Berkeley mark sits on the page surface (no foreign white box). -- */
+.${BODY_ROOT_CLASS}.${BODY_MODE_CLASS_PREFIX}light .ic-app-header__logomark,
+.${BODY_ROOT_CLASS}.${BODY_MODE_CLASS_PREFIX}light #global_nav .ic-app-header__logomark {
+  background-color: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  padding: 4px !important;
+  border-radius: 0 !important;
 }
 `;
 
