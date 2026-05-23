@@ -1878,14 +1878,38 @@ ${themesApi.buildCssVariables(merged)}
 
 /* -- Card contrast boost: lift cards above the page background -- */
 .${BODY_ROOT_CLASS} .ic-DashboardCard {
-  background-color: color-mix(in srgb, var(--cs-skin-surface), var(--cs-skin-text) 4%) !important;
+  background-color: color-mix(in srgb, var(--cs-skin-surface), var(--cs-skin-text) 6%) !important;
   border: 0 !important;
   border-color: transparent !important;
   box-shadow: 0 1px 2px rgba(0,0,0,0.08), 0 6px 16px rgba(0,0,0,0.18) !important;
 }
 .${BODY_ROOT_CLASS}.${BODY_MODE_CLASS_PREFIX}dark .ic-DashboardCard {
-  background-color: color-mix(in srgb, var(--cs-skin-surface), white 6%) !important;
-  box-shadow: 0 2px 4px rgba(0,0,0,0.35), 0 10px 24px rgba(0,0,0,0.40) !important;
+  background-color: #23272f !important;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.60), 0 16px 40px rgba(0,0,0,0.65) !important;
+}
+/* Course title + subtitle + meta text on dark themes: force pure-white text so
+   nothing inherits a tinted "rose"/"mauve" link color. The broad
+   ".ic-Layout-contentMain a:not(.Button):not(.btn)" rule has specificity
+   (0,4,1) so we need at least that to win. */
+.${BODY_ROOT_CLASS}.${BODY_MODE_CLASS_PREFIX}dark .ic-Layout-contentMain .ic-DashboardCard a.ic-DashboardCard__link,
+.${BODY_ROOT_CLASS}.${BODY_MODE_CLASS_PREFIX}dark .ic-Layout-contentMain .ic-DashboardCard .ic-DashboardCard__header_content a,
+.${BODY_ROOT_CLASS}.${BODY_MODE_CLASS_PREFIX}dark .ic-Layout-contentMain .ic-DashboardCard__header-title a,
+.${BODY_ROOT_CLASS}.${BODY_MODE_CLASS_PREFIX}dark .ic-Layout-contentMain .ic-DashboardCard a.ic-DashboardCard__link:hover,
+.${BODY_ROOT_CLASS}.${BODY_MODE_CLASS_PREFIX}dark .ic-Layout-contentMain .ic-DashboardCard a.ic-DashboardCard__link:focus,
+.${BODY_ROOT_CLASS}.${BODY_MODE_CLASS_PREFIX}dark .ic-DashboardCard .ic-DashboardCard__header-title,
+.${BODY_ROOT_CLASS}.${BODY_MODE_CLASS_PREFIX}dark .ic-DashboardCard .ic-DashboardCard__header_content .ic-DashboardCard__header-title,
+.${BODY_ROOT_CLASS}.${BODY_MODE_CLASS_PREFIX}dark .ic-DashboardCard .ic-DashboardCard__header-subtitle,
+.${BODY_ROOT_CLASS}.${BODY_MODE_CLASS_PREFIX}dark .ic-DashboardCard .ic-DashboardCard__term {
+  color: #ffffff !important;
+  -webkit-text-fill-color: #ffffff !important;
+}
+/* Bump dashboard card title weight/size so it visually competes with subtitle. */
+.${BODY_ROOT_CLASS} .ic-DashboardCard .ic-DashboardCard__header-title,
+.${BODY_ROOT_CLASS} .ic-DashboardCard .ic-DashboardCard__header-title a,
+.${BODY_ROOT_CLASS} .ic-DashboardCard a.ic-DashboardCard__link {
+  font-size: 16px !important;
+  font-weight: 700 !important;
+  line-height: 1.3 !important;
 }
 .${BODY_ROOT_CLASS} .ic-DashboardCard__header_content,
 .${BODY_ROOT_CLASS} .ic-DashboardCard__action-container,
@@ -1976,6 +2000,56 @@ ${themesApi.buildCssVariables(merged)}
   box-shadow: none !important;
   border-radius: 0 !important;
   padding: 0 !important;
+}
+
+/* -- Canvas's white-to-transparent text-fade gradient on sidebar items
+      shows up as a glowing white stripe on dark themes. Kill it. -- */
+.${BODY_ROOT_CLASS} #right-side .event-details::after,
+.${BODY_ROOT_CLASS} #right-side .event-details::before,
+.${BODY_ROOT_CLASS} .ic-app-main-content__secondary .event-details::after,
+.${BODY_ROOT_CLASS} .ic-app-main-content__secondary .event-details::before,
+.${BODY_ROOT_CLASS} #right-side [class*="-view-listItem"]::after,
+.${BODY_ROOT_CLASS} #right-side [class*="-view-listItem"]::before {
+  background: transparent !important;
+  background-image: none !important;
+  display: none !important;
+  content: none !important;
+}
+
+/* -- Themed scrollbars: skinny + match palette. Applies to the global nav
+      sidebar, the right-side panel, and any internal scroll containers. -- */
+.${BODY_ROOT_CLASS} #global_nav,
+.${BODY_ROOT_CLASS} #global_nav *,
+.${BODY_ROOT_CLASS} #left-side,
+.${BODY_ROOT_CLASS} #left-side *,
+.${BODY_ROOT_CLASS} #right-side,
+.${BODY_ROOT_CLASS} #right-side *,
+.${BODY_ROOT_CLASS} .ic-app-main-content,
+.${BODY_ROOT_CLASS} .ic-app-main-content *,
+.${BODY_ROOT_CLASS} body,
+.${BODY_ROOT_CLASS} html {
+  scrollbar-width: thin !important;
+  scrollbar-color: color-mix(in srgb, var(--cs-skin-text), transparent 70%) transparent !important;
+}
+.${BODY_ROOT_CLASS} *::-webkit-scrollbar {
+  width: 6px !important;
+  height: 6px !important;
+  background: transparent !important;
+}
+.${BODY_ROOT_CLASS} *::-webkit-scrollbar-track {
+  background: transparent !important;
+  border: 0 !important;
+}
+.${BODY_ROOT_CLASS} *::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--cs-skin-text), transparent 75%) !important;
+  border-radius: 6px !important;
+  border: 0 !important;
+}
+.${BODY_ROOT_CLASS} *::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--cs-skin-text), transparent 55%) !important;
+}
+.${BODY_ROOT_CLASS} *::-webkit-scrollbar-corner {
+  background: transparent !important;
 }
 `;
 

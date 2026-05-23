@@ -5828,6 +5828,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             }
         })();
         return true;
+    } else if (message.type === 'canvascope-reload-extension') {
+        sendResponse({ success: true });
+        setTimeout(() => { try { chrome.runtime.reload(); } catch (err) { console.error('[Canvascope] reload failed:', err); } }, 50);
+        return true;
     } else if (message.type === 'fetchAdaptiveSearchState') {
         (async () => {
             try {

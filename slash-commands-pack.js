@@ -63,8 +63,42 @@
       cmdNotes(),
       cmdTodo(),
       cmdRemind(),
-      cmdSync()
+      cmdSync(),
+      cmdReload()
     ];
+  }
+
+  // -------------------------------------------------------------------------
+  // /reload — quick dev helper to reload the extension without needing
+  //           chrome://extensions access. Sends a message to background.js
+  //           which calls chrome.runtime.reload().
+  // -------------------------------------------------------------------------
+  function cmdReload() {
+    return {
+      order: 999, id: 'cs-reload', primaryAlias: 'reload',
+      aliases: ['rl', 'reloadext', 'refresh-extension'],
+      title: 'Reload Canvascope',
+      description: 'Reload the extension (useful while iterating on CSS/JS).',
+      keywords: ['reload', 'refresh', 'restart', 'extension', 'dev'],
+      icon: 'arrows-rotate', badge: 'Dev', needsArgument: false,
+      buildResults() {
+        return [{
+          kind: 'action',
+          id: 'cs-reload-go',
+          title: 'Reload Canvascope extension',
+          subtitle: 'Triggers chrome.runtime.reload() via the service worker.',
+          icon: 'arrows-rotate',
+          onSelect: () => {
+            try {
+              chrome.runtime.sendMessage({ type: 'canvascope-reload-extension' }, () => {
+                // Page will be re-injected once extension comes back; nothing to do here.
+                void chrome.runtime.lastError;
+              });
+            } catch (err) { console.error('[Canvascope] /reload failed:', err); }
+          }
+        }];
+      }
+    };
   }
 
   // -------------------------------------------------------------------------
