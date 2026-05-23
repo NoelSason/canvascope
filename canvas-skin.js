@@ -828,8 +828,7 @@ ${themesApi.buildCssVariables(merged)}
 .${BODY_ROOT_CLASS} .ic-Layout-contentMain #assignment_show,
 .${BODY_ROOT_CLASS} .ic-Layout-contentMain .assignment-index,
 .${BODY_ROOT_CLASS} .ic-Layout-contentMain .assignment-list-body,
-.${BODY_ROOT_CLASS} .ic-Layout-contentMain .assignments,
-.${BODY_ROOT_CLASS} .ic-app-main-content :is(.item-group-container,.item-group-condensed,.item-group-expandable,.ig-list,.ig-header,.ig-row,.ig-row__layout,.ig-row__content,.ig-info,.assignment,.assignment-group,.assignment_group,.assignment-list,.collectionViewItems,.context_module,.context_module_item,.module-item,.discussion-entry,.entry-content,.student-assignment-overview,.module-sequence-footer,.module-sequence-footer-content,.module-sequence-footer__content,.module-sequence-padding,.module-sequence-footer-button,.module-sequence-footer-button--previous,.module-sequence-footer-button--next,#module_sequence_footer,#module_navigation_target,#assignments,#assignment_show,.assignment-index,.assignment-list-body,.assignments) {
+.${BODY_ROOT_CLASS} .ic-app-main-content :is(.item-group-container,.item-group-condensed,.item-group-expandable,.ig-list,.ig-header,.ig-row,.ig-row__layout,.ig-row__content,.ig-info,.assignment,.assignment-group,.assignment_group,.assignment-list,.collectionViewItems,.context_module,.context_module_item,.module-item,.discussion-entry,.entry-content,.student-assignment-overview,.module-sequence-footer,.module-sequence-footer-content,.module-sequence-footer__content,.module-sequence-padding,.module-sequence-footer-button,.module-sequence-footer-button--previous,.module-sequence-footer-button--next,.assignment-index,.assignment-list-body) {
   background-color: var(--cs-skin-surface) !important;
   color: var(--cs-skin-text) !important;
   border-color: var(--cs-skin-border) !important;
@@ -1431,13 +1430,12 @@ ${themesApi.buildCssVariables(merged)}
 .${BODY_ROOT_CLASS} .ic-Layout-contentMain #assignments,
 .${BODY_ROOT_CLASS} .ic-Layout-contentMain #assignment_show,
 .${BODY_ROOT_CLASS} .ic-Layout-contentMain .assignment-index,
-.${BODY_ROOT_CLASS} .ic-Layout-contentMain .assignment-list-body,
-.${BODY_ROOT_CLASS} .ic-Layout-contentMain .assignments {
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .assignment-list-body {
   background-color: var(--cs-skin-surface) !important;
   color: var(--cs-skin-text) !important;
   border-color: var(--cs-skin-border) !important;
 }
-.${BODY_ROOT_CLASS} .ic-app-main-content :is(.item-group-container,.item-group-condensed,.item-group-expandable,.ig-list,.ig-header,.ig-row,.ig-row__layout,.ig-row__content,.ig-info,.assignment,.assignment-group,.assignment_group,.assignment-list,.collectionViewItems,.context_module,.context_module_item,.module-item,.discussion-entry,.entry-content,.student-assignment-overview,.module-sequence-footer,.module-sequence-footer-content,.module-sequence-footer__content,.module-sequence-padding,.module-sequence-footer-button,.module-sequence-footer-button--previous,.module-sequence-footer-button--next,#module_sequence_footer,#module_navigation_target,#assignments,#assignment_show,.assignment-index,.assignment-list-body,.assignments) {
+.${BODY_ROOT_CLASS} .ic-app-main-content :is(.item-group-container,.item-group-condensed,.item-group-expandable,.ig-list,.ig-header,.ig-row,.ig-row__layout,.ig-row__content,.ig-info,.assignment,.assignment-group,.assignment_group,.assignment-list,.collectionViewItems,.context_module,.context_module_item,.module-item,.discussion-entry,.entry-content,.student-assignment-overview,.module-sequence-footer,.module-sequence-footer-content,.module-sequence-footer__content,.module-sequence-padding,.module-sequence-footer-button,.module-sequence-footer-button--previous,.module-sequence-footer-button--next,.assignment-index,.assignment-list-body) {
   background-color: var(--cs-skin-surface) !important;
   color: var(--cs-skin-text) !important;
   border-color: var(--cs-skin-border) !important;
@@ -1687,20 +1685,13 @@ ${themesApi.buildCssVariables(merged)}
   box-shadow: none !important;
 }
 .${BODY_ROOT_CLASS} .ic-app-header__logomark-container,
-.${BODY_ROOT_CLASS} #global_nav .ic-app-header__logomark-container {
-  background-color: transparent !important;
-  border: 0 !important;
-  box-shadow: none !important;
-}
+.${BODY_ROOT_CLASS} #global_nav .ic-app-header__logomark-container,
 .${BODY_ROOT_CLASS} .ic-app-header__logomark,
 .${BODY_ROOT_CLASS} #global_nav .ic-app-header__logomark {
-  background-color: rgba(255, 255, 255, 0.96) !important;
-  border-radius: 12px !important;
-  border: 1px solid rgba(255, 255, 255, 0.55) !important;
-  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.32) !important;
-  background-clip: padding-box !important;
-  background-origin: padding-box !important;
-  padding: 6px !important;
+  background-color: transparent !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
   filter: none !important;
 }
 .${BODY_ROOT_CLASS} .ic-app-header__logomark-container img,
@@ -1930,9 +1921,11 @@ ${themesApi.buildCssVariables(merged)}
 /* -- InstUI <View> wrappers (emotion classes like css-xxx-view-flex/flexItem/listItem)
       get an explicit background that doesn't match the page. Force transparent
       everywhere we control the surface (header, right-side, sidebar). -- */
-.${BODY_ROOT_CLASS} #dashboard_header_container [class*="-view-flex"],
-.${BODY_ROOT_CLASS} .ic-Dashboard-header [class*="-view-flex"],
+.${BODY_ROOT_CLASS} #dashboard_header_container [class*="-view-"],
+.${BODY_ROOT_CLASS} .ic-Dashboard-header [class*="-view-"],
 .${BODY_ROOT_CLASS} .ic-Dashboard-header__actions [class*="-view-"],
+.${BODY_ROOT_CLASS} .ic-Dashboard-header__layout [class*="-view-"],
+.${BODY_ROOT_CLASS} .ic-dashboard-app [class*="-view-"],
 .${BODY_ROOT_CLASS} #right-side [class*="-view-"],
 .${BODY_ROOT_CLASS} .ic-app-main-content__secondary [class*="-view-"],
 .${BODY_ROOT_CLASS} #right-side [class*="-list-item"],
@@ -1943,6 +1936,14 @@ ${themesApi.buildCssVariables(merged)}
   background-color: transparent !important;
   border-color: transparent !important;
   box-shadow: none !important;
+}
+/* InstUI components sometimes render the surface on their inner button/grip
+   element. Catch those too. */
+.${BODY_ROOT_CLASS} #right-side button[class*="-view-"],
+.${BODY_ROOT_CLASS} #right-side a[class*="-view-"],
+.${BODY_ROOT_CLASS} .ic-Dashboard-header__actions button[class*="-view-"] {
+  background: transparent !important;
+  background-color: transparent !important;
 }
 
 /* -- Course card action icons: kill the assignment-icon "white box" so all
@@ -1966,15 +1967,15 @@ ${themesApi.buildCssVariables(merged)}
   box-shadow: none !important;
 }
 
-/* -- Logo: dark-only backplate. Light themes get a transparent treatment so the
-      Berkeley mark sits on the page surface (no foreign white box). -- */
-.${BODY_ROOT_CLASS}.${BODY_MODE_CLASS_PREFIX}light .ic-app-header__logomark,
-.${BODY_ROOT_CLASS}.${BODY_MODE_CLASS_PREFIX}light #global_nav .ic-app-header__logomark {
+/* -- Logo: always transparent backplate; the real school logo is the
+      background-image set by Canvas and we now let it show through directly. -- */
+.${BODY_ROOT_CLASS} .ic-app-header__logomark,
+.${BODY_ROOT_CLASS} #global_nav .ic-app-header__logomark {
   background-color: transparent !important;
   border: 0 !important;
   box-shadow: none !important;
-  padding: 4px !important;
   border-radius: 0 !important;
+  padding: 0 !important;
 }
 `;
 

@@ -17,9 +17,9 @@ const steps = [
     ]
   },
   {
-    name: 'Start local Supabase stack',
+    name: 'Start local Supabase database',
     command: 'supabase',
-    args: ['start']
+    args: ['db', 'start']
   },
   {
     name: 'Wait for local Supabase services',
