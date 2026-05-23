@@ -28,7 +28,8 @@
     "scripting",
     "identity",
     "downloads",
-    "notifications"
+    "notifications",
+    "sidePanel"
   ],
   "oauth2": {
     "client_id": "961806200943-6deqch1r87uthbarmr7te483u4h7fn9m.apps.googleusercontent.com",
@@ -77,6 +78,9 @@
   ],
   "background": {
     "service_worker": "background-wrapper.js"
+  },
+  "side_panel": {
+    "default_path": "v8/sidepanel.html"
   },
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'none'; base-uri 'none';"

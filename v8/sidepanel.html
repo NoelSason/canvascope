@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Canvascope AI Assistant</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="sidepanel.css">
+</head>
+<body class="cs-theme-dark">
+  <div class="sidepanel-container">
+    
+    <!-- Top Header -->
+    <header class="sidepanel-header">
+      <div class="brand-row">
+        <div class="logo-wrapper">
+          <img src="../icons/icon32.png" alt="Logo" class="brand-icon">
+          <span class="brand-title">Canvascope <span class="brand-sub">AI</span></span>
+        </div>
+        <div id="ai-status" class="ai-status-badge status-checking">
+          <span class="status-dot"></span>
+          <span class="status-text">Checking Local AI...</span>
+        </div>
+      </div>
+      
+      <!-- Context Selector Banner -->
+      <div class="context-banner">
+        <div class="context-info">
+          <svg class="icon-context" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"></path>
+          </svg>
+          <span id="active-context-label" class="context-label">Loading Course Context...</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- Main Chat Logs -->
+    <main class="chat-viewport">
+      <div id="chat-history" class="chat-history">
+        <!-- Initial system introduction bubble -->
+        <div class="chat-bubble bubble-system animate-fade-in">
+          <div class="bubble-avatar">🤖</div>
+          <div class="bubble-content">
+            <p class="greeting-head">Hello! I am your local **Canvascope AI Assistant**.</p>
+            <p>Running entirely offline using your browser's local **Gemini Nano** model, I can summarize syllabus policies, analyze assignment guidelines, and extract key tasks. Ask me anything about your active course!</p>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <!-- Suggestions Container -->
+    <div id="suggestions-area" class="suggestions-area">
+      <div class="suggestions-scroll">
+        <button class="btn-suggest" data-prompt="Summarize the active assignment page">📝 Summarize Assignment</button>
+        <button class="btn-suggest" data-prompt="What are the key deadlines and tasks on this page?">📅 Extract Tasks</button>
+        <button class="btn-suggest" data-prompt="Generate a 3-question conceptual quiz from this page context">🧠 Quick Practice Quiz</button>
+      </div>
+    </div>
+
+    <!-- Bottom Input Dock -->
+    <footer class="input-dock">
+      <div class="input-container">
+        <textarea 
+          id="user-prompt" 
+          placeholder="Ask local AI about this course..." 
+          rows="1"
+        ></textarea>
+        <button id="send-btn" class="btn-send" disabled aria-label="Send prompt">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M14 5l7 7m0 0l-7 7m7-7H3"></path>
+          </svg>
+        </button>
+      </div>
+      <div class="footer-privacy-badge">
+        🔒 Processing runs local-first on your machine via Chrome Prompt API
+      </div>
+    </footer>
+
+  </div>
+
+  <!-- Scripts -->
+  <script src="../lib/supabase.js"></script>
+  <script src="local-ai.js"></script>
+  <script src="sidepanel.js"></script>
+</body>
+</html>
