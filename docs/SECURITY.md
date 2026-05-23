@@ -1,6 +1,6 @@
 # Canvascope - Security Documentation
 
-This document summarizes the security model for Canvascope v2.2.0, including optional Lectra sync flows.
+This document summarizes the security model for Canvascope v7.0.0, including optional Lectra sync flows.
 
 ---
 

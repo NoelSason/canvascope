@@ -1,7 +1,8 @@
 # Canvascope - Development Roadmap
 
-## Current State (v2.2.0)
+## Current State (v7.0.0)
 
+- Custom skin themes (Berkeley bCourses, UCLA BruinLearn, UCSD, MIT, etc.)
 - Hybrid local search (Fuse + lexical fusion)
 - Course-scoped queries + abbreviation expansion
 - Due planner + keyboard overlay
@@ -36,6 +37,12 @@
 - Realtime wake subscription + 60s fallback polling
 - Namespaced Course Brain sync rows: `canvascope_course_catalog_v1` and `canvascope_course_snapshot_v1`
 - Bounded Canvas syllabus / assignment / page / discussion text sync for Lectra
+
+### Phase 2.6: Custom Skin Styling & Themes (v7.0.0)
+- Local styling system (`canvas-skin.js` and `lib/skin-themes.js`)
+- Dynamic theme styles injected directly into active Canvas/Brightspace LMS instances
+- Interactive popup-based theme configurations and settings persistence
+- Seamless theme sync across popup, content script, and service worker contexts
 
 ---
 

@@ -1,7 +1,7 @@
 # Canvascope - Privacy Policy
 
-**Last Updated**: March 7, 2026  
-**Version**: 2.2.0
+**Last Updated**: May 23, 2026  
+**Version**: 7.0.0
 
 ---
 

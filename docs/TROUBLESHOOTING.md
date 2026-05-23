@@ -1,4 +1,4 @@
-# Canvascope v2.2.0 - Troubleshooting Guide
+# Canvascope v7.0.0 - Troubleshooting Guide
 
 Common issues and fixes for search, sync, and Lectra PDF handoff.
 
@@ -150,6 +150,6 @@ Fix:
 
 When reporting an issue, include:
 - Chrome version (`chrome://version`)
-- Extension version (`2.2.0`)
+- Extension version (`7.0.0`)
 - Repro steps
 - Console logs (popup/content/background)

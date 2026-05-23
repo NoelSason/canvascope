@@ -4,14 +4,14 @@
 
 Canvascope is a local-first Chrome extension for Canvas and Brightspace. It indexes course content for fast search, supports course-scoped queries and planner workflows, and can optionally push selected PDFs to Lectra (iPad) through Supabase.
 
-![Version](https://img.shields.io/badge/version-2.2.0-orange)
+![Version](https://img.shields.io/badge/version-7.0.0-orange)
 ![Chrome](https://img.shields.io/badge/Chrome-88%2B-green)
 ![License](https://img.shields.io/badge/license-MIT-purple)
 
 > [!IMPORTANT]
-> **v2.2.0 is now available.**
+> **v7.0.0 is now available.**
 >
-> This release adds the Lectra PDF handoff flow (`Send to Lectra`) and updates the privacy/security model to reflect explicit cloud sync for that feature.
+> This release brings a modernized student assistant experience, refined theme styling support, faster local indexing performance, and robust local search capabilities.
 
 ---
 
@@ -25,7 +25,7 @@ Canvascope is a local-first Chrome extension for Canvas and Brightspace. It inde
 - Keyboard overlay (Cmd/Ctrl + K) on Canvas pages
 - Optional Google sign-in for account-linked sync features
 
-### Lectra PDF Handoff (v2.2.0)
+### Lectra PDF Handoff (v7.0.0)
 - `Send to Lectra` button appears on supported Canvas PDF pages
 - Popup fallback button: `Send PDF to Lectra`
 - Validates PDF signatures and enforces 25 MB size limit
@@ -133,10 +133,10 @@ This contract aligns with the Lectra workspace specs in `../..` (`lectra [IN PRO
 ## Roadmap Snapshot
 
 ### Completed
-- Search quality and relevance upgrades (v2.0-v2.1)
+- Search quality, relevance, and styling skin support (v2.0 - v7.0.0)
 - Planner + overlay UX
 - Optional Google auth
-- Lectra PDF push bridge (v2.2)
+- Lectra PDF push bridge (v2.2 - v7.0.0)
 
 ### Next
 - PDF text extraction for in-extension full text search

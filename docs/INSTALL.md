@@ -46,7 +46,7 @@ extension-core/
 
 You should see:
 - `Canvascope` in your extension list
-- Version `2.2.0`
+- Version `7.0.0`
 - No load errors
 
 ---
