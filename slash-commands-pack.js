@@ -64,7 +64,8 @@
       cmdTodo(),
       cmdRemind(),
       cmdSync(),
-      cmdReload()
+      cmdReload(),
+      cmdZen()
     ];
   }
 
@@ -76,6 +77,7 @@
   function cmdReload() {
     return {
       order: 999, id: 'cs-reload', primaryAlias: 'reload',
+      hidden: true,
       aliases: ['rl', 'reloadext', 'refresh-extension'],
       title: 'Reload Canvascope',
       description: 'Reload the extension (useful while iterating on CSS/JS).',
@@ -115,16 +117,20 @@
       buildResults(arg) {
         const themes = getSkinApi()?.listThemes() || [];
         const q = String(arg || '').trim().toLowerCase();
+        // Public list for v7.0.0: only paper + canvas-default appear with no
+        // query. The other themes remain applicable when the user types their
+        // name/id explicitly (e.g. "/theme dim") for testers.
+        const PUBLIC_IDS = new Set(['paper', 'canvas-default']);
         const filtered = q
           ? themes.filter(t =>
               t.id.includes(q) || t.name.toLowerCase().includes(q) ||
               t.tags?.some(tag => tag.includes(q))
             )
-          : themes;
+          : themes.filter(t => PUBLIC_IDS.has(t.id));
         if (!filtered.length) {
           return [{
             kind: 'guidance', title: 'No matching themes',
-            subtitle: 'Try /theme dim, /theme oled, /theme paper.',
+            subtitle: 'Try /theme paper.',
             icon: 'bolt'
           }];
         }
@@ -152,6 +158,7 @@
   function cmdFont() {
     return {
       order: 101, id: 'cs-font', primaryAlias: 'font',
+      hidden: true,
       aliases: ['fonts'],
       title: 'Swap font',
       description: 'Use a different typeface across Canvas.',
@@ -183,6 +190,7 @@
     ];
     return {
       order: 102, id: 'cs-density', primaryAlias: 'density',
+      hidden: true,
       title: 'Card density',
       description: 'Adjust dashboard card spacing.',
       keywords: ['density', 'compact', 'cozy', 'comfy', 'card'],
@@ -206,6 +214,7 @@
   function cmdPaint() {
     return {
       order: 103, id: 'cs-paint', primaryAlias: 'paint',
+      hidden: true,
       aliases: ['color', 'colour'],
       title: 'Paint course card',
       description: 'Recolor a course card. Usage: /paint <course> <#hex>',
@@ -276,6 +285,7 @@
   function cmdSkin() {
     return {
       order: 104, id: 'cs-skin', primaryAlias: 'skin',
+      hidden: true,
       aliases: ['settings'],
       title: 'Skin settings',
       description: 'Quick toggles for sidebar, gradients, overlay, fixer.',
@@ -340,6 +350,7 @@
   function cmdPreview() {
     return {
       order: 105, id: 'cs-preview', primaryAlias: 'preview',
+      hidden: true,
       title: 'Hover previews',
       description: 'Toggle assignment / announcement hover previews.',
       keywords: ['preview', 'hover', 'assignment', 'peek'],
@@ -630,5 +641,32 @@
     };
   }
 
-  console.log('[Canvascope Slash Pack] loaded — 13 commands registered.');
+  // -------------------------------------------------------------------------
+  // /zen /focus
+  // -------------------------------------------------------------------------
+  function cmdZen() {
+    return {
+      order: 150, id: 'cs-zen', primaryAlias: 'zen',
+      aliases: ['focus', 'pomodoro', 'study'],
+      title: 'Zen Focus Space',
+      description: 'Open full-screen glassmorphic focus mode with Pomodoro + soundscape.',
+      keywords: ['zen', 'focus', 'pomodoro', 'study', 'ambient', 'lofi'],
+      icon: 'bolt', needsArgument: false,
+      buildResults(arg, ctx) {
+        const tools = getToolsApi();
+        if (!tools) return [{ kind: 'guidance', title: 'Academic tools not loaded', icon: 'bolt' }];
+        return [{
+          kind: 'action', title: 'Enter Zen Focus Mode',
+          subtitle: 'Starts Pomodoro and Web Audio soundscapes.',
+          icon: 'bolt', badge: 'Enter',
+          onSelect: () => {
+            tools.openZenSpace();
+            ctx.closeOverlay?.();
+          }
+        }];
+      }
+    };
+  }
+
+  console.log('[Canvascope Slash Pack] loaded — 14 commands registered.');
 })();

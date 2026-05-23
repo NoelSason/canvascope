@@ -578,9 +578,9 @@ ${themesApi.buildCssVariables(merged)}
 .${BODY_ROOT_CLASS} .ic-app-main-content input:not([type="checkbox"]):not([type="radio"]):not([type="submit"]):not([type="button"]),
 .${BODY_ROOT_CLASS} .ic-app-main-content textarea,
 .${BODY_ROOT_CLASS} .ic-app-main-content select {
-  background-color: var(--cs-skin-surface2) !important;
+  background-color: transparent !important;
   color: var(--cs-skin-text) !important;
-  border: 1px solid var(--cs-skin-border-hi) !important;
+  border: 1px solid var(--cs-skin-border) !important;
   border-radius: var(--cs-skin-radius-sm) !important;
   transition: border-color 160ms ease, box-shadow 160ms ease !important;
 }
@@ -744,12 +744,17 @@ ${themesApi.buildCssVariables(merged)}
 .${BODY_ROOT_CLASS} .ic-app-main-content .ReactTable .rt-tbody,
 .${BODY_ROOT_CLASS} .ic-app-main-content .ReactTable .rt-tr,
 .${BODY_ROOT_CLASS} .ic-app-main-content .ReactTable .rt-td,
-.${BODY_ROOT_CLASS} .ic-app-main-content .ReactTable .rt-th,
-.${BODY_ROOT_CLASS} .ic-app-main-content [class*="css-"][class*="view"],
-.${BODY_ROOT_CLASS} .ic-app-main-content [class*="css-"][class*="View"] {
+.${BODY_ROOT_CLASS} .ic-app-main-content .ReactTable .rt-th {
   background-color: var(--cs-skin-surface) !important;
   color: var(--cs-skin-text) !important;
   border-color: var(--cs-skin-border) !important;
+}
+/* [GOAL FULL-SWEEP] InstUI emotion view spans (css-XXX-view*) MUST stay
+   transparent — handled in the artifactReset block below. Keeping a
+   foreground-color-only rule here so text inside them stays themed. */
+.${BODY_ROOT_CLASS} .ic-app-main-content [class*="css-"][class*="view"],
+.${BODY_ROOT_CLASS} .ic-app-main-content [class*="css-"][class*="View"] {
+  color: var(--cs-skin-text) !important;
 }
 .${BODY_ROOT_CLASS} .ic-app-main-content .select2-container .select2-choice,
 .${BODY_ROOT_CLASS} .ic-app-main-content .select2-container .select2-choices,
@@ -885,8 +890,9 @@ ${themesApi.buildCssVariables(merged)}
 .${BODY_ROOT_CLASS} .ic-Layout-contentMain .ic-Table th,
 .${BODY_ROOT_CLASS} .ic-Layout-contentMain .ic-Table thead,
 .${BODY_ROOT_CLASS} .ic-Layout-contentMain .ic-Table__header-row {
-  background-color: var(--cs-skin-surface2) !important;
+  background-color: transparent !important;
   color: var(--cs-skin-text) !important;
+  border-bottom: 1px solid var(--cs-skin-border) !important;
 }
 .${BODY_ROOT_CLASS} .ic-Layout-contentMain .user_content img,
 .${BODY_ROOT_CLASS} .ic-Layout-contentMain .user_content svg,
@@ -1187,9 +1193,9 @@ ${themesApi.buildCssVariables(merged)}
 .${BODY_ROOT_CLASS} .ic-app-main-content input:not([type="checkbox"]):not([type="radio"]):not([type="submit"]):not([type="button"]),
 .${BODY_ROOT_CLASS} .ic-app-main-content textarea,
 .${BODY_ROOT_CLASS} .ic-app-main-content select {
-  background-color: var(--cs-skin-surface2) !important;
+  background-color: transparent !important;
   color: var(--cs-skin-text) !important;
-  border-color: var(--cs-skin-border-hi) !important;
+  border-color: var(--cs-skin-border) !important;
 }
 .${BODY_ROOT_CLASS} .ic-app-main-content ::placeholder {
   color: var(--cs-skin-muted) !important;
@@ -1887,6 +1893,203 @@ ${themesApi.buildCssVariables(merged)}
   background-color: #23272f !important;
   box-shadow: 0 2px 6px rgba(0,0,0,0.60), 0 16px 40px rgba(0,0,0,0.65) !important;
 }
+/* Lighten the colored top stripes in dark themes — soft white wash so the
+   brand colors read as light/pastel (pink → light pink, green → light green,
+   navy → light blue) while remaining saturated, not washed out. */
+.${BODY_ROOT_CLASS}.${BODY_MODE_CLASS_PREFIX}dark .ic-DashboardCard__header_hero {
+  background-image: linear-gradient(rgba(255,255,255,0.28), rgba(255,255,255,0.28)) !important;
+}
+
+/* Notification badges (unread_count) — Canvas paints them on a dark-navy pill,
+   but the inner number inherits .ic-Layout-contentMain link color (brown in
+   paper, etc.) which gives dark-on-dark. Force white text everywhere. */
+.${BODY_ROOT_CLASS} .ic-DashboardCard__action-badge,
+.${BODY_ROOT_CLASS} .ic-DashboardCard__action-badge .unread_count,
+.${BODY_ROOT_CLASS} .ic-DashboardCard .unread_count,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .ic-DashboardCard .unread_count,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .ic-DashboardCard__action-badge .unread_count {
+  color: #ffffff !important;
+  -webkit-text-fill-color: #ffffff !important;
+  font-weight: 700 !important;
+}
+
+/* -- Course page panel cleanup: Canvas paints many sub-containers with a
+      slightly lighter bg ("near-white" cream) that on Paper/Solarized shows
+      as a visible inset panel. Force every common inner container to use
+      the page bg. -- */
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .show-content,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .user_content,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .clearfix.user_content,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .wiki-page-body,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain #wiki_page_show,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain #course_home_content,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .course_home_content,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .home_courses_announcements,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .ic-announcement-row,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .ic-announcement-row__content,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .ic-announcement-row__avatar,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .announcement-row,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .ig-list,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .ig-header,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .ig-row,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .ig-row__layout,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .ig-empty-msg,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .item-group-container,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .item-group-condensed,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .collectionViewItems,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .pages-list-item,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .discussion,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .discussion-list,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .discussions-container,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .discussions-container__wrapper,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .module-sequence-footer,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .events_list,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .events-list,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .grade,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .grade_summary {
+  background: transparent !important;
+  background-color: transparent !important;
+  border: 0 !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+}
+/* Alternating-row backgrounds on lists (announcements/assignments/modules):
+   zebra-striping looks like extra panels on themed bgs — kill it. */
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .ig-row:nth-child(even),
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .ig-row:nth-child(odd),
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .context_module_item:nth-child(even),
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .context_module_item:nth-child(odd),
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .assignment:nth-child(even),
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .assignment:nth-child(odd),
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .ic-announcement-row:nth-child(even),
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .ic-announcement-row:nth-child(odd) {
+  background: transparent !important;
+  background-color: transparent !important;
+}
+/* Dashed/dotted empty-state borders — visible on Paper as cream-on-cream. */
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain [class*="empty"],
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .empty-message,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .empty-list,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .ig-empty,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .ig-empty-msg {
+  border: 0 !important;
+  border-color: transparent !important;
+  background: transparent !important;
+  background-color: transparent !important;
+}
+/* "5/5 pts" highlight pill behind grade scores — Canvas uses a near-white
+   pill that's visible on Paper. Strip background, keep just the text. */
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .score,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .grade-summary__score,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .points_possible,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .grade,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .ig-info .ig-details,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .ig-details__item,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .ig-details__score {
+  background: transparent !important;
+  background-color: transparent !important;
+}
+/* Search input weird border on Paper: Canvas's input has a faint cream
+   border that reads as a "weird box" on Paper. Normalize input chrome. */
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain input[type="search"],
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain input[type="text"] {
+  background-color: transparent !important;
+  border: 1px solid var(--cs-skin-border) !important;
+  box-shadow: none !important;
+}
+
+/* -- Catch-all: every InstUI <View>-style wrapper (emotion class
+      "css-XXX-view-*" / "css-XXX-textInput*" / "css-XXX-baseButton*") inside
+      the main content area picks up a lighter cream bg from Canvas's default
+      "surface" tokens. Force them transparent so the page bg shows through
+      cleanly with no visible panels. -- */
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain [class*="-view-"],
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain [class*="-textInput__facade"],
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain [class*="-baseButton__content"],
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .announcements-v2__wrapper,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .announcements-v2,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .discussions-v2__wrapper,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .quizzes-v2__wrapper,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .student_assignment_overview,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .gradebook,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .grading_box,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .ic-Action-header,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .ic-Page-header,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .page-content,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .grade-summary-content {
+  background: transparent !important;
+  background-color: transparent !important;
+}
+
+/* Score/grade highlight pills (the "5/5 pts" / "76/76 pts" highlighted
+   number). Canvas renders the earned-points span with a beige/highlight bg
+   that reads as a yellow box on Paper. Strip it. */
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .ig-info .ig-details span,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .grade,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .points_possible,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .score_value,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .ic-DashboardCard__action-badge {
+  background: transparent !important;
+  background-color: transparent !important;
+}
+
+/* Grades / gradebook tables — Canvas's stock tables use zebra-stripe rows
+   with a near-white bg that reads as visible bands on Paper. Strip table
+   row backgrounds and use only subtle hover state. */
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain table,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain table tr,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain table tr:nth-child(even),
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain table tr:nth-child(odd),
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain table td,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain table th,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .grade_summary tr,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .grade_summary td {
+  background: transparent !important;
+  background-color: transparent !important;
+  border-color: color-mix(in srgb, var(--cs-skin-text), transparent 88%) !important;
+}
+
+/* "Previous" / "Next" navigation pill at the bottom of pages — Canvas's
+   ".btn" class gives it a beige fill that doesn't match Paper. Match the
+   surrounding theme. */
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .module-sequence-footer .btn,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .module-sequence-footer .Button,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .module-sequence-footer button,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain a.btn[href*="previous"],
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain a.btn[href*="next"] {
+  background-color: transparent !important;
+  background-image: none !important;
+  border: 1px solid var(--cs-skin-border) !important;
+  color: var(--cs-skin-text) !important;
+  box-shadow: none !important;
+}
+
+/* Discussion empty-state dashed borders + "Recent Announcements" panel
+   on the course home — both use lighter cream bg + visible dash borders. */
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .discussions-v2__container-image,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .discussions-v2__container,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .discussions-v2,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain [class*="discussions-v2__"],
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .home_courses_announcements,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .home_courses_announcements_box,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain #home_courses_announcements,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .announcements-list-item,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .recent-activity-header {
+  background: transparent !important;
+  background-color: transparent !important;
+  border: 0 !important;
+  border-style: none !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+}
+
+/* Any dashed/dotted-border element inside main content — Canvas uses these
+   for empty-state placeholders that look noisy on themed bg. */
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain *[style*="dashed"],
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain *[style*="dotted"] {
+  border-style: solid !important;
+  border-color: transparent !important;
+}
 /* Course title + subtitle + meta text on dark themes: force pure-white text so
    nothing inherits a tinted "rose"/"mauve" link color. The broad
    ".ic-Layout-contentMain a:not(.Button):not(.btn)" rule has specificity
@@ -1925,7 +2128,8 @@ ${themesApi.buildCssVariables(merged)}
   border: 0 !important;
 }
 
-/* -- Dashboard header & main content: same bg as page, no panel effect -- */
+/* -- [GOAL #2] Dashboard header text "weird border": force header containers
+      to the same bg as the page so no panel strip shows behind "Dashboard". -- */
 .${BODY_ROOT_CLASS} #dashboard_header_container,
 .${BODY_ROOT_CLASS} .ic-Dashboard-header,
 .${BODY_ROOT_CLASS} .ic-Dashboard-header__layout,
@@ -1942,9 +2146,11 @@ ${themesApi.buildCssVariables(merged)}
   box-shadow: none !important;
 }
 
-/* -- InstUI <View> wrappers (emotion classes like css-xxx-view-flex/flexItem/listItem)
-      get an explicit background that doesn't match the page. Force transparent
-      everywhere we control the surface (header, right-side, sidebar). -- */
+/* -- [GOAL #2 + #4] InstUI <View> wrappers (emotion classes like
+      css-xxx-view-flex/flexItem/listItem) get an explicit lighter background
+      that doesn't match the page. This causes the "weird border" strip behind
+      "Dashboard" and the visible per-item rectangles around To-Do entries.
+      Force them all transparent so they blend with the page bg. -- */
 .${BODY_ROOT_CLASS} #dashboard_header_container [class*="-view-"],
 .${BODY_ROOT_CLASS} .ic-Dashboard-header [class*="-view-"],
 .${BODY_ROOT_CLASS} .ic-Dashboard-header__actions [class*="-view-"],
@@ -1970,10 +2176,10 @@ ${themesApi.buildCssVariables(merged)}
   background-color: transparent !important;
 }
 
-/* -- Course card action icons: kill the assignment-icon "white box" so all
-      three icons blend with the card surface. Extra specificity needed because
-      the broad ".ic-Layout-contentMain .assignments" rule above also matches
-      the .assignments dashboard card icon. -- */
+/* -- [GOAL #1] Course card action icons: kill the assignment-icon "white box"
+      so all three icons blend with the card surface. Extra specificity needed
+      because the broad ".ic-Layout-contentMain .assignments" rule above also
+      matches the .assignments dashboard card icon. -- */
 .${BODY_ROOT_CLASS} .ic-DashboardCard .ic-DashboardCard__action-container,
 .${BODY_ROOT_CLASS} .ic-DashboardCard .ic-DashboardCard__action,
 .${BODY_ROOT_CLASS} .ic-DashboardCard__action-container .ic-DashboardCard__action,
@@ -1991,8 +2197,10 @@ ${themesApi.buildCssVariables(merged)}
   box-shadow: none !important;
 }
 
-/* -- Logo: always transparent backplate; the real school logo is the
-      background-image set by Canvas and we now let it show through directly. -- */
+/* -- [GOAL #3] Logo "looks weird / doesn't match Paper": always-transparent
+      backplate, no rounded box, no shadow. Canvas's actual Berkeley logo
+      (a background-image on .ic-app-header__logomark) shows through directly,
+      matching any theme bg including Paper. -- */
 .${BODY_ROOT_CLASS} .ic-app-header__logomark,
 .${BODY_ROOT_CLASS} #global_nav .ic-app-header__logomark {
   background-color: transparent !important;
@@ -2002,8 +2210,76 @@ ${themesApi.buildCssVariables(merged)}
   padding: 0 !important;
 }
 
-/* -- Canvas's white-to-transparent text-fade gradient on sidebar items
-      shows up as a glowing white stripe on dark themes. Kill it. -- */
+/* -- [GOAL FULL-SWEEP] Aggressive panel removal — any element inside the
+      main content with a lighter-cream bg, page-toolbar shell, sticky bar,
+      InstUI heading wrapper, kl_wrapper (Kennedy Library widget), assignment
+      detail wrapper, or "Due/Points/Submitting/Available" info pill needs
+      to be transparent so it sits flat on the page bg. -- */
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain #assignment_show,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .assignment.content_underline_links,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain ul.student-assignment-overview,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .student-assignment-overview,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .student-assignment-overview li,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .ig-info,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .ig-details,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .ig-title,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .ig-type-icon,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .grades_summary,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain #grades_summary,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .grades_summary thead,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .grades_summary thead tr,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .grades_summary thead th {
+  background: transparent !important;
+  background-color: transparent !important;
+  border: 0 !important;
+  border-color: transparent !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
+/* InstUI radio-input "toggle" buttons (e.g. SHOW BY DATE / SHOW BY TYPE on the
+   assignments page) — Canvas paints the active state with hardcoded green
+   #03893d that clashes with Paper. Repaint with the theme accent. */
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain [class*="-radioInput__facade"],
+.${BODY_ROOT_CLASS} [class*="-radioInput__facade"] {
+  background-color: var(--cs-skin-accent) !important;
+  color: var(--cs-skin-on-accent, #ffffff) !important;
+  border-color: var(--cs-skin-accent) !important;
+}
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain label:has(input[type="radio"]:checked) [class*="-radioInput__facade"],
+.${BODY_ROOT_CLASS} label:has(input[type="radio"]:checked) [class*="-radioInput__facade"] {
+  background-color: var(--cs-skin-accent) !important;
+  color: var(--cs-skin-on-accent, #ffffff) !important;
+}
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain section[class*="-view-"],
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain h1[class*="-view-"],
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain h2[class*="-view-"],
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain h3[class*="-view-"],
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain h4[class*="-view-"],
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain [class*="-view-heading"],
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain [class*="-view--block"],
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .sticky-toolbar,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .${PAGE_TITLE_SHELL_CLASS},
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .header-bar,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .page-toolbar,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain [class*="page-toolbar"],
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain [class*="header-bar"],
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain [id^="kl_wrapper"],
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain [id^="kl_section"],
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .kl_flat_sections,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .kl_wrapper,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .ic-app-main-content__primary {
+  background: transparent !important;
+  background-color: transparent !important;
+  border: 0 !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+}
+
+/* -- [GOAL #5] Recent Feedback "gradient next to each item": Canvas paints
+      a white-to-transparent linear-gradient on .event-details::after as a
+      text-fade indicator. It reads as a glowing vertical stripe next to each
+      Recent Feedback / To-Do entry. Hide it entirely. -- */
 .${BODY_ROOT_CLASS} #right-side .event-details::after,
 .${BODY_ROOT_CLASS} #right-side .event-details::before,
 .${BODY_ROOT_CLASS} .ic-app-main-content__secondary .event-details::after,

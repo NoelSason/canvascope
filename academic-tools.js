@@ -111,6 +111,10 @@
   }
 
   function closeModal() {
+    if (typeof window.__canvascopeModalCleanup === 'function') {
+      try { window.__canvascopeModalCleanup(); } catch (e) {}
+      window.__canvascopeModalCleanup = null;
+    }
     const host = document.getElementById(MODAL_HOST_ID);
     if (!host) return;
     host.style.pointerEvents = 'none';
@@ -511,6 +515,460 @@
       .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
 
+  // -------------------------------------------------------------------------
+  // ZEN FOCUS SPACE AUDIO SYNTHESIS & TIMER SYSTEM
+  // -------------------------------------------------------------------------
+
+  let zenAudioCtx = null;
+  let zenBrownNoiseSource = null;
+  let zenBrownNoiseGain = null;
+  let zenBinauralOscL = null;
+  let zenBinauralOscR = null;
+  let zenBinauralGainL = null;
+  let zenBinauralGainR = null;
+  let zenMasterGain = null;
+
+  function initZenAudio() {
+    if (zenAudioCtx) return;
+    const AudioCtxClass = window.AudioContext || window.webkitAudioContext;
+    zenAudioCtx = new AudioCtxClass();
+    zenMasterGain = zenAudioCtx.createGain();
+    zenMasterGain.gain.value = 0.5; // default 50% volume
+    zenMasterGain.connect(zenAudioCtx.destination);
+  }
+
+  function startBrownNoise() {
+    initZenAudio();
+    if (zenBrownNoiseSource) return;
+
+    if (zenAudioCtx.state === 'suspended') {
+      zenAudioCtx.resume();
+    }
+
+    const bufferSize = 2 * zenAudioCtx.sampleRate;
+    const noiseBuffer = zenAudioCtx.createBuffer(1, bufferSize, zenAudioCtx.sampleRate);
+    const output = noiseBuffer.getChannelData(0);
+    let lastOut = 0.0;
+    for (let i = 0; i < bufferSize; i++) {
+      const white = Math.random() * 2 - 1;
+      output[i] = (lastOut + (0.02 * white)) / 1.02;
+      lastOut = output[i];
+      output[i] *= 3.5; // Gain compensation
+    }
+
+    zenBrownNoiseSource = zenAudioCtx.createBufferSource();
+    zenBrownNoiseSource.buffer = noiseBuffer;
+    zenBrownNoiseSource.loop = true;
+
+    zenBrownNoiseGain = zenAudioCtx.createGain();
+    zenBrownNoiseGain.gain.value = 0.6; // soundscape balance
+
+    zenBrownNoiseSource.connect(zenBrownNoiseGain).connect(zenMasterGain);
+    zenBrownNoiseSource.start(0);
+  }
+
+  function stopBrownNoise() {
+    if (zenBrownNoiseSource) {
+      try { zenBrownNoiseSource.stop(); } catch(e) {}
+      zenBrownNoiseSource.disconnect();
+      zenBrownNoiseSource = null;
+    }
+    if (zenBrownNoiseGain) {
+      zenBrownNoiseGain.disconnect();
+      zenBrownNoiseGain = null;
+    }
+  }
+
+  function startBinauralBeats(carrierFreq = 200, beatFreq = 10) {
+    initZenAudio();
+    if (zenBinauralOscL) return;
+
+    if (zenAudioCtx.state === 'suspended') {
+      zenAudioCtx.resume();
+    }
+
+    zenBinauralOscL = zenAudioCtx.createOscillator();
+    zenBinauralOscR = zenAudioCtx.createOscillator();
+    
+    zenBinauralOscL.frequency.value = carrierFreq;
+    zenBinauralOscR.frequency.value = carrierFreq + beatFreq;
+
+    zenBinauralGainL = zenAudioCtx.createGain();
+    zenBinauralGainR = zenAudioCtx.createGain();
+    zenBinauralGainL.gain.value = 0.12; 
+    zenBinauralGainR.gain.value = 0.12;
+
+    const pannerL = zenAudioCtx.createStereoPanner ? zenAudioCtx.createStereoPanner() : null;
+    const pannerR = zenAudioCtx.createStereoPanner ? zenAudioCtx.createStereoPanner() : null;
+
+    if (pannerL && pannerR) {
+      pannerL.pan.value = -1.0;
+      pannerR.pan.value = 1.0;
+      zenBinauralOscL.connect(zenBinauralGainL).connect(pannerL).connect(zenMasterGain);
+      zenBinauralOscR.connect(zenBinauralGainR).connect(pannerR).connect(zenMasterGain);
+    } else {
+      zenBinauralOscL.connect(zenBinauralGainL).connect(zenMasterGain);
+      zenBinauralOscR.connect(zenBinauralGainR).connect(zenMasterGain);
+    }
+
+    zenBinauralOscL.start(0);
+    zenBinauralOscR.start(0);
+  }
+
+  function stopBinauralBeats() {
+    if (zenBinauralOscL) {
+      try { zenBinauralOscL.stop(); } catch(e) {}
+      zenBinauralOscL.disconnect();
+      zenBinauralOscL = null;
+    }
+    if (zenBinauralOscR) {
+      try { zenBinauralOscR.stop(); } catch(e) {}
+      zenBinauralOscR.disconnect();
+      zenBinauralOscR = null;
+    }
+    if (zenBinauralGainL) {
+      zenBinauralGainL.disconnect();
+      zenBinauralGainL = null;
+    }
+    if (zenBinauralGainR) {
+      zenBinauralGainR.disconnect();
+      zenBinauralGainR = null;
+    }
+  }
+
+  function stopAllZenAudio() {
+    stopBrownNoise();
+    stopBinauralBeats();
+    if (zenAudioCtx) {
+      try {
+        zenAudioCtx.close();
+      } catch(e) {}
+      zenAudioCtx = null;
+    }
+  }
+
+  let zenTimeLeft = 25 * 60;
+  let zenDuration = 25 * 60;
+  let zenTimerInterval = null;
+  let zenTimerIsRunning = false;
+  let zenActiveMode = 'work'; // 'work' | 'break'
+  let zenCurrentTask = '';
+
+  function closeZenSpace() {
+    if (zenTimerInterval) {
+      clearInterval(zenTimerInterval);
+      zenTimerInterval = null;
+    }
+    zenTimerIsRunning = false;
+    stopAllZenAudio();
+    closeModal();
+  }
+
+  async function openZenSpace() {
+    zenTimeLeft = 25 * 60;
+    zenDuration = 25 * 60;
+    zenTimerIsRunning = false;
+    zenActiveMode = 'work';
+    zenCurrentTask = '';
+    
+    window.__canvascopeModalCleanup = () => {
+      if (zenTimerInterval) {
+        clearInterval(zenTimerInterval);
+        zenTimerInterval = null;
+      }
+      stopAllZenAudio();
+    };
+
+    const todos = await loadArray(STORE_TODOS);
+    
+    openModal((panel, root) => {
+      panel.classList.add('panel--zen');
+      
+      panel.innerHTML = `
+        <button class="zen-close-btn" data-close-zen>✕ Exit Focus Mode</button>
+        <div class="zen-grid">
+          
+          <div class="zen-left">
+            <h3 class="zen-sec-title">⟫ Current Goal</h3>
+            <div class="zen-task-picker">
+              <select data-zen-task-select>
+                <option value="">Select active task…</option>
+                ${todos.filter(t => !t.done).map(t => `<option value="${escapeHtml(t.title)}">${escapeHtml(t.title)}</option>`).join('')}
+                <option value="custom">+ Type custom task…</option>
+              </select>
+              <input type="text" data-zen-custom-task placeholder="Enter focus goal…" style="display:none" />
+            </div>
+            
+            <h3 class="zen-sec-title" style="margin-top:24px">⟫ Up Next</h3>
+            <ul class="zen-todo-list">
+              ${todos.length ? todos.slice(0, 5).map(t => `
+                <li data-id="${t.id}" class="${t.done ? 'done' : ''}">
+                  <input type="checkbox" ${t.done ? 'checked' : ''} />
+                  <span>${escapeHtml(t.title)}</span>
+                </li>
+              `).join('') : '<li class="zen-todo-empty">No tasks in planner</li>'}
+            </ul>
+          </div>
+          
+          <div class="zen-center">
+            <div class="zen-ring-container">
+              <svg class="zen-ring" viewBox="0 0 200 200">
+                <defs>
+                  <linearGradient id="zen-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+                    <stop offset="0%" stop-color="#a890e8" />
+                    <stop offset="100%" stop-color="#8a6fe0" />
+                  </linearGradient>
+                </defs>
+                <circle class="zen-ring-bg" cx="100" cy="100" r="88" />
+                <circle class="zen-ring-fg" cx="100" cy="100" r="88" />
+              </svg>
+              <div class="zen-timer-digital">
+                <div class="zen-time" data-zen-time>25:00</div>
+                <div class="zen-mode-badge" data-zen-mode-label>WORK SESSION</div>
+              </div>
+            </div>
+            
+            <div class="zen-timer-controls">
+              <button class="zen-btn-control btn-play" data-zen-play>Play</button>
+              <button class="zen-btn-control btn-reset" data-zen-reset>Reset</button>
+            </div>
+            
+            <div class="zen-timer-presets">
+              <button data-zen-preset="1500" class="active">25m Work</button>
+              <button data-zen-preset="2700">45m Deep</button>
+              <button data-zen-preset="300">5m break</button>
+              <button data-zen-preset="900">15m break</button>
+            </div>
+          </div>
+          
+          <div class="zen-right">
+            <h3 class="zen-sec-title">⟫ Focus Soundscape</h3>
+            <div class="zen-sound-controls">
+              <button class="zen-sound-btn active" data-sound="none">
+                None
+              </button>
+              <button class="zen-sound-btn" data-sound="brown-noise">
+                Brown Noise
+              </button>
+              <button class="zen-sound-btn" data-sound="binaural">
+                Binaural Beats
+              </button>
+            </div>
+            
+            <div class="zen-volume-container">
+              <div class="zen-volume-header">
+                <span>Volume</span>
+                <span data-volume-label>50%</span>
+              </div>
+              <input type="range" class="zen-volume-slider" min="0" max="100" value="50" data-volume-slider />
+            </div>
+
+            <div class="zen-stress-tip">
+              <strong>Tip:</strong> If feeling overwhelmed, pause the timer. The circular guide will help anchor your breathing: Inhale as it expands, exhale as it contracts.
+            </div>
+          </div>
+        </div>
+      `;
+
+      const closeBtn = panel.querySelector('[data-close-zen]');
+      const playBtn = panel.querySelector('[data-zen-play]');
+      const resetBtn = panel.querySelector('[data-zen-reset]');
+      const timeDisplay = panel.querySelector('[data-zen-time]');
+      const modeLabel = panel.querySelector('[data-zen-mode-label]');
+      const presetBtns = panel.querySelectorAll('[data-zen-preset]');
+      const soundBtns = panel.querySelectorAll('[data-sound]');
+      const volumeSlider = panel.querySelector('[data-volume-slider]');
+      const volumeLabel = panel.querySelector('[data-volume-label]');
+      const taskSelect = panel.querySelector('[data-zen-task-select]');
+      const customTaskInput = panel.querySelector('[data-zen-custom-task]');
+      const ringFg = panel.querySelector('.zen-ring-fg');
+      const ringContainer = panel.querySelector('.zen-ring-container');
+      const todoItems = panel.querySelectorAll('.zen-todo-list li');
+
+      closeBtn.addEventListener('click', closeZenSpace);
+
+      const radius = 88;
+      const circumference = 2 * Math.PI * radius;
+      ringFg.style.strokeDasharray = `${circumference} ${circumference}`;
+      ringFg.style.strokeDashoffset = 0;
+
+      function updateTimerDisplay() {
+        const mins = Math.floor(zenTimeLeft / 60);
+        const secs = zenTimeLeft % 60;
+        timeDisplay.textContent = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+        
+        const progress = (zenDuration - zenTimeLeft) / zenDuration;
+        const offset = progress * circumference;
+        ringFg.style.strokeDashoffset = offset;
+        
+        if (!zenTimerIsRunning) {
+          ringContainer.classList.add('breathing');
+        } else {
+          ringContainer.classList.remove('breathing');
+        }
+      }
+
+      function tick() {
+        if (zenTimeLeft > 0) {
+          zenTimeLeft--;
+          updateTimerDisplay();
+        } else {
+          clearInterval(zenTimerInterval);
+          zenTimerInterval = null;
+          zenTimerIsRunning = false;
+          playBtn.textContent = 'Play';
+          
+          if (zenActiveMode === 'work') {
+            zenActiveMode = 'break';
+            zenTimeLeft = 5 * 60;
+            zenDuration = 5 * 60;
+            modeLabel.textContent = 'REST BREAK';
+            modeLabel.classList.add('break');
+            flash(panel, 'Session completed! Take a break.');
+          } else {
+            zenActiveMode = 'work';
+            zenTimeLeft = 25 * 60;
+            zenDuration = 25 * 60;
+            modeLabel.textContent = 'WORK SESSION';
+            modeLabel.classList.remove('break');
+            flash(panel, 'Break over! Let\'s focus.');
+          }
+          
+          presetBtns.forEach(btn => {
+            const d = Number(btn.getAttribute('data-zen-preset'));
+            if (d === zenTimeLeft) btn.classList.add('active');
+            else btn.classList.remove('active');
+          });
+
+          updateTimerDisplay();
+        }
+      }
+
+      playBtn.addEventListener('click', () => {
+        if (zenTimerIsRunning) {
+          clearInterval(zenTimerInterval);
+          zenTimerInterval = null;
+          zenTimerIsRunning = false;
+          playBtn.textContent = 'Play';
+          ringContainer.classList.add('breathing');
+        } else {
+          zenTimerIsRunning = true;
+          playBtn.textContent = 'Pause';
+          ringContainer.classList.remove('breathing');
+          zenTimerInterval = setInterval(tick, 1000);
+          if (zenAudioCtx && zenAudioCtx.state === 'suspended') {
+            zenAudioCtx.resume();
+          }
+        }
+      });
+
+      resetBtn.addEventListener('click', () => {
+        clearInterval(zenTimerInterval);
+        zenTimerInterval = null;
+        zenTimerIsRunning = false;
+        playBtn.textContent = 'Play';
+        zenTimeLeft = zenDuration;
+        updateTimerDisplay();
+      });
+
+      presetBtns.forEach(btn => {
+        btn.addEventListener('click', () => {
+          clearInterval(zenTimerInterval);
+          zenTimerInterval = null;
+          zenTimerIsRunning = false;
+          playBtn.textContent = 'Play';
+          
+          const sec = Number(btn.getAttribute('data-zen-preset'));
+          zenTimeLeft = sec;
+          zenDuration = sec;
+          
+          if (sec === 300 || sec === 900) {
+            zenActiveMode = 'break';
+            modeLabel.textContent = 'REST BREAK';
+            modeLabel.classList.add('break');
+          } else {
+            zenActiveMode = 'work';
+            modeLabel.textContent = 'WORK SESSION';
+            modeLabel.classList.remove('break');
+          }
+
+          presetBtns.forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+          updateTimerDisplay();
+        });
+      });
+
+      soundBtns.forEach(btn => {
+        btn.addEventListener('click', () => {
+          soundBtns.forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+          
+          const type = btn.getAttribute('data-sound');
+          stopBrownNoise();
+          stopBinauralBeats();
+
+          if (type === 'brown-noise') {
+            startBrownNoise();
+          } else if (type === 'binaural') {
+            startBinauralBeats();
+          }
+        });
+      });
+
+      volumeSlider.addEventListener('input', (e) => {
+        const val = Number(e.target.value);
+        volumeLabel.textContent = `${val}%`;
+        if (zenMasterGain) {
+          zenMasterGain.gain.value = val / 100;
+        }
+      });
+
+      taskSelect.addEventListener('change', (e) => {
+        const val = e.target.value;
+        if (val === 'custom') {
+          customTaskInput.style.display = 'block';
+          customTaskInput.focus();
+        } else {
+          customTaskInput.style.display = 'none';
+          if (val) {
+            flash(panel, `Goal set: ${val}`);
+          }
+        }
+      });
+
+      customTaskInput.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') {
+          const val = customTaskInput.value.trim();
+          if (val) {
+            flash(panel, `Goal set: ${val}`);
+            const newOpt = document.createElement('option');
+            newOpt.value = val;
+            newOpt.textContent = val;
+            newOpt.selected = true;
+            taskSelect.insertBefore(newOpt, taskSelect.lastElementChild);
+            customTaskInput.style.display = 'none';
+          }
+        }
+      });
+
+      todoItems.forEach(item => {
+        const chk = item.querySelector('input[type="checkbox"]');
+        const id = item.getAttribute('data-id');
+        chk.addEventListener('change', async () => {
+          await toggleTodoDone(id);
+          if (chk.checked) {
+            item.classList.add('done');
+            flash(panel, 'Task marked completed ✓');
+          } else {
+            item.classList.remove('done');
+          }
+        });
+      });
+
+      updateTimerDisplay();
+    });
+  }
+
   window.CanvascopeAcademicTools = {
     openGpaCalculator,
     openGradesSummary,
@@ -522,7 +980,8 @@
     listTodos,
     closeModal,
     computeGpa,
-    percentToLetter
+    percentToLetter,
+    openZenSpace
   };
 
   // -------------------------------------------------------------------------
@@ -652,6 +1111,349 @@
     .md-todo { font-size: 12px; color: #ece9f1; }
     .md-todo.done { color: #7c7689; text-decoration: line-through; }
     .md-li { font-size: 12px; }
+
+    /* ZEN FOCUS SPACE */
+    .panel.panel--zen {
+      width: 100vw;
+      height: 100vh;
+      max-width: 100vw;
+      max-height: 100vh;
+      border: none;
+      border-radius: 0;
+      background: rgba(14, 12, 20, 0.82);
+      backdrop-filter: blur(25px) saturate(180%);
+      -webkit-backdrop-filter: blur(25px) saturate(180%);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      color: #ece9f1;
+      padding: 0;
+      box-shadow: none;
+    }
+    .backdrop:has(.panel--zen) {
+      padding-top: 0;
+      background: transparent;
+      backdrop-filter: none;
+    }
+    .zen-close-btn {
+      position: absolute;
+      top: 24px;
+      right: 24px;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      color: #b6b0c2;
+      border-radius: 8px;
+      padding: 8px 16px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 500;
+      transition: all 180ms ease;
+      z-index: 99;
+    }
+    .zen-close-btn:hover {
+      background: rgba(232, 138, 138, 0.15);
+      border-color: rgba(232, 138, 138, 0.3);
+      color: #e88a8a;
+    }
+    .zen-grid {
+      display: grid;
+      grid-template-columns: 1.1fr 1.8fr 1.1fr;
+      width: min(1140px, 92vw);
+      height: min(640px, 80vh);
+      gap: 32px;
+      align-items: stretch;
+    }
+    .zen-left, .zen-right {
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      border-radius: 16px;
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      backdrop-filter: blur(10px);
+    }
+    .zen-center {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+    }
+    .zen-sec-title {
+      font-size: 12px;
+      font-weight: 600;
+      color: #a890e8;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 14px;
+      margin-top: 0;
+    }
+    
+    /* LEFT PANEL: PLANNER & GOAL */
+    .zen-task-picker select, .zen-task-picker input {
+      width: 100%;
+      background: #1c1b22;
+      color: #ece9f1;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 8px;
+      padding: 10px 12px;
+      font: inherit;
+      font-size: 13px;
+      margin-top: 6px;
+      outline: none;
+      transition: border-color 160ms ease;
+    }
+    .zen-task-picker select:focus, .zen-task-picker input:focus {
+      border-color: #a890e8;
+    }
+    .zen-todo-list {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      flex: 1;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .zen-todo-list li {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      background: rgba(255, 255, 255, 0.02);
+      border: 1px solid rgba(255, 255, 255, 0.03);
+      border-radius: 8px;
+      padding: 10px 12px;
+      font-size: 13px;
+      transition: all 180ms ease;
+    }
+    .zen-todo-list li:hover {
+      background: rgba(255, 255, 255, 0.04);
+      border-color: rgba(168, 144, 232, 0.15);
+    }
+    .zen-todo-list li.done {
+      opacity: 0.5;
+      text-decoration: line-through;
+      background: transparent;
+    }
+    .zen-todo-list li input[type="checkbox"] {
+      width: 15px;
+      height: 15px;
+      cursor: pointer;
+      accent-color: #a890e8;
+      margin: 0;
+    }
+    .zen-todo-empty {
+      color: #7c7689;
+      font-size: 12px;
+      text-align: center;
+      padding: 32px 0;
+    }
+
+    /* CENTER PANEL: TIMER */
+    .zen-ring-container {
+      position: relative;
+      width: 240px;
+      height: 240px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 24px;
+    }
+    .zen-ring {
+      position: absolute;
+      inset: 0;
+      transform: rotate(-90deg);
+      width: 100%;
+      height: 100%;
+    }
+    .zen-ring-bg {
+      fill: none;
+      stroke: rgba(255, 255, 255, 0.04);
+      stroke-width: 6;
+    }
+    .zen-ring-fg {
+      fill: none;
+      stroke: url(#zen-grad);
+      stroke-width: 6;
+      stroke-linecap: round;
+      transition: stroke-dashoffset 0.3s ease;
+    }
+    
+    /* Dynamic pulsing breathing animation for pauses */
+    .zen-ring-container.breathing {
+      animation: zenPulse 4s infinite cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    @keyframes zenPulse {
+      0% { transform: scale(1); opacity: 0.95; }
+      50% { transform: scale(1.03); opacity: 1; filter: drop-shadow(0 0 15px rgba(168, 144, 232, 0.25)); }
+      100% { transform: scale(1); opacity: 0.95; }
+    }
+
+    .zen-timer-digital {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      z-index: 2;
+    }
+    .zen-time {
+      font-size: 52px;
+      font-weight: 700;
+      font-family: var(--font-mono, monospace);
+      letter-spacing: -0.02em;
+      color: #ece9f1;
+      text-shadow: 0 0 20px rgba(255, 255, 255, 0.1);
+    }
+    .zen-mode-badge {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      color: #a890e8;
+      background: rgba(168, 144, 232, 0.1);
+      border: 1px solid rgba(168, 144, 232, 0.2);
+      border-radius: 12px;
+      padding: 4px 10px;
+      margin-top: 4px;
+      text-transform: uppercase;
+    }
+    .zen-mode-badge.break {
+      color: #7cc296;
+      background: rgba(124, 194, 150, 0.1);
+      border-color: rgba(124, 194, 150, 0.2);
+    }
+
+    .zen-timer-controls {
+      display: flex;
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+    .zen-btn-control {
+      background: #a890e8;
+      color: #1c1b22;
+      border: none;
+      font-size: 14px;
+      font-weight: 600;
+      border-radius: 20px;
+      padding: 10px 28px;
+      cursor: pointer;
+      box-shadow: 0 8px 20px rgba(168, 144, 232, 0.25);
+      transition: all 180ms ease;
+    }
+    .zen-btn-control:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 12px 24px rgba(168, 144, 232, 0.35);
+      background: #b69ff2;
+    }
+    .zen-btn-control.btn-reset {
+      background: transparent;
+      color: #b6b0c2;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      box-shadow: none;
+    }
+    .zen-btn-control.btn-reset:hover {
+      background: rgba(255, 255, 255, 0.05);
+      border-color: rgba(255, 255, 255, 0.2);
+      color: #ece9f1;
+    }
+
+    .zen-timer-presets {
+      display: flex;
+      gap: 8px;
+      background: rgba(255, 255, 255, 0.02);
+      border: 1px solid rgba(255, 255, 255, 0.04);
+      padding: 4px;
+      border-radius: 20px;
+    }
+    .zen-timer-presets button {
+      background: transparent;
+      border: none;
+      color: #b6b0c2;
+      font-size: 11px;
+      font-weight: 500;
+      border-radius: 16px;
+      padding: 6px 14px;
+      cursor: pointer;
+      transition: all 140ms ease;
+    }
+    .zen-timer-presets button:hover {
+      color: #ece9f1;
+    }
+    .zen-timer-presets button.active {
+      background: rgba(255, 255, 255, 0.08);
+      color: #ece9f1;
+    }
+
+    /* RIGHT PANEL: AUDIO CONSOLE */
+    .zen-sound-controls {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      margin-bottom: 20px;
+    }
+    .zen-sound-btn {
+      background: rgba(255, 255, 255, 0.02);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      border-radius: 10px;
+      padding: 12px 14px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      color: #b6b0c2;
+      font: inherit;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      text-align: left;
+      transition: all 180ms ease;
+      width: 100%;
+    }
+    .zen-sound-btn:hover {
+      background: rgba(255, 255, 255, 0.05);
+      border-color: rgba(255, 255, 255, 0.1);
+      color: #ece9f1;
+    }
+    .zen-sound-btn.active {
+      background: rgba(168, 144, 232, 0.08);
+      border-color: rgba(168, 144, 232, 0.25);
+      color: #a890e8;
+    }
+    .zen-sound-btn span {
+      font-size: 16px;
+    }
+    .zen-volume-container {
+      margin-top: 10px;
+      background: rgba(255, 255, 255, 0.01);
+      border: 1px solid rgba(255, 255, 255, 0.03);
+      padding: 14px;
+      border-radius: 10px;
+    }
+    .zen-volume-header {
+      display: flex;
+      justify-content: space-between;
+      font-size: 11px;
+      color: #b6b0c2;
+      margin-bottom: 8px;
+    }
+    .zen-volume-slider {
+      width: 100%;
+      accent-color: #a890e8;
+      cursor: pointer;
+      height: 4px;
+      border-radius: 2px;
+      background: rgba(255, 255, 255, 0.1);
+    }
+    .zen-stress-tip {
+      margin-top: auto;
+      font-size: 11px;
+      line-height: 1.5;
+      color: #7c7689;
+      background: rgba(168, 144, 232, 0.02);
+      border-left: 2px solid rgba(168, 144, 232, 0.2);
+      padding: 8px 10px;
+      border-radius: 0 6px 6px 0;
+    }
   `;
 
   console.log('[Canvascope Academic] academic-tools.js loaded.');

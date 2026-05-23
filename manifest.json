@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Canvascope",
-  "version": "6.0.0",
+  "version": "7.0.0",
   "minimum_chrome_version": "116",
   "default_locale": "en",
   "description": "Instantly search Canvas and Brightspace content",

@@ -94,6 +94,10 @@
     const nq = normalizeSlashAlias(query);
     const entries = [];
     for (const cmd of Array.isArray(commands) ? commands : []) {
+      // Hidden commands are listed only when the user types something that
+      // matches them (by alias/title/etc.), never in the default command
+      // browser. Power users can still invoke them by name.
+      if (cmd?.hidden && !nq) continue;
       const score = scoreSlashCommandMatch(cmd, nq);
       if (nq && !Number.isFinite(score)) continue;
       entries.push({ command: cmd, score });
