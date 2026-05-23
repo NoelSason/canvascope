@@ -9062,6 +9062,21 @@ function showBrowseCategory(type, items) {
     });
   }
 
+  function wireAiBtn() {
+    const btn = document.getElementById('cs-ai-btn');
+    if (!btn) return;
+    btn.addEventListener('click', async () => {
+      try {
+        const currentWindow = await chrome.windows.getCurrent();
+        await chrome.sidePanel.open({ windowId: currentWindow.id });
+        // Close the popup to draw full focus to the side panel
+        window.close();
+      } catch (err) {
+        console.error('[Canvascope] Failed to open AI side panel:', err);
+      }
+    });
+  }
+
   // ── Stats line — compact "items · courses" ────────────────────────
   function refreshStatsCompact() {
     const txt = document.getElementById('stats-text');
@@ -9097,6 +9112,7 @@ function showBrowseCategory(type, items) {
     wireChipRow();
     wireTopBarSearch();
     wireThemeBtn();
+    wireAiBtn();
     refreshStatsCompact();
 
     // Refresh greeting every minute (in case hour rolls over)
