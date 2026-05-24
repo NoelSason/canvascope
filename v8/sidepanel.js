@@ -315,15 +315,29 @@ Using the page context above, answer the student's request: ${prompt}`;
         if (bubbleContent.querySelector('.stream-loader')) {
           bubbleContent.innerHTML = '';
         }
-        fullResponse = chunk; // Prompt API streaming chunks are additive
+        
+        // Handle both delta and accumulated streaming chunk types gracefully
+        if (fullResponse && chunk.startsWith(fullResponse)) {
+          fullResponse = chunk; // Accumulated chunk
+        } else {
+          fullResponse += chunk; // Delta chunk
+        }
+        
         bubbleContent.innerHTML = parseSimpleMarkdown(fullResponse);
         scrollViewport();
       }
     } catch (err) {
+      console.error('[Canvascope AI] Streaming execution error:', err);
       if (bubbleContent.querySelector('.stream-loader')) {
         bubbleContent.innerHTML = '';
       }
-      bubbleContent.innerHTML = `<span style="color: var(--status-error)">⚠️ **Error**: Failed to complete streaming prompt. The local model session was interrupted.</span>`;
+      if (fullResponse) {
+        // Append error warning instead of wiping the entire generated response
+        bubbleContent.innerHTML = parseSimpleMarkdown(fullResponse) + 
+          `<p style="color: var(--status-error); margin-top: 8px; font-style: italic;">⚠️ Streaming interrupted: ${err.message || err}</p>`;
+      } else {
+        bubbleContent.innerHTML = `<span style="color: var(--status-error)">⚠️ **Error**: Failed to complete streaming prompt. ${err.message || err}</span>`;
+      }
       scrollViewport();
     } finally {
       sendBtn.disabled = !userPrompt.value.trim();
