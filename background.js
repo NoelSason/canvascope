@@ -6133,6 +6133,53 @@ async function clearIndexedContentFromSupabase() {
 }
 
 // ============================================
+// AUTO-INDEX PDF (persistent full-text)
+// Injects pdf.js + DocumentParser into the requesting tab (which holds the PDF's
+// same-origin session cookies) and parses + persists the file's text into
+// indexedContent. Triggered by content.js when a Canvas file/PDF is opened.
+// ============================================
+
+async function handleAutoIndexPdf(message, sender) {
+    const tabId = sender && sender.tab && sender.tab.id;
+    const pdfUrl = message && message.pdfUrl;
+    const titleHint = (message && message.titleHint) || null;
+    const courseName = (message && message.courseName) || null;
+
+    if (!tabId || !pdfUrl) {
+        return { success: false, error: 'Missing tab id or PDF URL' };
+    }
+
+    try {
+        // Load pdf.js + the parser into the tab's isolated content-script world.
+        await chrome.scripting.executeScript({
+            target: { tabId },
+            files: ['lib/pdf.min.js', 'v8/document-parser.js']
+        });
+
+        const [{ result } = {}] = await chrome.scripting.executeScript({
+            target: { tabId },
+            func: async (url, title, course) => {
+                try {
+                    if (typeof DocumentParser === 'undefined') return 'parser-missing';
+                    const pages = await DocumentParser.fetchAndParsePdf(url, title, course);
+                    return Array.isArray(pages) && pages.length > 0 ? ('ok:' + pages.length) : 'no-pages';
+                } catch (e) {
+                    return 'error:' + (e && e.message ? e.message : String(e));
+                }
+            },
+            args: [pdfUrl, titleHint, courseName]
+        });
+
+        console.log('[Canvascope AutoIndex] parse result:', result, 'for', pdfUrl);
+        const ok = typeof result === 'string' && result.startsWith('ok:');
+        return { success: ok, result: result || 'no-result' };
+    } catch (e) {
+        console.warn('[Canvascope AutoIndex] injection failed:', e);
+        return { success: false, error: e && e.message ? e.message : String(e) };
+    }
+}
+
+// ============================================
 // MESSAGE PASSING (Popup/Content Script to Background)
 // ============================================
 
@@ -6205,6 +6252,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                 triggerBackgroundScan();
                 sendResponse({ started: true });
             });
+        });
+        return true;
+    }
+
+    if (message.action === 'autoIndexPdf') {
+        handleAutoIndexPdf(message, sender).then(res => {
+            sendResponse(res);
+        }).catch(err => {
+            sendResponse({ success: false, error: err && err.message ? err.message : String(err) });
         });
         return true;
     }

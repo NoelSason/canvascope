@@ -4,9 +4,6 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Canvascope AI Assistant</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="sidepanel.css">
 </head>
 <body class="cs-theme-dark">
@@ -16,12 +13,12 @@
     <header class="sidepanel-header">
       <div class="brand-row">
         <div class="logo-wrapper">
-          <img src="../icons/icon32.png" alt="Logo" class="brand-icon">
+          <span class="brand-icon" aria-hidden="true">C</span>
           <span class="brand-title">Canvascope <span class="brand-sub">AI</span></span>
         </div>
         <div id="ai-status" class="ai-status-badge status-checking">
           <span class="status-dot"></span>
-          <span class="status-text">Checking Local AI...</span>
+          <span class="status-text">Checking Local AI</span>
         </div>
       </div>
       
@@ -41,10 +38,11 @@
       <div id="chat-history" class="chat-history">
         <!-- Initial system introduction bubble -->
         <div class="chat-bubble bubble-system animate-fade-in">
-          <div class="bubble-avatar">🤖</div>
+          <div class="turn-label">Canvascope</div>
+          <div class="bubble-avatar"></div>
           <div class="bubble-content">
-            <p class="greeting-head">Hello! I am your local **Canvascope AI Assistant**.</p>
-            <p>Running entirely offline using your browser's local **Gemini Nano** model, I can summarize syllabus policies, analyze assignment guidelines, and extract key tasks. Ask me anything about your active course!</p>
+            <p class="greeting-head">Your local course assistant.</p>
+            <p>I run on-device, so nothing leaves your machine. Ask me to summarize syllabus policies, analyze assignment guidelines, or extract the tasks on this page.</p>
           </div>
         </div>
       </div>
@@ -53,11 +51,26 @@
     <!-- Suggestions Container -->
     <div id="suggestions-area" class="suggestions-area">
       <div class="suggestions-scroll">
-        <button class="btn-suggest" data-prompt="Summarize the active assignment page">📝 Summarize Assignment</button>
-        <button class="btn-suggest" data-prompt="What are the key deadlines and tasks on this page?">📅 Extract Tasks</button>
-        <button class="btn-suggest" data-prompt="Generate a 3-question conceptual quiz from this page context">🧠 Quick Practice Quiz</button>
-        <button id="btn-lectra-send" class="btn-suggest">📄 Send PDF to Lectra</button>
-        <button id="btn-seed-test" class="btn-suggest" style="border: 1px dashed var(--cs-accent-color, #8a6fe0); opacity: 0.9;">🧪 Seed RAG Task</button>
+        <button class="btn-suggest" data-prompt="Summarize the active assignment page">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+          Summarize Assignment
+        </button>
+        <button class="btn-suggest" data-prompt="What are the key deadlines and tasks on this page?">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
+          Extract Tasks
+        </button>
+        <button class="btn-suggest" data-prompt="Generate a 3-question conceptual quiz from this page context">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3"/><path d="M12 17h.01"/><circle cx="12" cy="12" r="10"/></svg>
+          Quick Practice Quiz
+        </button>
+        <button id="btn-lectra-send" class="btn-suggest">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+          Send PDF to Lectra
+        </button>
+        <button id="btn-seed-test" class="btn-suggest" style="border-style: dashed; opacity: 0.85;">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 2v6l-5.5 9.5A2 2 0 0 0 5.2 21h13.6a2 2 0 0 0 1.7-3.5L15 8V2"/><path d="M9 2h6"/></svg>
+          Seed RAG Task
+        </button>
       </div>
     </div>
 
@@ -76,7 +89,11 @@
         </button>
       </div>
       <div class="footer-privacy-badge">
-        🔒 Processing runs local-first on your machine via Chrome Prompt API
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="4" y="11" width="16" height="9" rx="2"/>
+          <path d="M8 11V7a4 4 0 0 1 8 0v4"/>
+        </svg>
+        Local-first · Chrome Prompt API
       </div>
     </footer>
 
@@ -84,6 +101,7 @@
 
   <!-- Scripts -->
   <script src="../lib/supabase.js"></script>
+  <script src="../lib/skin-themes.js"></script>
   <script src="../lib/pdf.min.js"></script>
   <script src="document-parser.js"></script>
   <script src="semantic-matcher.js"></script>

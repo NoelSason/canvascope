@@ -130,3 +130,25 @@ test('RAGCore.compileRAGPrompt formats active page context and scheduler context
   assert.ok(compiled.includes('=== QUESTION ==='));
   assert.ok(compiled.includes('What about Homework 10?'));
 });
+
+test('RAGCore.retrieveLocalContext finds a closed PDF by a word in its body only', async () => {
+  // Simulate a PDF that DocumentParser.persistPdfToIndex saved into indexedContent:
+  // the matching term ("chemoselectivity") appears ONLY in the body content, never the title.
+  const prevIndexed = mockStorage.indexedContent;
+  mockStorage.indexedContent = [
+    {
+      title: 'Lab G Handout',
+      courseName: 'Chem 3BL',
+      type: 'file',
+      url: 'https://bcourses.berkeley.edu/files/123/download',
+      content: 'Procedure overview. In this experiment we explore chemoselectivity of the reagent toward aldehydes over ketones.'
+    }
+  ];
+  try {
+    const matches = await RAGCore.retrieveLocalContext('chemoselectivity reagent');
+    assert.ok(matches.length > 0, 'should retrieve the PDF via its body content');
+    assert.equal(matches[0].title, 'Lab G Handout');
+  } finally {
+    mockStorage.indexedContent = prevIndexed;
+  }
+});

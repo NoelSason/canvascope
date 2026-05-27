@@ -84,6 +84,8 @@ const CUSTOM_ALGORITHM_WARNING = 'Custom Algorithm is experimental. It changes h
 const MAX_RESULTS = 20;
 const SEARCH_DEBOUNCE_MS = 150;
 const OVERLAY_SEARCH_DEBOUNCE_MS = 75;
+const PDF_BODY_SEARCH_LIMIT = 12000;
+const BODY_RECALL_MIN_TOKEN_LENGTH = 5;
 const MAX_HISTORY = 10;
 const SLASH_RESULT_LIMIT = 18;
 const DEFAULT_SEARCH_PLACEHOLDER = 'Search · type, title, course';
@@ -395,6 +397,8 @@ const GENERIC_RECALL_TOKENS = new Set([
   'worksheet',
   'worksheets'
 ]);
+
+const PDF_BODY_SEARCH_CACHE = new WeakMap();
 
 /**
  * Compute fraction of query tokens present in searchable text using boundaries.
@@ -1691,6 +1695,28 @@ function countMatchedQueryTokens(searchableText, tokens, tokenMatchers = new Map
   return hits;
 }
 
+function getItemBodySearchText(item) {
+  if (!item || typeof item !== 'object' || !item.content) return '';
+  const raw = String(item.content || '');
+  if (!raw) return '';
+
+  const cacheKey = `${raw.length}:${raw.slice(0, 64)}`;
+  const cached = PDF_BODY_SEARCH_CACHE.get(item);
+  if (cached?.cacheKey === cacheKey) return cached.text;
+
+  const text = normalizeText(raw.slice(0, PDF_BODY_SEARCH_LIMIT)).toLowerCase();
+  PDF_BODY_SEARCH_CACHE.set(item, { cacheKey, text });
+  return text;
+}
+
+function shouldRunBodyContentRecall(queryMeta) {
+  const tokens = queryMeta?.searchTokens || [];
+  if (!tokens.length) return false;
+  if (tokens.some(token => token.length >= BODY_RECALL_MIN_TOKEN_LENGTH)) return true;
+  if (queryMeta?.queryLooksFileSpecific && tokens.length >= 2) return true;
+  return tokens.length >= 3 && String(queryMeta?.rankingQuery || '').length >= 8;
+}
+
 function countBoundaryMatches(searchableText, tokens, tokenMatchers = new Map()) {
   if (!Array.isArray(tokens) || tokens.length === 0 || !searchableText) return 0;
   let hits = 0;
@@ -1902,20 +1928,12 @@ function buildItemSearchRuntime(item, fields = {}) {
     item?.moduleName || '',
     item?.courseName || ''
   ].join(' '));
-  // Full-text body of parsed PDFs/files (persisted by DocumentParser.persistPdfToIndex).
-  // Included only in searchableText — NOT in titleText — so it powers the exact-substring
-  // lexical recall pass (find a closed PDF by a word in its body) without skewing the
-  // title-weighted Fuse ranking. Truncated to bound per-item memory.
-  const bodyText = item?.content
-    ? normalizeText(String(item.content).slice(0, 20000)).toLowerCase()
-    : '';
   const searchableText = [
     titleText,
     courseText,
     pathText,
     moduleText,
-    aliasText,
-    bodyText
+    aliasText
   ].filter(Boolean).join(' ');
   const comparableTitle = stripKeyLikeContentText(titleText);
   const keyLike = isKeyLikeContentText([
@@ -6903,8 +6921,13 @@ function performSearch(query) {
   // ── Lexical Fallback pass & RRF Fusion ─────────────
   // Only run the full-corpus literal scan when the main retrieval path is likely
   // to need help. This keeps Cmd+K responsive on short queries.
-  if (queryMeta.searchTokens.length > 0 && shouldRunExhaustiveRecall) {
+  const shouldRunBodyRecall = shouldRunBodyContentRecall(queryMeta);
+  if (queryMeta.searchTokens.length > 0 && (shouldRunExhaustiveRecall || shouldRunBodyRecall)) {
     const lexicalResults = [];
+    const bodyRecallResults = [];
+    const literalRecallUrls = new Set();
+    const allowBodyRecall = shouldRunBodyRecall;
+
     for (const item of searchCorpus) {
       if (prePassUrls.has(item.url)) continue;
       const runtime = getItemSearchRuntime(item);
@@ -6915,6 +6938,21 @@ function performSearch(query) {
       );
       if (matchedTokens === queryMeta.searchTokens.length) {
         lexicalResults.push({ item, score: 0.2, prePass: false });
+        literalRecallUrls.add(item.url);
+        continue;
+      }
+
+      if (allowBodyRecall && !literalRecallUrls.has(item.url)) {
+        const bodyText = getItemBodySearchText(item);
+        const bodyMatchedTokens = countMatchedQueryTokens(
+          bodyText,
+          queryMeta.searchTokens,
+          queryMeta.searchTokenMatchers
+        );
+        if (bodyMatchedTokens === queryMeta.searchTokens.length) {
+          bodyRecallResults.push({ item, score: 0.34, prePass: false, bodyRecall: true });
+          literalRecallUrls.add(item.url);
+        }
       }
     }
 
@@ -6924,6 +6962,14 @@ function performSearch(query) {
       const bTitleLength = getItemSearchRuntime(b.item).titleText.length;
       return aTitleLength - bTitleLength;
     });
+
+    bodyRecallResults.sort((a, b) => {
+      const aTitleLength = getItemSearchRuntime(a.item).titleText.length;
+      const bTitleLength = getItemSearchRuntime(b.item).titleText.length;
+      return aTitleLength - bTitleLength;
+    });
+
+    const literalRecallResults = [...lexicalResults, ...bodyRecallResults];
 
     // RRF Fusion: Fuse vs Lexical
     const RRF_K = 60;
@@ -6935,7 +6981,7 @@ function performSearch(query) {
     });
 
     // Lexical Ranks
-    lexicalResults.forEach((r, i) => {
+    literalRecallResults.forEach((r, i) => {
       rrfScores.set(r.item.url, (rrfScores.get(r.item.url) || 0) + (1 / (RRF_K + i + 1)));
     });
 
@@ -6943,7 +6989,7 @@ function performSearch(query) {
       || queryMeta.searchTokens.some(t => !BROAD_QUERY_TOKENS.has(t));
     if (shouldInjectLexicalRecall) {
       const seenResultUrls = new Set(results.map(r => r.item.url));
-      for (const r of lexicalResults) {
+      for (const r of literalRecallResults) {
         if (!seenResultUrls.has(r.item.url)) {
           results.push(r);
           seenResultUrls.add(r.item.url);

@@ -1823,6 +1823,98 @@ function checkForLtiPage() {
 // Run LTI check on load
 checkForLtiPage();
 
+// ============================================
+// AUTO-INDEX PDFs ON VIEW (persistent full-text search)
+// When a student opens a Canvas file/PDF, parse its text once and persist it into
+// indexedContent so the body stays searchable from the Cmd+K and "/" overlays even
+// after the tab is closed. The heavy pdf.js parse is delegated to the background,
+// which injects the parser into this tab only when a PDF is actually present.
+// ============================================
+
+let __canvascopeAutoIndexLastUrl = '';
+const __canvascopeAutoIndexed = new Set();
+
+function detectCanvasFileId() {
+    try {
+        const u = new URL(window.location.href);
+        const preview = u.searchParams.get('preview');
+        if (preview && /^\d+$/.test(preview)) return preview;
+        const m = u.pathname.match(/\/files\/(\d+)(?:\/|$)/);
+        if (m) return m[1];
+        return null;
+    } catch (_) { return null; }
+}
+
+function resolveCourseNameHint() {
+    const selectors = [
+        '#breadcrumbs li:nth-child(2) a .ellipsible',
+        '#breadcrumbs li:nth-child(2) a',
+        '.ic-app-course-menu .ellipsible',
+        '#course_name'
+    ];
+    for (const s of selectors) {
+        const el = document.querySelector(s);
+        const t = (el?.textContent || '').replace(/\s+/g, ' ').trim();
+        if (t && t.length > 1 && t.toLowerCase() !== 'home') return t.slice(0, 120);
+    }
+    return null;
+}
+
+function fileTitleHintForId(fileId) {
+    if (fileId) {
+        const link = document.querySelector(`a[href*="preview=${fileId}"], a[href*="/files/${fileId}"]`);
+        const t = cleanTitleHint(link?.textContent || '');
+        if (t && !isGenericPdfTitleHint(t)) return t;
+    }
+    const hint = resolvePdfTitleHint();
+    return hint && !isGenericPdfTitleHint(hint) ? hint : null;
+}
+
+function maybeAutoIndexPdf() {
+    try {
+        if (!(isSupportedLmsDomain() || detectCanvasPage())) return;
+        const href = window.location.href;
+        const fileId = detectCanvasFileId();
+
+        let pdfUrl = null;
+        let key = null;
+        if (fileId) {
+            pdfUrl = `${window.location.origin}/files/${fileId}/download`;
+            key = `id:${fileId}`;
+        } else if (String(document.contentType || '').toLowerCase().includes('application/pdf')) {
+            pdfUrl = href;
+            key = `url:${href.split('?')[0]}`;
+        }
+        if (!pdfUrl || !key || __canvascopeAutoIndexed.has(key)) return;
+        __canvascopeAutoIndexed.add(key);
+
+        const titleHint = fileTitleHintForId(fileId);
+        const courseName = resolveCourseNameHint();
+        chrome.runtime.sendMessage({
+            action: 'autoIndexPdf',
+            pdfUrl,
+            titleHint: titleHint || null,
+            courseName: courseName || null
+        }, () => { void chrome.runtime.lastError; });
+        console.log('[Canvascope AutoIndex] requested indexing for', pdfUrl, '(title:', titleHint, ')');
+    } catch (e) {
+        console.warn('[Canvascope AutoIndex] detection failed:', e);
+    }
+}
+
+// Run shortly after load (give Canvas time to render the file name), then watch for
+// SPA route changes (opening a file preview swaps ?preview=<id> without a full reload).
+(function startAutoIndexWatcher() {
+    __canvascopeAutoIndexLastUrl = window.location.href;
+    setTimeout(maybeAutoIndexPdf, 1800);
+    setInterval(() => {
+        if (window.location.href !== __canvascopeAutoIndexLastUrl) {
+            __canvascopeAutoIndexLastUrl = window.location.href;
+            setTimeout(maybeAutoIndexPdf, 1500);
+        }
+    }, 1500);
+})();
+
 function isCmdKEvent(e) {
     if (!e || !(e.metaKey || e.ctrlKey)) return false;
     if (e.altKey) return false;

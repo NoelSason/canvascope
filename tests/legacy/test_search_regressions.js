@@ -455,4 +455,24 @@ assert(Array.isArray(completionPriorityResults) && completionPriorityResults.len
 assert(completionPriorityResults[0].title === 'Lab 6 Post-Lab Assessment', 'Expected unfinished biology work to rank above the completed lab.');
 assert(completionPriorityResults[1].title === 'Lab 5 Post-Lab Assessment', 'Expected completed biology work to be demoted behind unfinished work.');
 
+const pdfBodyRecallHarness = createSearchHarness([
+  {
+    title: '3BL Lab Exam Seating Arrangements - Spring 2026.pdf',
+    url: 'https://example.edu/courses/chem3bl/files/seating-arrangements',
+    type: 'file',
+    courseName: 'Chem 3BL: Organic Chemistry Laboratory (Spring 2026)',
+    content: 'Students should check the balcony seating chart and bring a non-programmable calculator.'
+  },
+  {
+    title: 'Organic Chemistry Lab Manual',
+    url: 'https://example.edu/courses/chem3bl/files/manual',
+    type: 'file',
+    courseName: 'Chem 3BL: Organic Chemistry Laboratory (Spring 2026)',
+    folderPath: 'Course Documents'
+  }
+]);
+const pdfBodyRecallResults = pdfBodyRecallHarness.run('balcony seating chart');
+assert(Array.isArray(pdfBodyRecallResults) && pdfBodyRecallResults.length > 0, 'Expected body-only PDF content recall results.');
+assert(pdfBodyRecallResults[0].title === '3BL Lab Exam Seating Arrangements - Spring 2026.pdf', 'Expected Cmd+K search to find a PDF by text that exists only in its persisted body content.');
+
 console.log('PASS test_search_regressions');

@@ -25,6 +25,8 @@
 
   const SLASH_RESULT_LIMIT = 18;
   const ANIMATION_DURATION_MS = 180;
+  const BODY_SEARCH_LIMIT = 12000;
+  const BODY_RECALL_MIN_TOKEN_LENGTH = 5;
 
   // ============================================
   // SLASH COMMAND REGISTRY
@@ -138,6 +140,7 @@
 
   // ── Text normalisation ────────────────────────────
   const NORM_CACHE = new Map();
+  const BODY_SEARCH_CACHE = new WeakMap();
   function normalizeText(text) {
     if (!text) return '';
     let cached = NORM_CACHE.get(text);
@@ -152,6 +155,26 @@
     if (NORM_CACHE.size > 2000) NORM_CACHE.clear();
     NORM_CACHE.set(text, cached);
     return cached;
+  }
+
+  function getItemBodySearchText(item) {
+    if (!item || typeof item !== 'object' || !item.content) return '';
+    const raw = String(item.content || '');
+    if (!raw) return '';
+
+    const cacheKey = `${raw.length}:${raw.slice(0, 64)}`;
+    const cached = BODY_SEARCH_CACHE.get(item);
+    if (cached?.cacheKey === cacheKey) return cached.text;
+
+    const text = normalizeText(raw.slice(0, BODY_SEARCH_LIMIT)).toLowerCase();
+    BODY_SEARCH_CACHE.set(item, { cacheKey, text });
+    return text;
+  }
+
+  function shouldRunBodyRecall(tokens, query) {
+    if (!tokens.length) return false;
+    if (tokens.some(token => token.length >= BODY_RECALL_MIN_TOKEN_LENGTH)) return true;
+    return tokens.length >= 3 && String(query || '').length >= 8;
   }
 
   // ── Searchable fields ─────────────────────────────
@@ -294,6 +317,8 @@
     if (!query || !query.trim()) {
       return items.slice(0, limit);
     }
+    const qLower = query.toLowerCase().trim();
+    const qTokens = qLower.split(/\s+/).filter(t => t.length > 0 && !STOP_WORDS.has(t));
 
     // 1. Lexical matching and scoring
     const lexicalRanked = items
@@ -301,6 +326,27 @@
       .filter(e => e.score > 0)
       .sort((a, b) => b.score - a.score)
       .map(e => e.item);
+
+    let literalRanked = lexicalRanked;
+    if (shouldRunBodyRecall(qTokens, qLower)) {
+      const seen = new Set(lexicalRanked.map(item => (item.id || item.url || item.title) + '|' + (item.courseName || '')));
+      const bodyRanked = [];
+      for (const item of items) {
+        const key = (item.id || item.url || item.title) + '|' + (item.courseName || '');
+        if (seen.has(key)) continue;
+        const body = getItemBodySearchText(item);
+        if (!body) continue;
+        let hits = 0;
+        for (const token of qTokens) {
+          if (body.includes(token)) hits += 1;
+        }
+        if (hits === qTokens.length) {
+          bodyRanked.push(item);
+          seen.add(key);
+        }
+      }
+      literalRanked = lexicalRanked.concat(bodyRanked);
+    }
 
     // 2. Semantic matching and scoring (if SemanticMatcher is available)
     let semanticRanked = [];
@@ -325,14 +371,14 @@
 
     // 3. Blend rankings using Reciprocal Rank Fusion (RRF)
     let merged;
-    if (typeof SemanticMatcher !== 'undefined' && (lexicalRanked.length > 0 || semanticRanked.length > 0)) {
+    if (typeof SemanticMatcher !== 'undefined' && (literalRanked.length > 0 || semanticRanked.length > 0)) {
       merged = SemanticMatcher.rrfMerge(
-        lexicalRanked,
+        literalRanked,
         semanticRanked,
         (item) => (item.id || item.url || item.title) + '|' + (item.courseName || '')
       );
     } else {
-      merged = lexicalRanked;
+      merged = literalRanked;
     }
 
     return merged.slice(0, limit);

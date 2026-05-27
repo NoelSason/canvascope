@@ -37,7 +37,7 @@ Style: concise (2-4 sentences or a short list). Use bold text, inline code backt
     }
   });
 
-  // 2. Initialize and Bootstrap local Gemini Nano
+  // 2. Initialize and bootstrap the local model
   bootstrapLocalAI();
 
   // 2.2 Listen for active tab activation and page completion to update context dynamically
@@ -111,9 +111,9 @@ Style: concise (2-4 sentences or a short list). Use bold text, inline code backt
         const check = await chrome.storage.local.get(['customTodos']);
         const currentTodos = check.customTodos || [];
         
-        addSystemBubble(`🧪 **Mock Task Seeded**: Added \`"Finish reading RAG paper"\` (CS 101, due in 3 days) to storage.\n\n**Current tasks in storage:**\n\`\`\`json\n${JSON.stringify(currentTodos, null, 2)}\n\`\`\`\n\nTry asking: *"When do I need to finish reading the rag paper by?"*`);
+        addSystemBubble(`**Mock task seeded**: Added \`"Finish reading RAG paper"\` (CS 101, due in 3 days) to storage.\n\n**Current tasks in storage:**\n\`\`\`json\n${JSON.stringify(currentTodos, null, 2)}\n\`\`\`\n\nTry asking: *"When do I need to finish reading the rag paper by?"*`);
       } catch (e) {
-        addSystemBubble('❌ **Failed to seed task**: ' + e.message);
+        addSystemBubble('**Failed to seed task**: ' + e.message);
       }
     });
   }
@@ -125,7 +125,7 @@ Style: concise (2-4 sentences or a short list). Use bold text, inline code backt
   if (lectraBtn) {
     lectraBtn.addEventListener('click', async () => {
       lectraBtn.disabled = true;
-      const bubble = addSystemBubble('📄 **Sending the PDF on this page to Lectra…**');
+      const bubble = addSystemBubble('**Sending the PDF on this page to Lectra...**');
       try {
         const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
         const res = await new Promise((resolve) => {
@@ -140,7 +140,7 @@ Style: concise (2-4 sentences or a short list). Use bold text, inline code backt
 
         const content = bubble.querySelector('.bubble-content');
         if (res.success) {
-          content.innerHTML = parseSimpleMarkdown('✅ **Sent to Lectra**: The PDF on this page was uploaded and queued for your Lectra iPad.');
+          content.innerHTML = parseSimpleMarkdown('**Sent to Lectra**: The PDF on this page was uploaded and queued for your Lectra iPad.');
         } else {
           const hint = res.code === 'feature_disabled'
             ? ' Enable **Send to Lectra** in the Canvascope popup settings first.'
@@ -149,11 +149,11 @@ Style: concise (2-4 sentences or a short list). Use bold text, inline code backt
               : res.code === 'no_pdf_detected'
                 ? ' Open a Canvas PDF (or a page with a PDF) in the active tab, then retry.'
                 : '';
-          content.innerHTML = parseSimpleMarkdown(`⚠️ **Couldn't send to Lectra**: ${res.message || 'Unknown error.'}${hint}`);
+          content.innerHTML = parseSimpleMarkdown(`**Couldn't send to Lectra**: ${res.message || 'Unknown error.'}${hint}`);
         }
       } catch (e) {
         const content = bubble.querySelector('.bubble-content');
-        content.innerHTML = parseSimpleMarkdown('⚠️ **Couldn\'t send to Lectra**: ' + (e.message || e));
+        content.innerHTML = parseSimpleMarkdown('**Couldn\'t send to Lectra**: ' + (e.message || e));
       } finally {
         lectraBtn.disabled = false;
         scrollViewport();
@@ -179,35 +179,58 @@ Style: concise (2-4 sentences or a short list). Use bold text, inline code backt
    * Applies individual skin variables directly into the document root.
    */
   function applySkinTokens(skin) {
-    if (!skin || !skin.tokens) return;
-    const t = skin.tokens;
+    const t = resolveSkinTokens(skin);
+    if (!t) return;
     const root = document.documentElement;
 
     console.log('[Canvascope AI] Synchronizing visual skin theme:', skin.name || skin.id);
 
-    // Map custom skin tokens to our css variables
-    if (t.bg) root.style.setProperty('--cs-bg-base', t.bg);
-    if (t.bgSoft) root.style.setProperty('--cs-bg-soft', t.bgSoft);
-    if (t.surface) root.style.setProperty('--cs-surface', `rgba(${hexToRgb(t.surface)}, 0.75)`);
-    if (t.text) root.style.setProperty('--cs-text-main', t.text);
-    if (t.textDim) root.style.setProperty('--cs-text-dim', t.textDim);
+    // Map custom skin tokens to the sidepanel design variables.
+    if (t.bg) root.style.setProperty('--cs-bg', t.bg);
+    if (t.bgSoft) root.style.setProperty('--cs-bg-1', t.bgSoft);
+    if (t.surface) root.style.setProperty('--cs-bg-2', t.surface);
+    if (t.surface2) root.style.setProperty('--cs-bg-3', t.surface2);
+    if (t.text) root.style.setProperty('--cs-text', t.text);
+    if (t.textDim) root.style.setProperty('--cs-text-2', t.textDim);
+    if (t.muted) root.style.setProperty('--cs-text-3', t.muted);
     if (t.border) root.style.setProperty('--cs-border', t.border);
     if (t.borderHi) root.style.setProperty('--cs-border-hi', t.borderHi);
     
     if (t.accent) {
-      root.style.setProperty('--cs-accent-color', t.accent);
-      root.style.setProperty('--cs-accent-gradient', `linear-gradient(135deg, ${t.accent}, ${adjustColorBrightness(t.accent, -20)})`);
-      root.style.setProperty('--cs-accent-glow', `rgba(${hexToRgb(t.accent)}, 0.3)`);
+      root.style.setProperty('--cs-accent', t.accent);
+      root.style.setProperty('--cs-accent-hi', adjustColorBrightness(t.accent, 18));
+      root.style.setProperty('--cs-accent-sat', adjustColorBrightness(t.accent, -12));
+    }
+    if (t.accentText) {
+      root.style.setProperty('--cs-on-accent', t.accentText);
     }
   }
 
-  function hexToRgb(hex) {
-    hex = hex.replace(/^#/, '');
-    if (hex.length === 3) {
-      hex = hex.split('').map(char => char + char).join('');
+  function resolveSkinTokens(skin) {
+    if (!skin || typeof skin !== 'object') return null;
+    if (skin.tokens && typeof skin.tokens === 'object') return skin.tokens;
+
+    const themesApi = window.CanvascopeSkinThemes;
+    if (!themesApi) return null;
+
+    let mode = skin.mode;
+    if (mode === 'system' || skin.followSystem) {
+      mode = window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
     }
-    const num = parseInt(hex, 16);
-    return `${(num >> 16) & 255}, ${(num >> 8) & 255}, ${num & 255}`;
+
+    let theme = themesApi.getTheme(skin.themeId || 'canvas-default') || themesApi.getTheme('canvas-default');
+    if (mode === 'dark' && theme?.mode !== 'dark') theme = themesApi.getTheme('dim') || theme;
+    if (mode === 'light' && theme?.mode !== 'light') theme = themesApi.getTheme('canvas-default') || theme;
+
+    const normalized = themesApi.normalizeTheme({
+      ...theme,
+      tokens: {
+        ...(theme?.tokens || {}),
+        ...(skin.customTokens || {})
+      }
+    });
+
+    return normalized.tokens;
   }
 
   function adjustColorBrightness(hex, percent) {
@@ -255,17 +278,17 @@ Style: concise (2-4 sentences or a short list). Use bold text, inline code backt
         sendBtn.disabled = !userPrompt.value.trim();
         detectActiveCourseContext();
         
-        addSystemBubble('🌐 **Cloud Fallback Active**: Canvascope is routing AI requests securely to a cloud-based Gemini 2.5 Flash model through your Supabase account. Processing is secure and fully compatible.');
+        addSystemBubble('**Cloud fallback active**: Canvascope is routing AI requests securely through your Supabase account.');
       } else {
         updateUIStatus('error', 'Auth Required');
-        addSystemBubble('⚠️ **Login Required for AI Fallback**: Local Gemini Nano is unavailable on this browser. Canvascope can securely fallback to **Cloud AI**, but it requires a signed-in session. Click the Canvascope extension icon to **sign in**.');
+        addSystemBubble('**Login required for AI fallback**: The local model is unavailable on this browser. Sign in from the Canvascope popup to use cloud fallback.');
       }
       return;
     }
 
     if (availability === 'after-download') {
       updateUIStatus('checking', 'Downloading Model...');
-      addSystemBubble('⬇️ **Model Download Required**: Your browser is currently downloading the local Gemini Nano model. This happens automatically in the background. Please wait a minute before starting your session.');
+      addSystemBubble('**Model download required**: Your browser is downloading the local model in the background. Try again in a minute.');
       
       // Setup polling interval to wait for download to finish
       const pollInterval = setInterval(async () => {
@@ -288,14 +311,14 @@ Style: concise (2-4 sentences or a short list). Use bold text, inline code backt
     const success = await aiController.initSession(SYSTEM_INSTRUCTION);
 
     if (success) {
-      updateUIStatus('ready', 'Gemini Nano Ready');
+      updateUIStatus('ready', 'Ready');
       aiSessionReady = true;
       aiMode = 'local';
       sendBtn.disabled = !userPrompt.value.trim();
       detectActiveCourseContext();
     } else {
       updateUIStatus('error', 'Session Failed');
-      addSystemBubble('❌ **Failed to start AI Session**: The browser guide failed to initialize the model container. Try restarting Chrome or clearing your extensions tab.');
+      addSystemBubble('**Failed to start AI session**: The browser failed to initialize the model container. Try restarting Chrome or clearing the extensions tab.');
     }
   }
 
@@ -387,29 +410,29 @@ Style: concise (2-4 sentences or a short list). Use bold text, inline code backt
     }
   }
 
+  // Re-label a suggestion chip without destroying its leading SVG icon.
+  function setSuggestLabel(btn, label, prompt) {
+    if (!btn) return;
+    const icon = btn.querySelector('svg');
+    btn.textContent = '';
+    if (icon) btn.appendChild(icon);
+    btn.appendChild(document.createTextNode(' ' + label));
+    if (prompt != null) btn.setAttribute('data-prompt', prompt);
+  }
+
   function applyPdfSuggestions() {
     if (suggestButtons.length >= 3) {
-      suggestButtons[0].textContent = "📝 Summarize PDF Document";
-      suggestButtons[0].setAttribute('data-prompt', "Provide a comprehensive summary of this active PDF document.");
-
-      suggestButtons[1].textContent = "📅 Extract Tasks from PDF";
-      suggestButtons[1].setAttribute('data-prompt', "Identify and list all key due dates, milestones, and deliverables inside this PDF document.");
-
-      suggestButtons[2].textContent = "🧠 Practice Quiz on PDF";
-      suggestButtons[2].setAttribute('data-prompt', "Create a 3-question conceptual practice quiz based on the contents of this PDF document.");
+      setSuggestLabel(suggestButtons[0], "Summarize PDF Document", "Provide a comprehensive summary of this active PDF document.");
+      setSuggestLabel(suggestButtons[1], "Extract Tasks from PDF", "Identify and list all key due dates, milestones, and deliverables inside this PDF document.");
+      setSuggestLabel(suggestButtons[2], "Practice Quiz on PDF", "Create a 3-question conceptual practice quiz based on the contents of this PDF document.");
     }
   }
 
   function restoreDefaultSuggestions() {
     if (suggestButtons.length >= 3) {
-      suggestButtons[0].textContent = "📝 Summarize Assignment";
-      suggestButtons[0].setAttribute('data-prompt', "Summarize the active assignment page");
-
-      suggestButtons[1].textContent = "📅 Extract Tasks";
-      suggestButtons[1].setAttribute('data-prompt', "What are the key deadlines and tasks on this page?");
-
-      suggestButtons[2].textContent = "🧠 Quick Practice Quiz";
-      suggestButtons[2].setAttribute('data-prompt', "Generate a 3-question conceptual quiz from this page context");
+      setSuggestLabel(suggestButtons[0], "Summarize Assignment", "Summarize the active assignment page");
+      setSuggestLabel(suggestButtons[1], "Extract Tasks", "What are the key deadlines and tasks on this page?");
+      setSuggestLabel(suggestButtons[2], "Quick Practice Quiz", "Generate a 3-question conceptual quiz from this page context");
     }
   }
 
@@ -420,7 +443,8 @@ Style: concise (2-4 sentences or a short list). Use bold text, inline code backt
     const bubble = document.createElement('div');
     bubble.className = 'chat-bubble bubble-system animate-fade-in';
     bubble.innerHTML = `
-      <div class="bubble-avatar">⚙️</div>
+      <div class="turn-label">Canvascope</div>
+      <div class="bubble-avatar"></div>
       <div class="bubble-content">${parseSimpleMarkdown(markdownText)}</div>
     `;
     chatHistory.appendChild(bubble);
@@ -441,10 +465,10 @@ Style: concise (2-4 sentences or a short list). Use bold text, inline code backt
     sendBtn.disabled = true;
 
     // 2. Append User Bubble
-    appendBubble('student', '👤', prompt);
+    appendBubble('student', '', prompt);
 
     // 3. Create Assistant Stream Bubble
-    const aiBubble = appendBubble('assistant', '🤖', '');
+    const aiBubble = appendBubble('assistant', '', '');
     const bubbleContent = aiBubble.querySelector('.bubble-content');
     
     // Add streaming loader
@@ -497,9 +521,9 @@ Style: concise (2-4 sentences or a short list). Use bold text, inline code backt
       if (fullResponse) {
         // Append error warning instead of wiping the entire generated response
         bubbleContent.innerHTML = parseSimpleMarkdown(fullResponse) + 
-          `<p style="color: var(--status-error); margin-top: 8px; font-style: italic;">⚠️ Streaming interrupted: ${err.message || err}</p>`;
+          `<p style="color: var(--status-error); margin-top: 8px; font-style: italic;">Streaming interrupted: ${err.message || err}</p>`;
       } else {
-        bubbleContent.innerHTML = `<span style="color: var(--status-error)">⚠️ **Error**: Failed to complete streaming prompt. ${err.message || err}</span>`;
+        bubbleContent.innerHTML = `<span style="color: var(--status-error)">Error: Failed to complete streaming prompt. ${err.message || err}</span>`;
       }
       scrollViewport();
     } finally {
@@ -513,8 +537,10 @@ Style: concise (2-4 sentences or a short list). Use bold text, inline code backt
   function appendBubble(role, avatar, text) {
     const bubble = document.createElement('div');
     bubble.className = `chat-bubble bubble-${role} animate-fade-in`;
+    const turnLabel = role === 'student' ? 'You' : 'Canvascope';
     bubble.innerHTML = `
-      <div class="bubble-avatar">${avatar}</div>
+      <div class="turn-label">${turnLabel}</div>
+      <div class="bubble-avatar">${avatar || ''}</div>
       <div class="bubble-content">${parseSimpleMarkdown(text)}</div>
     `;
     chatHistory.appendChild(bubble);

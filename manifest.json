@@ -75,6 +75,24 @@
         "slash-commands-pack.js"
       ],
       "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "*://*.instructure.com/*",
+        "*://*.brightspace.com/*",
+        "*://*.d2l.com/*",
+        "*://bcourses.berkeley.edu/*",
+        "*://bruinlearn.ucla.edu/*",
+        "*://canvas.ucsd.edu/*",
+        "*://canvas.asu.edu/*",
+        "*://canvas.mit.edu/*"
+      ],
+      "js": [
+        "lib/skin-themes.js",
+        "docviewer-skin.js"
+      ],
+      "all_frames": true,
+      "run_at": "document_idle"
     }
   ],
   "background": {
