@@ -56,6 +56,8 @@
         <button class="btn-suggest" data-prompt="Summarize the active assignment page">📝 Summarize Assignment</button>
         <button class="btn-suggest" data-prompt="What are the key deadlines and tasks on this page?">📅 Extract Tasks</button>
         <button class="btn-suggest" data-prompt="Generate a 3-question conceptual quiz from this page context">🧠 Quick Practice Quiz</button>
+        <button id="btn-lectra-send" class="btn-suggest">📄 Send PDF to Lectra</button>
+        <button id="btn-seed-test" class="btn-suggest" style="border: 1px dashed var(--cs-accent-color, #8a6fe0); opacity: 0.9;">🧪 Seed RAG Task</button>
       </div>
     </div>
 
@@ -82,7 +84,11 @@
 
   <!-- Scripts -->
   <script src="../lib/supabase.js"></script>
+  <script src="../lib/pdf.min.js"></script>
+  <script src="document-parser.js"></script>
+  <script src="semantic-matcher.js"></script>
   <script src="local-ai.js"></script>
+  <script src="rag-core.js"></script>
   <script src="sidepanel.js"></script>
 </body>
 </html>

@@ -145,6 +145,111 @@ class LocalAIController {
   }
 
   /**
+   * Queries the Supabase AI proxy Edge Function to stream Gemini 1.5 Flash responses.
+   * Used as a fallback when the browser lacks local Gemini Nano capabilities.
+   * @param {string} promptText - The user prompt
+   * @param {string} systemInstruction - Instructions to direct the AI behavior
+   * @yields {string} Chunked text stream output
+   */
+  async *streamSupabaseProxy(promptText, systemInstruction = '') {
+    // 1. Fetch active Supabase token from the background script
+    const authRes = await new Promise((resolve) => {
+      chrome.runtime.sendMessage({ type: 'getSupabaseSession' }, (response) => {
+        resolve(response || { success: false, error: 'No response from background script' });
+      });
+    });
+
+    if (!authRes.success || !authRes.accessToken) {
+      throw new Error(authRes.error || 'You must be signed in to use the Cloud AI Fallback.');
+    }
+
+    // 2. Query the Supabase Edge Function
+    const proxyUrl = 'https://vcadcdgnwxjlgaoqktkd.supabase.co/functions/v1/gemini-proxy';
+    const response = await fetch(proxyUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${authRes.accessToken}`
+      },
+      body: JSON.stringify({
+        prompt: promptText,
+        systemInstruction
+      })
+    });
+
+    if (!response.ok) {
+      let errorMessage = `Server responded with status ${response.status}`;
+      try {
+        const errorData = await response.json();
+        errorMessage = errorData.error || errorMessage;
+      } catch (_) {}
+      throw new Error(errorMessage);
+    }
+
+    if (promptText === '__listModels__' || promptText.endsWith('__listModels__')) {
+      try {
+        const listData = await response.json();
+        yield '### Available Models:\n```json\n' + JSON.stringify(listData, null, 2) + '\n```';
+      } catch (e) {
+        yield 'Failed to parse list models data: ' + e.message;
+      }
+      return;
+    }
+
+    if (!response.body) {
+      throw new Error('No response body returned from cloud AI service.');
+    }
+
+    // 3. Process the stream character-by-character/object-by-object
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder('utf-8');
+    let buffer = '';
+    let openBraces = 0;
+    let startIndex = -1;
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+
+        // Parse JSON objects safely out of the stream buffer
+        let i = 0;
+        while (i < buffer.length) {
+          const char = buffer[i];
+          if (char === '{') {
+            if (openBraces === 0) {
+              startIndex = i;
+            }
+            openBraces++;
+          } else if (char === '}') {
+            openBraces--;
+            if (openBraces === 0 && startIndex !== -1) {
+              const jsonStr = buffer.substring(startIndex, i + 1);
+              try {
+                const parsed = JSON.parse(jsonStr);
+                const text = parsed?.candidates?.[0]?.content?.parts?.[0]?.text;
+                if (text) {
+                  yield text;
+                }
+              } catch (e) {
+                console.warn('[Canvascope AI] Failed to parse stream sub-JSON fragment:', e);
+              }
+              buffer = buffer.substring(i + 1);
+              i = -1; // Reset scanner index for updated buffer
+              startIndex = -1;
+            }
+          }
+          i++;
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
+  }
+
+  /**
    * Destroys active session to release memory.
    */
   destroySession() {

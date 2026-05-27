@@ -500,12 +500,22 @@
         if (verb === 'add' && rest) {
           return [{
             kind: 'action', title: `Add todo "${rest.slice(0, 60)}"`,
-            subtitle: 'Joins your Up Next list.',
+            subtitle: 'Joins your Up Next list and your AI assistant context.',
             icon: 'pin', badge: 'Add',
             onSelect: async () => {
-              await tools?.addTodo(rest);
-              ctx.setFeedbackMsg?.('Todo added ✓', 'success');
-              setTimeout(() => ctx.closeOverlay?.(), 600);
+              if (!tools || typeof tools.addTodo !== 'function') {
+                ctx.setFeedbackMsg?.('Tools not ready — refresh this page and try again.', 'error');
+                return;
+              }
+              const saved = await tools.addTodo(rest);
+              if (saved) {
+                ctx.setFeedbackMsg?.('Todo added ✓', 'success');
+                setTimeout(() => ctx.closeOverlay?.(), 600);
+              } else {
+                // Storage write failed (commonly a detached content script after an
+                // extension reload). Tell the user how to recover instead of faking success.
+                ctx.setFeedbackMsg?.("Couldn't save — refresh this page, then retry.", 'error');
+              }
             }
           }];
         }
@@ -523,24 +533,27 @@
         }
 
         // Default: list current todos (and 'done <id>' shortcut).
-        return new Promise(resolve => {
-          (tools?.listTodos() || Promise.resolve([])).then(todos => {
-            if (!todos.length) {
-              resolve([{ kind: 'guidance', title: 'No custom todos yet',
-                subtitle: 'Try /todo add buy textbook', icon: 'pin' }]);
-              return;
-            }
-            const wantId = verb === 'done' ? rest : '';
-            resolve(todos.slice(0, 20).map(t => ({
-              kind: 'action',
-              title: (t.done ? '☑ ' : '☐ ') + t.title,
-              subtitle: t.dueAt ? new Date(t.dueAt).toLocaleString() : 'No due date',
-              icon: 'pin',
-              badge: wantId && t.id === wantId ? 'Toggle' : (t.done ? 'Undo' : 'Done'),
-              onSelect: async () => { await tools?.toggleTodoDone(t.id); }
-            })));
-          });
-        });
+        // The overlay renders synchronously and discards Promise results, so we read
+        // from the to-dos preloaded into the slash context (ctx.customTodos) instead
+        // of returning a Promise here.
+        const todos = Array.isArray(ctx.customTodos) ? ctx.customTodos : [];
+        if (!todos.length) {
+          return [{ kind: 'guidance', title: 'No custom todos yet',
+            subtitle: 'Try /todo add buy textbook', icon: 'pin' }];
+        }
+        const wantId = verb === 'done' ? rest : '';
+        return todos.slice(0, 20).map(t => ({
+          kind: 'action',
+          title: (t.done ? '☑ ' : '☐ ') + t.title,
+          subtitle: t.dueAt ? new Date(t.dueAt).toLocaleString() : 'No due date',
+          icon: 'pin',
+          badge: wantId && t.id === wantId ? 'Toggle' : (t.done ? 'Undo' : 'Done'),
+          onSelect: async () => {
+            await tools?.toggleTodoDone(t.id);
+            ctx.setFeedbackMsg?.(t.done ? 'Marked not done ✓' : 'Marked done ✓', 'success');
+            setTimeout(() => ctx.closeOverlay?.(), 500);
+          }
+        }));
       }
     };
   }

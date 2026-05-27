@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Canvascope",
-  "version": "7.0.0",
+  "version": "8.0.0",
   "minimum_chrome_version": "116",
   "default_locale": "en",
   "description": "Instantly search Canvas and Brightspace content",
@@ -70,6 +70,7 @@
         "content.js",
         "canvas-skin.js",
         "academic-tools.js",
+        "v8/semantic-matcher.js",
         "slash-overlay.js",
         "slash-commands-pack.js"
       ],
@@ -89,6 +90,9 @@
     {
       "resources": [
         "lib/supabase.js",
+        "lib/pdf.min.js",
+        "lib/pdf.worker.min.js",
+        "v8/document-parser.js",
         "popup.html",
         "popup.js",
         "styles.css",

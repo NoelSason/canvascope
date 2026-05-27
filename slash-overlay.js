@@ -294,12 +294,48 @@
     if (!query || !query.trim()) {
       return items.slice(0, limit);
     }
-    return items
+
+    // 1. Lexical matching and scoring
+    const lexicalRanked = items
       .map(item => ({ item, score: scoreItemMatch(item, query) }))
       .filter(e => e.score > 0)
       .sort((a, b) => b.score - a.score)
-      .slice(0, limit)
       .map(e => e.item);
+
+    // 2. Semantic matching and scoring (if SemanticMatcher is available)
+    let semanticRanked = [];
+    if (typeof SemanticMatcher !== 'undefined') {
+      const queryVector = SemanticMatcher.vectorize(query);
+      const hasConcepts = Object.values(queryVector).some(val => val > 0);
+
+      if (hasConcepts) {
+        const scoredSemantic = items.map(item => {
+          const itemText = `${item.title || ''} ${item.courseName || ''} ${item.type || ''}`;
+          const itemVector = SemanticMatcher.vectorize(itemText);
+          const similarity = SemanticMatcher.cosineSimilarity(queryVector, itemVector);
+          return { item, similarity };
+        });
+
+        semanticRanked = scoredSemantic
+          .filter(x => x.similarity > 0.15)
+          .sort((a, b) => b.similarity - a.similarity)
+          .map(x => x.item);
+      }
+    }
+
+    // 3. Blend rankings using Reciprocal Rank Fusion (RRF)
+    let merged;
+    if (typeof SemanticMatcher !== 'undefined' && (lexicalRanked.length > 0 || semanticRanked.length > 0)) {
+      merged = SemanticMatcher.rrfMerge(
+        lexicalRanked,
+        semanticRanked,
+        (item) => (item.id || item.url || item.title) + '|' + (item.courseName || '')
+      );
+    } else {
+      merged = lexicalRanked;
+    }
+
+    return merged.slice(0, limit);
   }
 
   const TASK_TYPES = new Set(['assignment', 'quiz', 'discussion']);
@@ -337,6 +373,13 @@
     try {
       const res = await chrome.runtime.sendMessage({ action: 'getIndexedContent' });
       return res?.items || [];
+    } catch { return []; }
+  }
+
+  async function fetchCustomTodos() {
+    try {
+      const { customTodos: todos } = await chrome.storage.local.get(['customTodos']);
+      return Array.isArray(todos) ? todos : [];
     } catch { return []; }
   }
 
@@ -449,6 +492,7 @@
   function getSlashContext() {
     return {
       indexedContent,
+      customTodos,
       extensionSettings,
       authStatus,
       pinnedIds,
@@ -562,6 +606,7 @@
   let shadowRoot = null;
   let isOpen = false;
   let indexedContent = [];
+  let customTodos = [];
   let extensionSettings = {};
   let authStatus = { signedIn: false };
   let pinnedIds = new Set();
@@ -1147,16 +1192,18 @@
     feedbackMessage = null;
 
     // Fetch data in parallel
-    const [content, settings, auth, pins] = await Promise.all([
+    const [content, settings, auth, pins, todos] = await Promise.all([
       fetchIndexedContent(),
       fetchExtensionSettings(),
       fetchAuthStatus(),
-      fetchPinnedIds()
+      fetchPinnedIds(),
+      fetchCustomTodos()
     ]);
     indexedContent = content;
     extensionSettings = settings;
     authStatus = auth;
     pinnedIds = pins;
+    customTodos = todos;
 
     // Show with animation
     const backdrop = getBackdrop();

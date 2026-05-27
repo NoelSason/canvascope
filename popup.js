@@ -1902,12 +1902,20 @@ function buildItemSearchRuntime(item, fields = {}) {
     item?.moduleName || '',
     item?.courseName || ''
   ].join(' '));
+  // Full-text body of parsed PDFs/files (persisted by DocumentParser.persistPdfToIndex).
+  // Included only in searchableText — NOT in titleText — so it powers the exact-substring
+  // lexical recall pass (find a closed PDF by a word in its body) without skewing the
+  // title-weighted Fuse ranking. Truncated to bound per-item memory.
+  const bodyText = item?.content
+    ? normalizeText(String(item.content).slice(0, 20000)).toLowerCase()
+    : '';
   const searchableText = [
     titleText,
     courseText,
     pathText,
     moduleText,
-    aliasText
+    aliasText,
+    bodyText
   ].filter(Boolean).join(' ');
   const comparableTitle = stripKeyLikeContentText(titleText);
   const keyLike = isKeyLikeContentText([

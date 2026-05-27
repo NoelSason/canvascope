@@ -1,120 +1,108 @@
-# Canvascope v8.0.0 Major Update - Local AI & RAG Workspace Plan
+# Canvascope v8 Phase 2: Dual-Source RAG Context Pipeline
 
-This implementation plan outlines the architecture, design, and step-by-step phases to deliver the major **v8.0.0** release of Canvascope. 
+This plan outlines the architecture, implementation steps, and verification procedures to deliver **Phase 2 (Dual-Source RAG Context Pipeline)** of the Canvascope v8 study companion update. 
 
-This update transforms Canvascope from a local-first search bar into a **comprehensive local AI study companion**. It leverages Chrome's built-in **Prompt API (Gemini Nano)** for offline AI processing, establishes a persistent, responsive **Chrome Side Panel** workspace, integrates localized **RAG (Retrieval-Augmented Generation)** using the active page context and Fuse.js, adds **automated AI due-date extraction**, and introduces **in-browser PDF text extraction/indexing**.
+This update links the AI assistant (both offline Gemini Nano and online Supabase Fallback) to Canvascope's local knowledge base. It will retrieve relevant items (assignments, user to-dos, and memo notes) using a localized keyword scorer and combine them with scraped active-page context to formulate context-aware answers.
 
 ---
 
-## Technical Architecture Overview
-
-The v8 companion architecture consists of three interconnected layers running entirely local-first inside the Chrome Extension sandbox:
+## Technical Architecture & Retrieval Data Flow
 
 ```mermaid
-graph TD
-    A[LMS Active Tab Scraper] -->|Raw Text & Markdown| B(Context Compiler)
-    C[Local Fuse.js Search Index] -->|Relevant Chunks| B
-    B -->|Structured Context + Prompt| D[Local AI Controller]
-    D -->|Chrome Prompt API| E[Gemini Nano Local Model]
-    E -->|Streaming Answers| F[Side Panel UI Chat View]
+sequenceDiagram
+    participant UI as Side Panel UI (sidepanel.js)
+    participant R as RAGCore (rag-core.js)
+    participant S as Active Page DOM Scraper
+    participant DB as chrome.storage.local
+    participant AI as LocalAIController
+
+    UI->>R: compileRAGPrompt(userPrompt)
+    
+    par Scrape Page
+        R->>S: executeScript on Active Tab
+        S-->>R: rawText (Syllabus/Assignment content)
+    and Query Study Scheduler Database
+        R->>DB: get(['indexedContent', 'customTodos', 'dashboardNotes'])
+        DB-->>R: localStudyItems
+        R->>R: Score & retrieve top 5 matching items (lexical keywords)
+    end
+
+    R->>R: Compile structured system-context prompt
+    R-->>UI: completedRAGPrompt
+    UI->>AI: promptStream / streamSupabaseProxy(completedRAGPrompt)
+    AI-->>UI: stream response
 ```
 
-1. **User Interface (`sidepanel.html` / `sidepanel.js`)**:
-   - A beautiful modern side panel with glassmorphism, responsive panels, fluid animations, and high-contrast dark modes matching Canvascope's premium design aesthetics.
-   - Contains a Chat Workspace, an Interactive Planner sync drawer, and a PDF text extractor dropzone.
-2. **Context Compilation Engine (`rag-core.js`)**:
-   - **Active Page Scraper**: Parses the active tab's DOM to extract assignment prompts, quiz descriptions, syllabus tables, and discussion content.
-   - **Lexical Filter**: Queries the local Fuse.js index using key terms from the student's question to pull up relevant syllabus rules or calendar entries.
-   - **Context Compiler**: Compiles active context and semantic search matches into a prompt format that respects Gemini Nano's local token limits.
-3. **Local AI Coordinator (`local-ai.js`)**:
-   - Handles Prompt API feature detection, bootstrapping, model parameters, and streams responses directly to the chat window to minimize perceived latency.
-4. **PDF Extractor & Parser (`pdf-parser.js`)**:
-   - Uses a clientside parser to extract raw text content from slides, lecture decks, and syllabus files, making them searchable via Fuse.js and readable by the local AI context compiler.
+---
+
+## User Review Required
+
+> [!IMPORTANT]
+> - **LMS Scripting Permissions**: The RAG pipeline relies on the `chrome.scripting` API to scan the student's active Canvas/Blackboard/Brightspace tab. Ensure that you have accepted permissions for active tab scanning if prompted.
+> - **Zero External Calls for Retrieval**: The lexical keyword indexing and database scoring occur 100% locally on the client's machine, keeping the student's personal calendar, notes, and study schedule strictly private.
 
 ---
 
-## Detailed Implementation Phases
+## Proposed Changes
 
-We break the v8 roadmap into **four logical phases** designed to be implemented, tested, and released incrementally over a couple of weeks.
-
-### Phase 1: Side Panel Workspace & Chrome Prompt API Integration (Days 1–4)
-Focuses on establishing the extension side panel infrastructure and creating a robust link to Chrome's local Gemini Nano model.
-
-#### [NEW] [sidepanel.html](file:///Users/noelsason/Desktop/Canvascope%20Inc./02-Subsidiaries/canvascope-extension/app/extension-core/v8/sidepanel.html)
-- Create a premium, responsive side panel layout containing:
-  - Header: Course select dropdown and AI Model status indicator.
-  - Chat Area: Streaming speech bubble logs, load spinners, and markdown parser.
-  - Input Area: Quick-action prompt suggestions (e.g., *"Summarize this page"*, *"List key dates"*, *"Generate practice questions"*).
-
-#### [NEW] [sidepanel.css](file:///Users/noelsason/Desktop/Canvascope%20Inc./02-Subsidiaries/canvascope-extension/app/extension-core/v8/sidepanel.css)
-- Implement custom vanilla CSS design systems with glassmorphic backdrops, glowing accents, transition animations, and dark modes synced to active skins.
-
-#### [NEW] [local-ai.js](file:///Users/noelsason/Desktop/Canvascope%20Inc./02-Subsidiaries/canvascope-extension/app/extension-core/v8/local-ai.js)
-- Implements Prompt API management:
-  - Checks model availability via `ai.languageModel.capabilities()`.
-  - Configures optimal settings: temperature, topK, and token caps.
-  - Creates active session instances and handles response streaming.
-
-#### [MODIFY] [manifest.json](file:///Users/noelsason/Desktop/Canvascope%20Inc./02-Subsidiaries/canvascope-extension/app/extension-core/manifest.json)
-- Add the `"sidePanel"` permission and declare `"side_panel": { "default_path": "v8/sidepanel.html" }`.
+We group the developments into two components: the core RAG retrieval engine and its sidepanel frontend integration.
 
 ---
 
-### Phase 2: Dual-Source RAG Context Pipeline (Days 5–8)
-Connects the local AI model to active course details, matching the student's prompt with real-time LMS data.
+### 1. The RAG Core Engine
 
 #### [NEW] [rag-core.js](file:///Users/noelsason/Desktop/Canvascope%20Inc./02-Subsidiaries/canvascope-extension/app/extension-core/v8/rag-core.js)
-- **Active Tab Scraper**: Uses `chrome.scripting.executeScript` to extract clean text blocks from the student's active Canvas/Brightspace tab.
-- **RAG Compiler**: Compiles the scraped page text and the top 5 Fuse.js search query matches into a compact system context prompt:
-  ```markdown
-  You are an offline academic study assistant for Canvascope.
-  Answer the student's question using the active page context and course materials provided below.
-  
-  === ACTIVE PAGE CONTEXT ===
-  [scraped page text]
-  
-  === RELEVANT COURSE MATERIAL ===
-  [Fuse.js search results]
-  ```
+- Implement a pure JavaScript RAG class `RAGCore` with the following methods:
+  - `scrapeActiveTab()`: Queries the active tab, detects LMS domain suitability, and executes a clean DOM scraper returning up to 4,000 characters of page content.
+  - `retrieveLocalContext(promptText)`: Extracts searchable assignments, tasks, and memo notes from local storage. Tokenizes the user's question, performs keyword frequency scoring, and retrieves the top 5 most relevant database entries.
+  - `compileRAGPrompt(promptText)`: Co-runs the page scraper and local scheduler database retriever, compiles matches into a clean markdown-based context schema, and appends the user's prompt query.
 
 ---
 
-### Phase 3: PDF text extraction & local indexing (Days 9–11)
-Expands the local-first search corpus by allowing students to parse slides, documents, and syllabi locally.
+### 2. Side Panel Controller Integration
 
-#### [NEW] [pdf-parser.js](file:///Users/noelsason/Desktop/Canvascope%20Inc./02-Subsidiaries/canvascope-extension/app/extension-core/v8/pdf-parser.js)
-- Incorporates a pure-JavaScript clientside PDF text extractor inside the side panel window.
-- Parses dropped or selected course files and splits text into structured slide/page chunks.
-- Automatically inserts these extracted text chunks into `chrome.storage.local` under the specific course, making them immediately searchable in Cmd+K and accessible via the RAG pipeline.
+#### [MODIFY] [sidepanel.js](file:///Users/noelsason/Desktop/Canvascope%20Inc./02-Subsidiaries/canvascope-extension/app/extension-core/v8/sidepanel.js)
+- Import/Load `rag-core.js` into the execution scope.
+- In `handleSubmit()`:
+  - Replace the old basic scraping routine with a call to `RAGCore.compileRAGPrompt(prompt)`.
+  - Pass the compiled prompt to the local model stream or Supabase fallback stream.
 
----
-
-### Phase 4: Local AI Due-Date Generator & Planner Automation (Days 12–14)
-Closes the loop between the AI assistant and the Canvascope planner by automating task entries.
-
-#### [NEW] [planner-ai.js](file:///Users/noelsason/Desktop/Canvascope%20Inc./02-Subsidiaries/canvascope-extension/app/extension-core/v8/planner-ai.js)
-- Prompts the local AI model to parse unstructured text (e.g., a syllabus schedule or list of assignments) and output a clean JSON array of due dates.
-- Example JSON output:
-  ```json
-  [
-    { "title": "Homework 4", "dueDate": "2026-05-28T23:59:00", "weight": "10%" },
-    { "title": "Midterm Exam", "dueDate": "2026-06-02T10:00:00", "weight": "25%" }
-  ]
-  ```
-- Automatically registers these extracted tasks into Canvascope's existing planner model, notifying the user when their schedule has been synchronized.
+#### [MODIFY] [sidepanel.html](file:///Users/noelsason/Desktop/Canvascope%20Inc./02-Subsidiaries/canvascope-extension/app/extension-core/v8/sidepanel.html)
+- Add `<script src="rag-core.js"></script>` to the header scripts list.
 
 ---
 
 ## Verification & Testing Plan
 
-### 1. Prompt API Integrity
-- Run capability checks on various Chrome versions to verify that fallback warnings appear clearly if Gemini Nano is not enabled in the user's browser.
-- Measure AI response streaming latency (target: first token in < 150ms).
+### Automated Tests
+- Run `npm run test:node` to guarantee that existing search engines and temporal trackers suffer zero regressions.
 
-### 2. RAG Accuracy & Token Caps
-- Test RAG prompts against long syllabi (10k+ words) to ensure text chunk truncation handles token caps gracefully.
-- Validate that the assistant answers questions using page-specific information (e.g., specific instructions from the active assignment page).
+### Manual Verification
+1. Open the Canvascope Side Panel on a standard LMS Assignment page (Canvas).
+2. Ask a question referencing local scheduler details (e.g. *"What assignments do I have coming up?"* or *"When is Homework 10 due?"*).
+3. Confirm that the AI retrieves matches from both the active page and your Canvascope study list and answers correctly.
+4. Verify that formatting (headers, bullet points) renders beautifully in the chat interface.
 
-### 3. PDF Extraction & Indexing
-- Load complex multi-column academic PDFs and check if structural text chunks parse cleanly.
-- Verify that parsed PDF content is successfully indexed and returned in Cmd+K search results.
+---
+
+## Phase 2.1 Fixes — `/todo` + Context-Aware Retrieval
+
+Follow-up patch that closed the gap between adding tasks and retrieving them in chat.
+
+### Problems addressed
+1. **Retrieval was keyword-only.** Generic questions ("what's on my to-do list?", "what do I need to do?") did not lexically match a to-do titled *"Finish reading bio paper"*, so the side panel returned no context. The RAG was not context-aware.
+2. **`/todo` list mode silently broke.** `cmdTodo`'s default/list branch returned a `Promise`, but the overlay's `buildCommandResults` only accepts arrays (`Array.isArray(promise) === false`), so `/todo` and `/todo done <id>` rendered nothing.
+3. **Saves failed silently.** `saveArray` swallowed all storage errors and `/todo add` always showed *"Todo added ✓"*, even when the write failed (the usual cause: a content script detached by an extension reload, before the page is refreshed).
+
+### Changes
+- **[`v8/rag-core.js`]** Added `hasScheduleIntent()`, `buildCorpus()`, and `getUpcomingItems()`. `retrieveLocalContext()` now returns precise keyword matches when they exist, and **falls back to surfacing pending to-dos + upcoming assignments (sorted by due date)** when the query has schedule intent but no keyword hit. `compileRAGPrompt()` emits a dedicated *"THE STUDENT'S TASKS & DEADLINES"* section and an explicit "list is empty" hint when nothing is stored.
+- **[`academic-tools.js`]** `saveArray()` now returns a success boolean and logs failures; `addTodo()` returns `null` when the write fails.
+- **[`slash-commands-pack.js`]** `/todo add` reports real success/failure (and recovery instructions on failure); `/todo` list mode reads synchronously from preloaded `ctx.customTodos` and confirms done-toggles.
+- **[`slash-overlay.js`]** Preloads `customTodos` on overlay open and exposes it through `getSlashContext()`.
+- **[`tests/rag-core.test.mjs`]** +4 tests covering schedule-intent detection, the context-aware fallback, keyword precision still winning, and the tasks section in the compiled prompt. **29/29 node tests pass.**
+
+### ⚠️ Activation step (manual, one-time)
+Content-script changes (`/todo`) only take effect after a full extension reload **and** a page refresh:
+1. `chrome://extensions` → **Reload** the Canvascope card.
+2. **Refresh** any open LMS tab (this reconnects the content scripts to `chrome.storage`).
+3. Re-open the Side Panel.

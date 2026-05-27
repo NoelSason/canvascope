@@ -5690,6 +5690,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 // Add message handler to check auth status on popup load
+// Dev convenience: writing a new value to `__canvascopeDevReload` in local storage
+// triggers a full extension reload (picks up disk changes for content scripts + SW).
+// Reachable from any extension context that can write storage (side panel, popup).
+chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === 'local' && changes.__canvascopeDevReload) {
+        const nv = changes.__canvascopeDevReload.newValue;
+        if (nv) {
+            console.log('[Canvascope Dev] Reload flag set; reloading extension...');
+            setTimeout(() => { try { chrome.runtime.reload(); } catch (e) { console.error('[Canvascope Dev] reload failed', e); } }, 50);
+        }
+    }
+});
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.type === 'checkAuthStatus') {
         (async () => {
@@ -5699,6 +5712,24 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                 user: status?.user || null
             });
         })();
+        return true;
+    } else if (message.type === 'getSupabaseSession') {
+        (async () => {
+            try {
+                const accessToken = await getSupabaseAccessToken();
+                sendResponse({ success: true, accessToken });
+            } catch (err) {
+                console.error('[Canvascope Auth] Error getting Supabase access token:', err);
+                sendResponse({ success: false, error: err.message });
+            }
+        })();
+        return true;
+    } else if (message.type === 'csReloadExtension') {
+        // Dev convenience: let any extension context (side panel, popup, content
+        // script) trigger a full extension reload so disk changes take effect.
+        console.log('[Canvascope Dev] Reload requested via runtime message; reloading extension...');
+        try { sendResponse({ success: true }); } catch (_) {}
+        setTimeout(() => { try { chrome.runtime.reload(); } catch (e) { console.error('[Canvascope Dev] reload failed', e); } }, 50);
         return true;
     } else if (message.type === 'fetchUserData') {
         (async () => {

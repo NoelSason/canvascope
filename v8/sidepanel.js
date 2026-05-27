@@ -16,6 +16,18 @@ document.addEventListener('DOMContentLoaded', () => {
   // Initialize the Local AI Controller
   const aiController = new LocalAIController();
   let aiSessionReady = false;
+  let aiMode = null; // 'local' | 'cloud'
+
+  const SYSTEM_INSTRUCTION = `You are the Canvascope study assistant running inside a Chrome extension. Below each question you receive context drawn from the student's own saved data and the page they are viewing.
+
+How to use the context:
+- The sections "THE STUDENT'S TASKS & DEADLINES", "RELEVANT COURSE DETAILS", and "ACTIVE PDF DOCUMENT PAGES" are the student's authoritative personal records. Answer directly and confidently from them.
+- For questions about tasks, readings, assignments, exams, or deadlines, answer from the tasks/deadlines list. Match items by topic and keywords — e.g. "cs reading" or "next reading" matches a task titled "Finish reading RAG paper". Do NOT require the course code to match the page being viewed, and never refuse just because a course number (e.g. CS 101 vs CS 61B) differs from the active page.
+- If one listed item plausibly matches the question, give its title, course, and due date. If several match, briefly list them.
+- Only say the information isn't available when the relevant section is genuinely empty or contains nothing related to the question.
+- When answering from an ACTIVE PDF DOCUMENT, ground your answer in the page text provided and cite page numbers when useful.
+
+Style: concise (2-4 sentences or a short list). Use bold text, inline code backticks, and lists where appropriate.`;
 
   // 1. Sync Theme Styling Custom Skins
   syncSkinTheme();
@@ -27,6 +39,23 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // 2. Initialize and Bootstrap local Gemini Nano
   bootstrapLocalAI();
+
+  // 2.2 Listen for active tab activation and page completion to update context dynamically
+  chrome.tabs.onActivated.addListener(() => detectActiveCourseContext());
+  chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+    if (changeInfo.status === 'complete') {
+      detectActiveCourseContext();
+    }
+  });
+
+  // 2.1 Pull the latest Supabase-synced study data (todos, notes) into local
+  // storage so the RAG context reflects items added on other devices. Todos are
+  // stored local-first in chrome.storage.local and mirrored to Supabase
+  // (user_custom_todos); this merge is best-effort and silently no-ops when the
+  // user is signed out or offline.
+  try {
+    chrome.runtime.sendMessage({ action: 'csTools.pull' }, () => { void chrome.runtime.lastError; });
+  } catch (_) { /* ignore */ }
 
   // 3. Setup TextArea Auto-Resize & Enter key triggers
   userPrompt.addEventListener('input', () => {
@@ -48,6 +77,7 @@ document.addEventListener('DOMContentLoaded', () => {
   suggestButtons.forEach(btn => {
     btn.addEventListener('click', () => {
       const prompt = btn.getAttribute('data-prompt');
+      if (!prompt) return; // ignore seed button here
       userPrompt.value = prompt;
       userPrompt.style.height = 'auto';
       userPrompt.style.height = `${userPrompt.scrollHeight}px`;
@@ -55,6 +85,81 @@ document.addEventListener('DOMContentLoaded', () => {
       handleSubmit();
     });
   });
+
+  // 4.2 Setup Seed Developer Button
+  const seedBtn = document.getElementById('btn-seed-test');
+  if (seedBtn) {
+    seedBtn.addEventListener('click', async () => {
+      try {
+        const data = await chrome.storage.local.get(['customTodos']);
+        const todos = data.customTodos || [];
+        const testTodo = {
+          id: 'todo_test_rag_123',
+          title: 'Finish reading RAG paper',
+          dueAt: new Date(Date.now() + 86400000 * 3).toISOString(), // Due in 3 days
+          courseName: 'CS 101',
+          done: false,
+          createdAt: Date.now()
+        };
+        // Avoid duplicates
+        if (!todos.some(t => t.id === testTodo.id)) {
+          todos.push(testTodo);
+          await chrome.storage.local.set({ customTodos: todos });
+        }
+        
+        // Confirm write by reading again
+        const check = await chrome.storage.local.get(['customTodos']);
+        const currentTodos = check.customTodos || [];
+        
+        addSystemBubble(`🧪 **Mock Task Seeded**: Added \`"Finish reading RAG paper"\` (CS 101, due in 3 days) to storage.\n\n**Current tasks in storage:**\n\`\`\`json\n${JSON.stringify(currentTodos, null, 2)}\n\`\`\`\n\nTry asking: *"When do I need to finish reading the rag paper by?"*`);
+      } catch (e) {
+        addSystemBubble('❌ **Failed to seed task**: ' + e.message);
+      }
+    });
+  }
+
+  // 4.3 Setup "Send PDF to Lectra" button — sends the PDF detected on the
+  // active tab to Lectra via the background service worker (same backend the
+  // in-page /ls slash command uses).
+  const lectraBtn = document.getElementById('btn-lectra-send');
+  if (lectraBtn) {
+    lectraBtn.addEventListener('click', async () => {
+      lectraBtn.disabled = true;
+      const bubble = addSystemBubble('📄 **Sending the PDF on this page to Lectra…**');
+      try {
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        const res = await new Promise((resolve) => {
+          chrome.runtime.sendMessage({
+            action: 'sendPdfToLectra',
+            trigger: 'sidebar_button',
+            candidateUrl: null,
+            sourcePageUrl: tab?.url || null,
+            titleHint: tab?.title || null
+          }, (response) => resolve(response || { success: false, message: 'No response from background script.' }));
+        });
+
+        const content = bubble.querySelector('.bubble-content');
+        if (res.success) {
+          content.innerHTML = parseSimpleMarkdown('✅ **Sent to Lectra**: The PDF on this page was uploaded and queued for your Lectra iPad.');
+        } else {
+          const hint = res.code === 'feature_disabled'
+            ? ' Enable **Send to Lectra** in the Canvascope popup settings first.'
+            : res.code === 'not_signed_in' || res.code === 'auth_error'
+              ? ' Sign in via the Canvascope popup, then try again.'
+              : res.code === 'no_pdf_detected'
+                ? ' Open a Canvas PDF (or a page with a PDF) in the active tab, then retry.'
+                : '';
+          content.innerHTML = parseSimpleMarkdown(`⚠️ **Couldn't send to Lectra**: ${res.message || 'Unknown error.'}${hint}`);
+        }
+      } catch (e) {
+        const content = bubble.querySelector('.bubble-content');
+        content.innerHTML = parseSimpleMarkdown('⚠️ **Couldn\'t send to Lectra**: ' + (e.message || e));
+      } finally {
+        lectraBtn.disabled = false;
+        scrollViewport();
+      }
+    });
+  }
 
   /**
    * Automatically queries Canvascope storage and applies theme variables.
@@ -135,8 +240,26 @@ document.addEventListener('DOMContentLoaded', () => {
     const availability = await aiController.checkCapabilities();
 
     if (availability === 'unavailable') {
-      updateUIStatus('error', 'Unsupported');
-      addSystemBubble('⚠️ **Prompt API Unavailable**: Local Gemini Nano is not enabled in your browser. Ensure you are running Chrome 138+ with standard AI capabilities enabled in `chrome://flags/#optimization-guide-on-device-model`.');
+      console.log('[Canvascope AI] Local AI unavailable. Checking authentication for cloud fallback...');
+      
+      const authRes = await new Promise((resolve) => {
+        chrome.runtime.sendMessage({ type: 'checkAuthStatus' }, (response) => {
+          resolve(response || { signedIn: false });
+        });
+      });
+
+      if (authRes.signedIn) {
+        updateUIStatus('cloud', 'Cloud AI Fallback');
+        aiMode = 'cloud';
+        aiSessionReady = true;
+        sendBtn.disabled = !userPrompt.value.trim();
+        detectActiveCourseContext();
+        
+        addSystemBubble('🌐 **Cloud Fallback Active**: Canvascope is routing AI requests securely to a cloud-based Gemini 2.5 Flash model through your Supabase account. Processing is secure and fully compatible.');
+      } else {
+        updateUIStatus('error', 'Auth Required');
+        addSystemBubble('⚠️ **Login Required for AI Fallback**: Local Gemini Nano is unavailable on this browser. Canvascope can securely fallback to **Cloud AI**, but it requires a signed-in session. Click the Canvascope extension icon to **sign in**.');
+      }
       return;
     }
 
@@ -159,21 +282,15 @@ document.addEventListener('DOMContentLoaded', () => {
     loadSession();
   }
 
-  /**
-   * Creates a dedicated local session with initial system instructions.
-   */
   async function loadSession() {
     updateUIStatus('checking', 'Starting session...');
     
-    const systemPrompt = `You are a helpful, offline academic study assistant running local-first in the Canvascope Chrome extension.
-Answer queries concisely and explain complex topics in 2-3 structured sentences. Use bold text, inline code backticks, or lists where appropriate.
-If context is provided, use it directly to answer. Otherwise, respond using your core knowledge base.`;
-
-    const success = await aiController.initSession(systemPrompt);
+    const success = await aiController.initSession(SYSTEM_INSTRUCTION);
 
     if (success) {
       updateUIStatus('ready', 'Gemini Nano Ready');
       aiSessionReady = true;
+      aiMode = 'local';
       sendBtn.disabled = !userPrompt.value.trim();
       detectActiveCourseContext();
     } else {
@@ -196,13 +313,17 @@ If context is provided, use it directly to answer. Otherwise, respond using your
   async function detectActiveCourseContext() {
     try {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      if (!tab) {
+      if (!tab || !tab.url) {
         contextLabel.textContent = 'Open LMS Tab to Sync Context';
+        restoreDefaultSuggestions();
         return;
       }
 
       // Check supported LMS domains
       const url = tab.url || '';
+      const cleanUrl = url.toLowerCase().split('?')[0].split('#')[0];
+      const isDirectPdf = cleanUrl.endsWith('.pdf') || url.toLowerCase().includes('application/pdf');
+
       const isLms = url.includes('instructure.com') || 
                     url.includes('brightspace.com') || 
                     url.includes('d2l.com') ||
@@ -210,11 +331,47 @@ If context is provided, use it directly to answer. Otherwise, respond using your
                     url.includes('ucla.edu') || 
                     url.includes('ucsd.edu') || 
                     url.includes('mit.edu') ||
-                    url.includes('asu.edu');
+                    url.includes('asu.edu') ||
+                    isDirectPdf;
 
       if (!isLms) {
         contextLabel.textContent = 'Active outside LMS portal';
+        restoreDefaultSuggestions();
         return;
+      }
+
+      // 1. Determine if a PDF is active (direct or embedded)
+      let isPdf = isDirectPdf;
+      if (!isPdf) {
+        try {
+          const [{ result }] = await chrome.scripting.executeScript({
+            target: { tabId: tab.id },
+            func: () => {
+              const el = document.querySelector('embed[src], object[data], iframe[src]');
+              if (el) {
+                const src = el.getAttribute('src') || el.getAttribute('data') || '';
+                if (src.toLowerCase().includes('.pdf') || src.toLowerCase().includes('/files/') || src.toLowerCase().includes('/download')) {
+                  return true;
+                }
+              }
+              const attachment = document.querySelector('a.iframe_required, a[href*=".pdf"], a[href*="/files/"][href*="/download"]');
+              if (attachment) {
+                return true;
+              }
+              return false;
+            }
+          });
+          isPdf = !!result;
+        } catch (scriptError) {
+          console.warn('[Canvascope AI] Failed to check for embedded PDF:', scriptError);
+        }
+      }
+
+      // 2. Adjust suggestions based on PDF status
+      if (isPdf) {
+        applyPdfSuggestions();
+      } else {
+        restoreDefaultSuggestions();
       }
 
       // Sync active context details
@@ -223,9 +380,36 @@ If context is provided, use it directly to answer. Otherwise, respond using your
         // Strip common Canvas prefixes/suffixes to keep label compact
         contextName = tab.title.split(':').pop().split('|')[0].trim();
       }
-      contextLabel.textContent = `Attached: ${contextName}`;
+      contextLabel.textContent = isPdf ? `Attached PDF: ${contextName}` : `Attached: ${contextName}`;
     } catch (e) {
       contextLabel.textContent = 'Attached: General Context';
+      restoreDefaultSuggestions();
+    }
+  }
+
+  function applyPdfSuggestions() {
+    if (suggestButtons.length >= 3) {
+      suggestButtons[0].textContent = "📝 Summarize PDF Document";
+      suggestButtons[0].setAttribute('data-prompt', "Provide a comprehensive summary of this active PDF document.");
+
+      suggestButtons[1].textContent = "📅 Extract Tasks from PDF";
+      suggestButtons[1].setAttribute('data-prompt', "Identify and list all key due dates, milestones, and deliverables inside this PDF document.");
+
+      suggestButtons[2].textContent = "🧠 Practice Quiz on PDF";
+      suggestButtons[2].setAttribute('data-prompt', "Create a 3-question conceptual practice quiz based on the contents of this PDF document.");
+    }
+  }
+
+  function restoreDefaultSuggestions() {
+    if (suggestButtons.length >= 3) {
+      suggestButtons[0].textContent = "📝 Summarize Assignment";
+      suggestButtons[0].setAttribute('data-prompt', "Summarize the active assignment page");
+
+      suggestButtons[1].textContent = "📅 Extract Tasks";
+      suggestButtons[1].setAttribute('data-prompt', "What are the key deadlines and tasks on this page?");
+
+      suggestButtons[2].textContent = "🧠 Quick Practice Quiz";
+      suggestButtons[2].setAttribute('data-prompt', "Generate a 3-question conceptual quiz from this page context");
     }
   }
 
@@ -241,6 +425,7 @@ If context is provided, use it directly to answer. Otherwise, respond using your
     `;
     chatHistory.appendChild(bubble);
     scrollViewport();
+    return bubble;
   }
 
   /**
@@ -273,42 +458,20 @@ If context is provided, use it directly to answer. Otherwise, respond using your
     bubbleContent.appendChild(loader);
     scrollViewport();
 
-    // 4. Scrape active page text to inject as local-first context
-    let activePageContext = '';
+    // 4 & 5. Compile Prompt with Context (Dual-Source RAG Pipeline)
+    let fullPrompt = prompt;
     try {
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      if (tab && tab.url) {
-        const [{ result }] = await chrome.scripting.executeScript({
-          target: { tabId: tab.id },
-          func: () => {
-            // Clones body to safely strip non-essential nodes
-            const body = document.body.cloneNode(true);
-            body.querySelectorAll('script, style, nav, footer, header, #canvascope-slash-root').forEach(el => el.remove());
-            return body.innerText.substring(0, 3000); // Grab a sensible chunk
-          }
-        });
-        activePageContext = result || '';
-      }
+      fullPrompt = await RAGCore.compileRAGPrompt(prompt);
     } catch (e) {
-      console.log('[Canvascope AI] Scraper context fetch skipped or unavailable:', e);
-    }
-
-    // 5. Compile Prompt with Context
-    let fullPrompt = '';
-    if (activePageContext) {
-      fullPrompt = `=== CONTEXT FROM THE ACTIVE PAGE ===
-${activePageContext}
-
-=== QUESTION ===
-Using the page context above, answer the student's request: ${prompt}`;
-    } else {
-      fullPrompt = prompt;
+      console.warn('[Canvascope AI] RAG Context compilation failed, falling back to raw prompt:', e);
     }
 
     // 6. Execute Streaming
+    let fullResponse = '';
     try {
-      let fullResponse = '';
-      const stream = aiController.promptStream(fullPrompt);
+      const stream = aiMode === 'cloud'
+        ? aiController.streamSupabaseProxy(fullPrompt, SYSTEM_INSTRUCTION)
+        : aiController.promptStream(fullPrompt);
 
       for await (const chunk of stream) {
         // Clear loader on first token

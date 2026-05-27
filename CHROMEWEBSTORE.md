@@ -1,6 +1,6 @@
 # Chrome Web Store Listing — Canvascope
 
-> Last Updated: 2026-05-23
+> Last Updated: 2026-05-27
 
 ## Store Listing
 
@@ -142,6 +142,7 @@ support@canvascope.com
 
 | Version | Date | Changes | Status |
 |---------|------|---------|--------|
+| 8.0.0 | 2026-05-27 | Major Release: Integrated local academic companion AI powered by offline Gemini Nano (and secure cloud fallback). Features local hybrid RAG search blending exact lexical matching and semantic concept projection via Reciprocal Rank Fusion (RRF). Added native page-by-page PDF parsing, automatic file caches, dynamic contextual Recommendations, and persistent index-level search over closed documents. | Draft (Ready) |
 | 7.0.0 | 2026-05-23 | Introduced customizable dark and high-contrast skin themes for Berkeley bCourses, UCLA BruinLearn, and UCSD Canvas. Reorganized project test structures for streamlined releases. Resolved Node ESM parsing warnings. | Published |
 | 6.0.0 | 2026-05-22 | Refined search relevance, RRF hybrid retrieval rankings, and task planner overlay hotkey states. | Published |
 | 2.2.0 | 2026-03-07 | Integrated Lectra PDF handoff engine, realtime offscreen receiver, and DropBridge v2 communication bridges. | Published |

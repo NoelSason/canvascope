@@ -61,8 +61,18 @@
   }
 
   async function saveArray(key, arr) {
-    try { await chrome.storage.local.set({ [key]: Array.isArray(arr) ? arr : [] }); } catch { /* ignore */ }
+    let ok = false;
+    try {
+      await chrome.storage.local.set({ [key]: Array.isArray(arr) ? arr : [] });
+      ok = true;
+    } catch (e) {
+      // Common cause: the content script was detached after an extension reload,
+      // which severs chrome.* until the page is refreshed. Surface it so callers
+      // can warn the user instead of silently "succeeding".
+      console.warn('[Canvascope Academic] Storage write failed for', key, e);
+    }
     try { chrome.runtime.sendMessage({ action: 'csTools.push', key, value: arr }); } catch { /* ignore */ }
+    return ok;
   }
 
   // -------------------------------------------------------------------------
@@ -484,8 +494,8 @@
       createdAt: Date.now()
     };
     todos.unshift(todo);
-    await saveArray(STORE_TODOS, todos);
-    return todo;
+    const ok = await saveArray(STORE_TODOS, todos);
+    return ok ? todo : null;
   }
 
   async function toggleTodoDone(id) {

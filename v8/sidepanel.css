@@ -134,6 +134,16 @@ body {
   box-shadow: 0 0 8px var(--status-ready);
 }
 
+.status-cloud {
+  background: rgba(99, 102, 241, 0.15);
+  color: #a5b4fc;
+  border-color: rgba(99, 102, 241, 0.3);
+}
+.status-cloud .status-dot {
+  background-color: #6366f1;
+  box-shadow: 0 0 8px #6366f1;
+}
+
 .status-error {
   background: rgba(239, 68, 68, 0.1);
   color: var(--status-error);
