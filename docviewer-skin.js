@@ -44,17 +44,17 @@
   });
 
   const DARK_FALLBACK_TOKENS = Object.freeze({
-    bg: '#16151a',
-    bgSoft: '#1c1b22',
-    surface: '#20202a',
-    surface2: '#272731',
-    border: 'rgba(255,255,255,0.05)',
-    borderHi: 'rgba(255,255,255,0.10)',
-    text: '#ece9f1',
-    textDim: '#b6b0c2',
-    muted: '#7c7689',
-    accent: '#a890e8',
-    accentText: '#1a1623'
+    bg: '#0a0a0d',
+    bgSoft: '#0e0e12',
+    surface: '#14141a',
+    surface2: '#1b1b22',
+    border: '#22222a',
+    borderHi: '#32323c',
+    text: '#ececef',
+    textDim: '#9b9ba6',
+    muted: '#65656f',
+    accent: '#b9a5ff',
+    accentText: '#181226'
   });
 
   function isDocViewerFrame() {

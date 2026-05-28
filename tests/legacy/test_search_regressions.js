@@ -4,7 +4,15 @@ const vm = require('vm');
 
 const Fuse = require('./lib/fuse.min.js');
 
-const EXPORT_PATH = path.join(__dirname, '..', 'BerkeleyCanvascopeExport.json');
+function resolveFixturePath(filename) {
+  const candidates = [
+    path.join(__dirname, filename),
+    path.join(__dirname, '..', filename)
+  ];
+  return candidates.find(candidate => fs.existsSync(candidate)) || candidates[0];
+}
+
+const EXPORT_PATH = resolveFixturePath('BerkeleyCanvascopeExport.json');
 const FIXED_NOW = '2026-03-15T12:00:00-07:00';
 
 function makeElement() {
@@ -169,6 +177,22 @@ function createSearchHarness(indexedContent) {
       return globalThis.__lastResults;
     };
 
+    globalThis.__runOverlayInput = (query) => {
+      state.isOverlayMode = true;
+      elements.searchInput.value = query;
+      globalThis.__lastResults = null;
+      handleSearchInput({ target: { value: query } });
+      const snapshot = {
+        resultCount: Array.isArray(globalThis.__lastResults) ? globalThis.__lastResults.length : 0,
+        firstTitle: Array.isArray(globalThis.__lastResults) && globalThis.__lastResults[0] ? globalThis.__lastResults[0].title : null,
+        searchTimeoutActive: Boolean(state.searchTimeout),
+        sideEffectTimeoutActive: Boolean(state.searchSideEffectTimeout)
+      };
+      clearScheduledSearch();
+      clearScheduledSearchSideEffects();
+      return snapshot;
+    };
+
     globalThis.__describeTask = (title, courseName = null) => {
       const item = state.indexedContent.find((candidate) => {
         if (candidate.title !== title) return false;
@@ -189,6 +213,9 @@ function createSearchHarness(indexedContent) {
   return {
     run(query) {
       return vm.runInContext(`__runSearch(${JSON.stringify(query)})`, context);
+    },
+    input(query) {
+      return vm.runInContext(`__runOverlayInput(${JSON.stringify(query)})`, context);
     },
     describeTask(title, courseName = null) {
       return vm.runInContext(`__describeTask(${JSON.stringify(title)}, ${JSON.stringify(courseName)})`, context);
@@ -474,5 +501,30 @@ const pdfBodyRecallHarness = createSearchHarness([
 const pdfBodyRecallResults = pdfBodyRecallHarness.run('balcony seating chart');
 assert(Array.isArray(pdfBodyRecallResults) && pdfBodyRecallResults.length > 0, 'Expected body-only PDF content recall results.');
 assert(pdfBodyRecallResults[0].title === '3BL Lab Exam Seating Arrangements - Spring 2026.pdf', 'Expected Cmd+K search to find a PDF by text that exists only in its persisted body content.');
+
+const overlaySchedulerHarness = createSearchHarness([
+  {
+    title: 'PLWS 10',
+    url: 'https://example.edu/courses/chem3b/assignments/plws-10',
+    type: 'assignment',
+    courseName: 'Chem 3B (Fall 2025)',
+    folderPath: 'Assignments'
+  },
+  {
+    title: 'Practice Lecture Worksheet',
+    url: 'https://example.edu/courses/chem3b/files/practice-worksheet',
+    type: 'file',
+    courseName: 'Chem 3B (Fall 2025)',
+    folderPath: 'Files'
+  }
+]);
+const oneCharOverlayInput = overlaySchedulerHarness.input('p');
+assert(oneCharOverlayInput.resultCount > 0, 'Expected one-character Cmd+K input to render a fast preview.');
+assert(oneCharOverlayInput.searchTimeoutActive === false, 'Expected one-character Cmd+K input to skip the full Fuse/ranking search.');
+assert(oneCharOverlayInput.sideEffectTimeoutActive === false, 'Expected hot Cmd+K input to avoid storage/network side effects.');
+const twoCharOverlayInput = overlaySchedulerHarness.input('pl');
+assert(twoCharOverlayInput.resultCount > 0, 'Expected two-character Cmd+K input to render a fast preview immediately.');
+assert(twoCharOverlayInput.searchTimeoutActive === true, 'Expected two-character Cmd+K input to schedule, not synchronously run, the full search.');
+assert(twoCharOverlayInput.sideEffectTimeoutActive === false, 'Expected scheduled Cmd+K search input to defer side effects until after the full search settles.');
 
 console.log('PASS test_search_regressions');

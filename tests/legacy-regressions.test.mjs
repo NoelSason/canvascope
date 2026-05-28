@@ -19,8 +19,30 @@ const scripts = [
   'test_weekly_habits.js'
 ];
 
+const externalFixturesByScript = {
+  'test_search_regressions.js': ['BerkeleyCanvascopeExport.json'],
+  'test_temporal_lab.js': ['BerkeleyCanvascopeExport.json', 'UCSDCanvascopeExport.json']
+};
+
+function findExternalFixture(filename) {
+  const candidates = [
+    path.join(rootDir, filename),
+    path.join(path.dirname(rootDir), filename)
+  ];
+  return candidates.find(candidate => fs.existsSync(candidate)) || null;
+}
+
 for (const script of scripts) {
-  test(`legacy regression script passes: ${script}`, { timeout: 300_000 }, () => {
+  const requiredFixtures = externalFixturesByScript[script] || [];
+  const missingFixtures = requiredFixtures.filter(filename => !findExternalFixture(filename));
+  const testOptions = missingFixtures.length > 0
+    ? {
+        timeout: 300_000,
+        skip: `requires external fixture(s): ${missingFixtures.join(', ')}`
+      }
+    : { timeout: 300_000 };
+
+  test(`legacy regression script passes: ${script}`, testOptions, () => {
     const srcPath = path.join(rootDir, 'tests', 'legacy', script);
     const destPath = path.join(rootDir, script);
 
@@ -57,4 +79,3 @@ for (const script of scripts) {
     }
   });
 }
-

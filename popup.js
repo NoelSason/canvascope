@@ -83,7 +83,8 @@ const CUSTOM_ALGORITHM_WARNING = 'Custom Algorithm is experimental. It changes h
 
 const MAX_RESULTS = 20;
 const SEARCH_DEBOUNCE_MS = 150;
-const OVERLAY_SEARCH_DEBOUNCE_MS = 75;
+const OVERLAY_SEARCH_DEBOUNCE_MS = 220;
+const SEARCH_SIDE_EFFECT_DEBOUNCE_MS = 900;
 const PDF_BODY_SEARCH_LIMIT = 12000;
 const BODY_RECALL_MIN_TOKEN_LENGTH = 5;
 const MAX_HISTORY = 10;
@@ -1425,11 +1426,11 @@ function renderDuePlanner() {
   }
 
   const sections = [
-    { key: 'overdue', label: '⚠ Overdue', items: buckets.overdue, cls: 'overdue' },
-    { key: 'today', label: '📅 Due Today', items: buckets.today, cls: 'today' },
-    { key: 'next7Days', label: '📋 Next 7 Days', items: buckets.next7Days, cls: 'upcoming' },
-    { key: 'undated', label: '❓ No Due Date', items: buckets.undated, cls: 'undated' },
-    { key: 'completed', label: '✓ Completed', items: buckets.completed, cls: 'completed' }
+    { key: 'overdue', label: 'Overdue', items: buckets.overdue, cls: 'overdue' },
+    { key: 'today', label: 'Due Today', items: buckets.today, cls: 'today' },
+    { key: 'next7Days', label: 'Next 7 Days', items: buckets.next7Days, cls: 'upcoming' },
+    { key: 'undated', label: 'No Due Date', items: buckets.undated, cls: 'undated' },
+    { key: 'completed', label: 'Completed', items: buckets.completed, cls: 'completed' }
   ];
 
   for (const sec of sections) {
@@ -1658,6 +1659,47 @@ function numberVariants(text) {
 
 function getSearchDebounceMs() {
   return state.isOverlayMode ? OVERLAY_SEARCH_DEBOUNCE_MS : SEARCH_DEBOUNCE_MS;
+}
+
+function clearScheduledSearch() {
+  if (state.searchTimeout) {
+    clearTimeout(state.searchTimeout);
+    state.searchTimeout = null;
+  }
+
+  if (state.searchFrame && typeof cancelAnimationFrame === 'function') {
+    cancelAnimationFrame(state.searchFrame);
+    state.searchFrame = 0;
+  }
+}
+
+function clearScheduledSearchSideEffects() {
+  if (state.searchSideEffectTimeout) {
+    clearTimeout(state.searchSideEffectTimeout);
+    state.searchSideEffectTimeout = null;
+  }
+}
+
+function scheduleSearchSideEffects(query, normalizedQuery) {
+  clearScheduledSearchSideEffects();
+
+  const cleanQuery = String(query || '').trim();
+  if (cleanQuery.length < 2) return;
+
+  const expectedGeneration = state.searchGeneration;
+  state.searchSideEffectTimeout = setTimeout(() => {
+    state.searchSideEffectTimeout = null;
+    const liveQuery = String(elements.searchInput?.value || '').trim();
+    if (expectedGeneration !== state.searchGeneration || liveQuery !== cleanQuery) return;
+
+    trackAdaptiveQuerySubmission(cleanQuery, normalizedQuery || cleanQuery);
+
+    if (!state.isOverlayMode) {
+      void loadBackendAdaptiveSuggestions({ prefix: cleanQuery });
+    }
+
+    void saveSearchToHistory(cleanQuery);
+  }, SEARCH_SIDE_EFFECT_DEBOUNCE_MS);
 }
 
 function buildBoundaryMatcher(token) {
@@ -3145,6 +3187,9 @@ let state = {
   indexedContent: [],
   filteredContent: [],
   searchTimeout: null,
+  searchFrame: 0,
+  searchGeneration: 0,
+  searchSideEffectTimeout: null,
   isScanning: false,
   filters: {
     course: [],
@@ -3850,7 +3895,8 @@ const csV2 = (() => {
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 17L17 7M9 7h8v8" stroke-linecap="round"/></svg>
             </button>
             <button class="cs-btn cs-btn--ghost" type="button" data-cs-upnext-pin>
-              ${isPinned(item) ? '★ Pinned' : '☆ Pin'}
+              <span class="cs-pin-inline-icon" aria-hidden="true"></span>
+              <span class="cs-pin-inline-label"></span>
             </button>
           </div>
         </div>
@@ -3862,11 +3908,13 @@ const csV2 = (() => {
       mount.querySelector('[data-cs-countdown]').textContent = formatUpNextDue(readout);
 
       mount.querySelector('[data-cs-upnext-open]').addEventListener('click', (e) => openResult(item, e));
-      mount.querySelector('[data-cs-upnext-pin]').addEventListener('click', async (e) => {
+      const upNextPinBtn = mount.querySelector('[data-cs-upnext-pin]');
+      setPinButtonVisual(upNextPinBtn, isPinned(item), { withLabel: true });
+      upNextPinBtn.addEventListener('click', async (e) => {
         e.preventDefault();
         const btn = e.currentTarget;
         await togglePin(item);
-        btn.textContent = isPinned(item) ? '★ Pinned' : '☆ Pin';
+        setPinButtonVisual(btn, isPinned(item), { withLabel: true });
       });
       mount.querySelector('[data-cs-upnext-dismiss]').addEventListener('click', async (e) => {
         e.preventDefault();
@@ -4101,6 +4149,25 @@ const csV2 = (() => {
   }
 
   // ---- PINNED ROW -----------------------------------------------------------
+  function pinStarSvg(pinned = false) {
+    const fill = pinned ? 'currentColor' : 'none';
+    return `<svg viewBox="0 0 24 24" fill="${fill}" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l2.7 5.5 6 .9-4.4 4.2 1 6-5.3-2.8-5.3 2.8 1-6-4.4-4.2 6-.9z"/></svg>`;
+  }
+
+  function setPinButtonVisual(btn, pinned, options = {}) {
+    if (!btn) return;
+    btn.classList.toggle('is-pinned', !!pinned);
+    btn.setAttribute('aria-label', pinned ? 'Unpin item' : 'Pin item');
+    if (options.withLabel) {
+      const icon = btn.querySelector('.cs-pin-inline-icon');
+      const label = btn.querySelector('.cs-pin-inline-label');
+      if (icon) icon.innerHTML = pinStarSvg(pinned);
+      if (label) label.textContent = pinned ? 'Pinned' : 'Pin';
+      return;
+    }
+    btn.innerHTML = pinStarSvg(pinned);
+  }
+
   function renderPinnedRow() {
     const row = document.getElementById('cs-pinned-row');
     if (!row || state.isOverlayMode) return;
@@ -4123,7 +4190,7 @@ const csV2 = (() => {
 
       const star = document.createElement('span');
       star.className = 'cs-pin-pill-star';
-      star.textContent = '★';
+      star.innerHTML = pinStarSvg(true);
 
       const title = document.createElement('span');
       title.className = 'cs-pin-pill-title';
@@ -4179,16 +4246,13 @@ const csV2 = (() => {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'cs-pin-toggle' + (isPinned(item) ? ' is-pinned' : '');
-    btn.setAttribute('aria-label', isPinned(item) ? 'Unpin item' : 'Pin item');
-    btn.textContent = isPinned(item) ? '★' : '☆';
+    setPinButtonVisual(btn, isPinned(item));
     btn.addEventListener('click', async (e) => {
       e.stopPropagation();
       e.preventDefault();
       await togglePin(item, { fromButton: btn });
       const pinned = isPinned(item);
-      btn.classList.toggle('is-pinned', pinned);
-      btn.textContent = pinned ? '★' : '☆';
-      btn.setAttribute('aria-label', pinned ? 'Unpin item' : 'Pin item');
+      setPinButtonVisual(btn, pinned);
     });
     return btn;
   }
@@ -4218,8 +4282,7 @@ const csV2 = (() => {
       const item = guessItemFromNode(node);
       if (!item) return;
       const pinned = isPinned(item);
-      btn.classList.toggle('is-pinned', pinned);
-      btn.textContent = pinned ? '★' : '☆';
+      setPinButtonVisual(btn, pinned);
     });
   }
 
@@ -5426,10 +5489,8 @@ function syncSlashModeFromRawInput(rawValue) {
     return false;
   }
 
-  if (state.searchTimeout) {
-    clearTimeout(state.searchTimeout);
-    state.searchTimeout = null;
-  }
+  clearScheduledSearch();
+  clearScheduledSearchSideEffects();
 
   const displayValue = incomingValue.startsWith('/') ? incomingValue.slice(1) : incomingValue;
   const nextRawValue = `/${displayValue}`;
@@ -6647,17 +6708,103 @@ function populateCourseFilter() {
   updateCourseFilterTriggerText();
 }
 
+function getFastOverlayScore(item, tokens, query) {
+  const runtime = getItemSearchRuntime(item);
+  const title = runtime.titleText || '';
+  const context = `${runtime.courseText || ''} ${runtime.pathText || ''} ${runtime.moduleText || ''} ${runtime.aliasText || ''}`.trim();
+  if ((!title && !context) || tokens.length === 0) return 0;
+
+  let hits = 0;
+  let score = 0;
+  for (const token of tokens) {
+    if (title === token || title.startsWith(token)) {
+      hits += 1;
+      score += 5;
+    } else if (title.includes(token)) {
+      hits += 1;
+      score += 3;
+    } else if (context.includes(token)) {
+      hits += 1;
+      score += 1;
+    }
+  }
+
+  if (hits === 0) return 0;
+  if (title === query) score += 8;
+  if (title.startsWith(query)) score += 4;
+  score += hits / tokens.length;
+  score -= Math.min(title.length, 120) / 600;
+  return score;
+}
+
+function runFastOverlayPreview(query) {
+  if (!state.isOverlayMode || !state.filteredContent.length) return false;
+
+  const start = performance.now();
+  const normalized = normalizeText(expandAbbreviations(query)).toLowerCase();
+  const tokens = normalized
+    .split(/\s+/)
+    .filter(token => token.length > 0 && (token.length > 1 || !STOP_TOKENS.has(token)));
+  if (tokens.length === 0) return false;
+
+  const scored = [];
+  for (const item of state.filteredContent) {
+    const score = getFastOverlayScore(item, tokens, normalized);
+    if (score > 0) scored.push({ item, score, prePass: false, fastPreview: true });
+  }
+
+  scored.sort((a, b) => b.score - a.score);
+  const results = scored.slice(0, MAX_RESULTS);
+  if (results.length === 0) {
+    showNoResults(`No results for "${query}"`);
+    updateOverlayFooter(0, Math.round(performance.now() - start));
+    return true;
+  }
+
+  if (currentUiState !== UI_STATE.SEARCHING) {
+    setUiState(UI_STATE.SEARCHING);
+  }
+  displayResults(results);
+  updateOverlayFooter(results.length, Math.round(performance.now() - start));
+  return true;
+}
+
+function scheduleFullSearch(query) {
+  const generation = state.searchGeneration;
+  state.searchTimeout = setTimeout(() => {
+    state.searchTimeout = null;
+    if (generation !== state.searchGeneration) return;
+
+    const run = () => {
+      state.searchFrame = 0;
+      if (generation !== state.searchGeneration) return;
+      if (String(elements.searchInput?.value || '').trim() !== query) return;
+      performSearch(query, { generation });
+    };
+
+    if (typeof requestAnimationFrame === 'function') {
+      state.searchFrame = requestAnimationFrame(run);
+    } else {
+      run();
+    }
+  }, getSearchDebounceMs());
+}
+
 function handleSearchInput(event) {
   const rawValue = String(event.target.value || '');
 
   const query = rawValue.trim();
+  state.searchGeneration += 1;
   updateSearchFieldAffordances();
   hideSearchHistory();
-  renderQuerySuggestions(query);
-
-  if (state.searchTimeout) {
-    clearTimeout(state.searchTimeout);
+  if (state.isOverlayMode) {
+    hideQuerySuggestions();
+  } else {
+    renderQuerySuggestions(query);
   }
+
+  clearScheduledSearch();
+  clearScheduledSearchSideEffects();
 
   if (query.length === 0) {
     setUiState(state.isScanning ? UI_STATE.SCAN_SYNCING : UI_STATE.READY);
@@ -6666,9 +6813,14 @@ function handleSearchInput(event) {
     return;
   }
 
-  state.searchTimeout = setTimeout(() => {
-    performSearch(query);
-  }, getSearchDebounceMs());
+  if (state.isOverlayMode) {
+    runFastOverlayPreview(query);
+    if (query.length < 2) {
+      return;
+    }
+  }
+
+  scheduleFullSearch(query);
 }
 
 /**
@@ -6748,6 +6900,9 @@ function renderQuerySuggestions(prefix) {
 
 function applyQuerySuggestion(query) {
   if (!elements.searchInput) return;
+  state.searchGeneration += 1;
+  clearScheduledSearch();
+  clearScheduledSearchSideEffects();
   elements.searchInput.value = query;
   elements.searchInput.focus();
   if (elements.clearSearchBtn) elements.clearSearchBtn.classList.add('visible');
@@ -6762,7 +6917,9 @@ function hideQuerySuggestions() {
   row.replaceChildren();
 }
 
-function performSearch(query) {
+function performSearch(query, options = {}) {
+  if (options.generation && options.generation !== state.searchGeneration) return;
+
   if (!state.fuse) {
     showNoResults('No content indexed yet. Open Canvas or Brightspace to sync!');
     updateOverlayFooter(0, 0);
@@ -6802,8 +6959,6 @@ function performSearch(query) {
     rankingQuery,
     weeklyHabitBoostQuery
   });
-  trackAdaptiveQuerySubmission(query, queryMeta.rankingQuery);
-  void loadBackendAdaptiveSuggestions();
   if (typoTolerantQuery.corrections.length > 0) {
     const correctionSummary = typoTolerantQuery.corrections.map(c => `${c.from}->${c.to}`).join(', ');
     console.log(`[Canvascope] Typo-tolerant query rewrite: "${normalizedQuery}" => "${rankingQuery}" (${correctionSummary})`);
@@ -7211,8 +7366,11 @@ function performSearch(query) {
   // Single-line diagnostic
   console.log(`[Canvascope] query="${query}" intent=${JSON.stringify(intent)} nums=[${queryNums}] implicitWeek=${implicitCurrentWeekContext.enabled} weeklyBoost="${weeklyHabitBoostQuery || ''}" results=${results.length} ${searchTimeMs}ms`);
 
-  // Save to history (original query, not normalized)
-  saveSearchToHistory(query);
+  // Search history, backend suggestions, and adaptive telemetry are delayed so
+  // the hot Cmd+K keystroke path never writes storage or sends messages.
+  if (!options.skipSideEffects) {
+    scheduleSearchSideEffects(query, queryMeta.rankingQuery);
+  }
 }
 
 /**
@@ -8036,6 +8194,10 @@ function isValidCanvasUrl(url) {
 }
 
 function clearSearch() {
+  state.searchGeneration += 1;
+  clearScheduledSearch();
+  clearScheduledSearchSideEffects();
+
   if (state.slashMode.active) {
     exitSlashMode({ clearInput: true, focusInput: true });
     return;
@@ -8660,22 +8822,22 @@ function showBrowseCategory(type, items) {
 }
 
 // ============================================
-// DIRECTION B — Calm Productivity enhancements
+// Canvascope v8 — surgical command UI enhancements
 // ============================================
 (function csDirectionB() {
   'use strict';
 
   const COURSE_PALETTE = [
-    '#4ea874', // green
-    '#d18b4a', // orange
-    '#5d8bd9', // blue
-    '#a070d0', // purple
-    '#d05c7a', // pink
-    '#e8b87a', // amber
-    '#7cc296', // mint
-    '#a890e8', // plum
-    '#e88a8a', // coral
-    '#5fbac4', // teal
+    '#6fce9a', // green
+    '#e8b770', // amber
+    '#7fa2e6', // blue
+    '#b9a5ff', // violet
+    '#e57373', // red
+    '#92d4c8', // mint
+    '#d59bd8', // mauve
+    '#a8c27a', // olive
+    '#d99a7b', // clay
+    '#8fc3e8', // sky
   ];
 
   function hashStr(s) {

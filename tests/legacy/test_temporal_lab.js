@@ -10,6 +10,14 @@
 const fs = require('fs');
 const path = require('path');
 
+function resolveFixturePath(filename) {
+  const candidates = [
+    path.join(__dirname, filename),
+    path.join(__dirname, '..', filename)
+  ];
+  return candidates.find(candidate => fs.existsSync(candidate)) || candidates[0];
+}
+
 // ── Copied helper functions from popup.js ──
 
 const ABBREV_MAP = {
@@ -312,8 +320,8 @@ function makeTemporalAnchors(courseFilter, titleFilter) {
 }
 
 // ── Load data ──
-const berkeleyPath = path.join(__dirname, '..', 'BerkeleyCanvascopeExport.json');
-const ucsdPath = path.join(__dirname, '..', 'UCSDCanvascopeExport.json');
+const berkeleyPath = resolveFixturePath('BerkeleyCanvascopeExport.json');
+const ucsdPath = resolveFixturePath('UCSDCanvascopeExport.json');
 const berkeleyData = JSON.parse(fs.readFileSync(berkeleyPath, 'utf8'));
 const ucsdData = JSON.parse(fs.readFileSync(ucsdPath, 'utf8'));
 

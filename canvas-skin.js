@@ -2477,9 +2477,10 @@ ${themesApi.buildCssVariables(merged)}
   right: 8px;
   z-index: 5;
   padding: 3px 8px;
-  border-radius: 999px;
-  background: rgba(0,0,0,0.55);
-  color: #fff;
+  border-radius: 6px;
+  background: rgba(7, 9, 15, 0.78);
+  color: #edf0f8;
+  border: 1px solid rgba(255,255,255,0.10);
   font-family: 'Geist Mono', ui-monospace, Menlo, monospace;
   font-size: 11px;
   font-weight: 600;
@@ -2493,12 +2494,12 @@ ${themesApi.buildCssVariables(merged)}
   width: 440px;
   max-height: 340px;
   overflow: auto;
-  background: var(--cs-skin-surface, #1c1b22);
-  color: var(--cs-skin-text, #ece9f1);
-  border: 1px solid var(--cs-skin-border-hi, rgba(255,255,255,0.10));
-  border-radius: 12px;
-  box-shadow: 0 18px 40px rgba(0,0,0,0.40);
-  font-family: var(--cs-skin-fontfamily, 'Geist','Inter',system-ui,sans-serif);
+  background: var(--cs-skin-surface, #0b0e15);
+  color: var(--cs-skin-text, #edf0f8);
+  border: 1px solid var(--cs-skin-border-hi, #32384a);
+  border-radius: 8px;
+  box-shadow: 0 18px 48px rgba(0,0,0,0.46);
+  font-family: var(--cs-skin-fontfamily, 'Geist', -apple-system, BlinkMacSystemFont, system-ui, sans-serif);
   font-size: 13px;
   padding: 14px 16px;
   z-index: 2147483640;
@@ -2509,29 +2510,29 @@ ${themesApi.buildCssVariables(merged)}
   margin-bottom: 6px;
 }
 .cs-skin-preview__kind {
-  font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em;
-  color: var(--cs-skin-accent, #a890e8);
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0;
+  color: var(--cs-skin-accent, #b297ff);
   font-weight: 600;
 }
 .cs-skin-preview__title {
-  font-weight: 600; color: var(--cs-skin-text, #ece9f1);
+  font-weight: 600; color: var(--cs-skin-text, #edf0f8);
   flex: 1;
 }
 .cs-skin-preview__due {
-  font-size: 11px; color: var(--cs-skin-text-dim, #b6b0c2);
+  font-size: 11px; color: var(--cs-skin-text-dim, #a9afbf);
   margin-bottom: 8px;
 }
 .cs-skin-preview__rank {
-  font-size: 10px; color: var(--cs-skin-muted, #7c7689);
+  font-size: 10px; color: var(--cs-skin-muted, #70788a);
   font-family: 'Geist Mono', ui-monospace, monospace;
   margin-bottom: 8px;
 }
 .cs-skin-preview__body {
   font-size: 12px; line-height: 1.55;
-  color: var(--cs-skin-text-dim, #b6b0c2);
+  color: var(--cs-skin-text-dim, #a9afbf);
 }
 .cs-skin-preview__body * { max-width: 100%; }
-.cs-skin-preview__body a { color: var(--cs-skin-link, #a890e8); }
+.cs-skin-preview__body a { color: var(--cs-skin-link, #b297ff); }
 .cs-skin-preview__body img { max-width: 100%; height: auto; }
 .ic-DashboardCard { position: relative; }
 `;

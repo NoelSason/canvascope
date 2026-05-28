@@ -1,39 +1,41 @@
 /* ============================================
    Canvascope v8 — AI Side Panel
-   Purple palette · dark · soft radius · generous density
+   Surgical palette · dark · sharp/soft radius · generous density
    Geist + Geist Mono · banded header
-   Matches the shared design system (see styles.css / Direction B).
+   Matches the shared design system (Canvascope v8 handoff).
    ============================================ */
 
 :root {
-  /* ── Neutrals (purple-tinted dark) ── */
-  --cs-bg:         #16151a;
-  --cs-bg-1:       #1c1b22;
-  --cs-bg-2:       #20202a;
-  --cs-bg-3:       #272731;
-  --cs-bg-4:       #2e2e3a;
-  --cs-border:     rgba(255, 255, 255, 0.05);
-  --cs-border-hi:  rgba(255, 255, 255, 0.10);
-  --cs-border-hot: rgba(168, 144, 232, 0.30);
+  color-scheme: dark;
+
+  /* ── Neutrals (fixed v8 sidepanel dark, never paper/light inherited) ── */
+  --cs-bg:         #07090f;
+  --cs-bg-1:       #0b0e15;
+  --cs-bg-2:       #11141d;
+  --cs-bg-3:       #181c28;
+  --cs-bg-4:       #222838;
+  --cs-border:     #232837;
+  --cs-border-hi:  #32384a;
+  --cs-border-hot: rgba(178, 151, 255, 0.40);
 
   /* ── Text ── */
-  --cs-text:       #ece9f1;
-  --cs-text-2:     #b6b0c2;
-  --cs-text-3:     #7c7689;
-  --cs-text-4:     #4f4a5c;
+  --cs-text:       #edf0f8;
+  --cs-text-2:     #a9afbf;
+  --cs-text-3:     #747b8f;
+  --cs-text-4:     #4f5668;
 
-  /* ── Accent: purple ── */
-  --cs-accent:     #a890e8;
-  --cs-accent-hi:  #c1aef0;
-  --cs-accent-sat: #8a6fe0;
-  --cs-accent-lo:  rgba(168, 144, 232, 0.12);
-  --cs-on-accent:  #1a1623;
+  /* ── Accent: violet ── */
+  --cs-accent:     #b297ff;
+  --cs-accent-hi:  #cab9ff;
+  --cs-accent-sat: #8e72f0;
+  --cs-accent-lo:  rgba(178, 151, 255, 0.14);
+  --cs-on-accent:  #181226;
 
   /* ── Status ── */
-  --cs-ok:    #7cc296;
-  --cs-warn:  #e8b87a;
-  --cs-bad:   #e88a8a;
-  --cs-cloud: #a890e8;
+  --cs-ok:    #6fce9a;
+  --cs-warn:  #e8b770;
+  --cs-bad:   #e57373;
+  --cs-cloud: #b9a5ff;
 
   /* legacy aliases still referenced by inline styles in sidepanel.js */
   --cs-accent-color: var(--cs-accent);
@@ -42,10 +44,10 @@
   --status-error:    var(--cs-bad);
 
   /* ── Radius: soft ── */
-  --cs-r-1: 4px;
-  --cs-r-2: 6px;
-  --cs-r-3: 8px;
-  --cs-r-4: 10px;
+  --cs-r-1: 2px;
+  --cs-r-2: 4px;
+  --cs-r-3: 6px;
+  --cs-r-4: 8px;
 
   /* ── Density: generous ── */
   --cs-pad-x: 18px;
@@ -77,9 +79,15 @@ body {
   overflow: hidden;
   font-size: var(--cs-t-md);
   line-height: 1.5;
-  letter-spacing: -0.005em;
+  letter-spacing: 0;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+html,
+body,
+.sidepanel-container {
+  background: var(--cs-bg) !important;
 }
 
 .sidepanel-container {
@@ -94,7 +102,7 @@ body {
    HEADER (banded)
    ============================================ */
 .sidepanel-header {
-  background: var(--cs-bg-2);
+  background: var(--cs-bg-1);
   border-bottom: 1px solid var(--cs-border);
   flex-shrink: 0;
   z-index: 10;
@@ -134,7 +142,7 @@ body {
   font-family: var(--cs-f-sans);
   font-size: var(--cs-t-md);
   font-weight: 600;
-  letter-spacing: -0.01em;
+  letter-spacing: 0;
   color: var(--cs-text);
 }
 .brand-sub {
@@ -142,7 +150,7 @@ body {
   font-weight: 500;
   font-size: var(--cs-t-meta);
   text-transform: uppercase;
-  letter-spacing: 0.08em;
+  letter-spacing: 0;
   color: var(--cs-text-3);
   margin-left: 4px;
 }
@@ -159,7 +167,7 @@ body {
   font-family: var(--cs-f-mono);
   font-size: var(--cs-t-meta);
   text-transform: uppercase;
-  letter-spacing: 0.06em;
+  letter-spacing: 0;
   color: var(--cs-text-3);
 }
 .status-dot {
@@ -192,7 +200,7 @@ body {
   align-items: center;
   gap: 9px;
   padding: 9px 11px;
-  background: var(--cs-bg);
+  background: var(--cs-bg-2);
   border: 1px solid var(--cs-border);
   border-radius: var(--cs-r-2);
   color: var(--cs-text-2);
@@ -251,7 +259,7 @@ body {
   font-family: var(--cs-f-mono);
   font-size: var(--cs-t-meta);
   text-transform: uppercase;
-  letter-spacing: 0.08em;
+  letter-spacing: 0;
   color: var(--cs-text-3);
 }
 
@@ -272,6 +280,11 @@ body {
   padding-left: 14px;
 }
 .bubble-system .bubble-content { border-left-color: var(--cs-warn); }
+
+.bubble-system .bubble-content,
+.bubble-assistant .bubble-content {
+  color: var(--cs-text);
+}
 
 /* User: right aligned, quiet */
 .bubble-student { align-items: flex-end; }
@@ -328,7 +341,7 @@ body {
   font-weight: 600;
   color: var(--cs-text);
   margin-bottom: 6px;
-  letter-spacing: -0.01em;
+  letter-spacing: 0;
 }
 
 /* ============================================
@@ -337,7 +350,7 @@ body {
 .suggestions-area {
   padding: 10px var(--cs-pad-x);
   border-top: 1px solid var(--cs-border);
-  background: var(--cs-bg);
+  background: var(--cs-bg-1);
   flex-shrink: 0;
 }
 .suggestions-scroll {
@@ -379,7 +392,7 @@ body {
    ============================================ */
 .input-dock {
   padding: 12px var(--cs-pad-x) 10px;
-  background: var(--cs-bg);
+  background: var(--cs-bg-1);
   border-top: 1px solid var(--cs-border);
   flex-shrink: 0;
 }
@@ -446,7 +459,18 @@ textarea#user-prompt::placeholder { color: var(--cs-text-3); }
   font-family: var(--cs-f-mono);
   font-size: var(--cs-t-meta);
   text-transform: uppercase;
-  letter-spacing: 0.06em;
+  letter-spacing: 0;
   color: var(--cs-text-3);
 }
 .footer-privacy-badge svg { width: 11px; height: 11px; flex-shrink: 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}

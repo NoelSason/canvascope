@@ -208,6 +208,37 @@ function isSupportedLmsDomain() {
     return false;
 }
 
+// True while this content script can still reach the extension's runtime.
+// After the user reloads/upgrades the extension, every chrome.runtime.* call
+// from a previously-injected content script throws "Extension context
+// invalidated"; guard hot paths (Cmd+K, Lectra polling) with this.
+let extensionContextInvalidatedNoticeShown = false;
+function isExtensionContextValid() {
+    try {
+        return Boolean(chrome?.runtime?.id);
+    } catch (_) {
+        return false;
+    }
+}
+function notifyExtensionContextInvalidated() {
+    if (extensionContextInvalidatedNoticeShown) return;
+    extensionContextInvalidatedNoticeShown = true;
+    try {
+        const el = document.createElement('div');
+        el.id = 'canvascope-context-invalidated-toast';
+        el.textContent = 'Canvascope was updated — refresh this page to keep using it.';
+        el.style.cssText = `
+            position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
+            z-index: 2147483647; padding: 10px 16px; border-radius: 8px;
+            background: #11141d; color: #edf0f8; border: 1px solid #32384a;
+            font: 500 13px 'Geist', -apple-system, system-ui, sans-serif;
+            box-shadow: 0 12px 32px rgba(0,0,0,0.45);
+        `;
+        document.body?.appendChild(el);
+        setTimeout(() => el.remove(), 8000);
+    } catch (_) { /* DOM may be gone */ }
+}
+
 // ============================================
 // MESSAGE HANDLING
 // ============================================
@@ -674,13 +705,13 @@ function ensureLectraSendButton() {
         bottom: 96px;
         z-index: 2147483000;
         padding: 10px 14px;
-        border-radius: 12px;
-        border: 1px solid rgba(255, 255, 255, 0.24);
-        background: linear-gradient(135deg, #d43c3c 0%, #b72c2c 100%);
-        color: #fff;
+        border-radius: 6px;
+        border: 1px solid #32384a;
+        background: #11141d;
+        color: #edf0f8;
         font-size: 13px;
         font-weight: 600;
-        box-shadow: 0 10px 24px rgba(0, 0, 0, 0.32);
+        box-shadow: 0 16px 42px rgba(0, 0, 0, 0.38);
         cursor: pointer;
         transition: ${LECTRA_BUTTON_DEFAULT_TRANSITION};
         touch-action: none;
@@ -733,19 +764,25 @@ function setLectraSendButtonState(text, state = 'idle') {
         button.disabled = false;
         button.style.opacity = '1';
         button.style.cursor = 'pointer';
-        button.style.background = 'linear-gradient(135deg, #1f9f5a 0%, #187a45 100%)';
+        button.style.background = '#101b16';
+        button.style.borderColor = 'rgba(111, 206, 154, 0.45)';
+        button.style.color = '#6fce9a';
     } else if (state === 'error') {
         lectraSendButtonBusy = false;
         button.disabled = false;
         button.style.opacity = '1';
         button.style.cursor = 'pointer';
-        button.style.background = 'linear-gradient(135deg, #a43b3b 0%, #7f2a2a 100%)';
+        button.style.background = '#211216';
+        button.style.borderColor = 'rgba(229, 115, 115, 0.45)';
+        button.style.color = '#e57373';
     } else {
         lectraSendButtonBusy = false;
         button.disabled = false;
         button.style.opacity = '1';
         button.style.cursor = 'pointer';
-        button.style.background = 'linear-gradient(135deg, #d43c3c 0%, #b72c2c 100%)';
+        button.style.background = '#11141d';
+        button.style.borderColor = '#32384a';
+        button.style.color = '#edf0f8';
     }
 }
 
@@ -762,23 +799,41 @@ function refreshLectraPdfContext() {
         return;
     }
 
-    chrome.runtime.sendMessage({ action: 'resolvePdfContext', mode: 'sender_tab' }, (response) => {
-        if (chrome.runtime.lastError) {
-            removeLectraSendButton();
-            return;
+    if (!isExtensionContextValid()) {
+        removeLectraSendButton();
+        if (lectraPdfRefreshTimer) {
+            clearTimeout(lectraPdfRefreshTimer);
+            lectraPdfRefreshTimer = null;
         }
+        return;
+    }
 
-        lectraPdfContext = response || null;
-        const confidence = String(response?.confidence || 'none').toLowerCase();
-        const shouldShow = Boolean(response?.hasPdf) && (confidence === 'definitive' || confidence === 'strong');
+    try {
+        chrome.runtime.sendMessage({ action: 'resolvePdfContext', mode: 'sender_tab' }, (response) => {
+            if (chrome.runtime.lastError) {
+                removeLectraSendButton();
+                return;
+            }
 
-        if (!shouldShow) {
-            removeLectraSendButton();
-            return;
+            lectraPdfContext = response || null;
+            const confidence = String(response?.confidence || 'none').toLowerCase();
+            const shouldShow = Boolean(response?.hasPdf) && (confidence === 'definitive' || confidence === 'strong');
+
+            if (!shouldShow) {
+                removeLectraSendButton();
+                return;
+            }
+
+            setLectraSendButtonState('Send to Lectra', 'idle');
+        });
+    } catch (err) {
+        removeLectraSendButton();
+        notifyExtensionContextInvalidated();
+        if (lectraPdfRefreshTimer) {
+            clearTimeout(lectraPdfRefreshTimer);
+            lectraPdfRefreshTimer = null;
         }
-
-        setLectraSendButtonState('Send to Lectra', 'idle');
-    });
+    }
 }
 
 function handleLectraSendButtonClick() {
@@ -1689,6 +1744,16 @@ let overlayVisible = false;
 function createOverlay() {
     if (overlayContainer) return;
 
+    // Resolve the popup URL FIRST so we fail fast if the extension was reloaded
+    // (chrome.runtime.getURL throws once the runtime context is invalidated).
+    let popupUrl;
+    try {
+        popupUrl = chrome.runtime.getURL('popup.html?mode=overlay');
+    } catch (err) {
+        notifyExtensionContextInvalidated();
+        return;
+    }
+
     // Create container
     overlayContainer = document.createElement('div');
     overlayContainer.id = 'canvascope-overlay-container';
@@ -1700,24 +1765,25 @@ function createOverlay() {
         height: 100vh;
         z-index: 2147483647; /* Max z-index */
         display: none;
-        align-items: center;
+        align-items: flex-start;
         justify-content: center;
-        background: rgba(0, 0, 0, 0.45);
-        backdrop-filter: blur(5px);
-        -webkit-backdrop-filter: blur(5px);
+        padding-top: 12vh;
+        background: rgba(0, 0, 0, 0.40);
+        backdrop-filter: blur(8px);
+        -webkit-backdrop-filter: blur(8px);
     `;
 
     // Create iframe
     overlayIframe = document.createElement('iframe');
-    overlayIframe.src = chrome.runtime.getURL('popup.html?mode=overlay');
+    overlayIframe.src = popupUrl;
     overlayIframe.allow = "clipboard-write"; // Allow copying
     overlayIframe.style.cssText = `
-        width: 540px;
-        height: 480px;
+        width: min(640px, calc(100vw - 32px));
+        height: min(620px, 78vh);
         border: none;
-        border-radius: 14px;
+        border-radius: 8px;
         box-shadow:
-            0 32px 80px rgba(0, 0, 0, 0.55),
+            0 24px 60px rgba(0, 0, 0, 0.55),
             0 0 0 1px rgba(255, 255, 255, 0.10);
         background: transparent;
         transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.2s ease;
@@ -1741,6 +1807,7 @@ function createOverlay() {
  */
 function toggleOverlay() {
     if (!overlayContainer) createOverlay();
+    if (!overlayContainer) return; // createOverlay bailed (extension context gone)
 
     if (overlayVisible) {
         hideOverlay();
@@ -1751,6 +1818,7 @@ function toggleOverlay() {
 
 function showOverlay() {
     if (!overlayContainer) createOverlay();
+    if (!overlayContainer) return;
 
     overlayVisible = true;
     overlayContainer.style.display = 'flex';

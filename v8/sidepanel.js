@@ -12,6 +12,25 @@ document.addEventListener('DOMContentLoaded', () => {
   const userPrompt = document.getElementById('user-prompt');
   const sendBtn = document.getElementById('send-btn');
   const suggestButtons = document.querySelectorAll('.btn-suggest');
+  const SIDE_PANEL_THEME_VARS = [
+    '--cs-bg',
+    '--cs-bg-1',
+    '--cs-bg-2',
+    '--cs-bg-3',
+    '--cs-bg-4',
+    '--cs-border',
+    '--cs-border-hi',
+    '--cs-border-hot',
+    '--cs-text',
+    '--cs-text-2',
+    '--cs-text-3',
+    '--cs-text-4',
+    '--cs-accent',
+    '--cs-accent-hi',
+    '--cs-accent-sat',
+    '--cs-accent-lo',
+    '--cs-on-accent'
+  ];
 
   // Initialize the Local AI Controller
   const aiController = new LocalAIController();
@@ -29,7 +48,7 @@ How to use the context:
 
 Style: concise (2-4 sentences or a short list). Use bold text, inline code backticks, and lists where appropriate.`;
 
-  // 1. Sync Theme Styling Custom Skins
+  // 1. Keep the sidepanel on the v8 dark UI.
   syncSkinTheme();
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area === 'local' && changes.canvasSkin) {
@@ -162,96 +181,19 @@ Style: concise (2-4 sentences or a short list). Use bold text, inline code backt
   }
 
   /**
-   * Automatically queries Canvascope storage and applies theme variables.
+   * Keep the sidepanel from inheriting Canvas paper/light skin variables.
    */
   async function syncSkinTheme() {
-    try {
-      const { canvasSkin } = await chrome.storage.local.get(['canvasSkin']);
-      if (canvasSkin) {
-        applySkinTokens(canvasSkin);
-      }
-    } catch (e) {
-      console.warn('[Canvascope AI] Failed to query active skin theme:', e);
-    }
+    applySkinTokens();
   }
 
   /**
-   * Applies individual skin variables directly into the document root.
+   * Clears older inline theme overrides and pins the sidepanel to the v8 dark UI.
    */
-  function applySkinTokens(skin) {
-    const t = resolveSkinTokens(skin);
-    if (!t) return;
+  function applySkinTokens() {
     const root = document.documentElement;
-
-    console.log('[Canvascope AI] Synchronizing visual skin theme:', skin.name || skin.id);
-
-    // Map custom skin tokens to the sidepanel design variables.
-    if (t.bg) root.style.setProperty('--cs-bg', t.bg);
-    if (t.bgSoft) root.style.setProperty('--cs-bg-1', t.bgSoft);
-    if (t.surface) root.style.setProperty('--cs-bg-2', t.surface);
-    if (t.surface2) root.style.setProperty('--cs-bg-3', t.surface2);
-    if (t.text) root.style.setProperty('--cs-text', t.text);
-    if (t.textDim) root.style.setProperty('--cs-text-2', t.textDim);
-    if (t.muted) root.style.setProperty('--cs-text-3', t.muted);
-    if (t.border) root.style.setProperty('--cs-border', t.border);
-    if (t.borderHi) root.style.setProperty('--cs-border-hi', t.borderHi);
-    
-    if (t.accent) {
-      root.style.setProperty('--cs-accent', t.accent);
-      root.style.setProperty('--cs-accent-hi', adjustColorBrightness(t.accent, 18));
-      root.style.setProperty('--cs-accent-sat', adjustColorBrightness(t.accent, -12));
-    }
-    if (t.accentText) {
-      root.style.setProperty('--cs-on-accent', t.accentText);
-    }
-  }
-
-  function resolveSkinTokens(skin) {
-    if (!skin || typeof skin !== 'object') return null;
-    if (skin.tokens && typeof skin.tokens === 'object') return skin.tokens;
-
-    const themesApi = window.CanvascopeSkinThemes;
-    if (!themesApi) return null;
-
-    let mode = skin.mode;
-    if (mode === 'system' || skin.followSystem) {
-      mode = window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-    }
-
-    let theme = themesApi.getTheme(skin.themeId || 'canvas-default') || themesApi.getTheme('canvas-default');
-    if (mode === 'dark' && theme?.mode !== 'dark') theme = themesApi.getTheme('dim') || theme;
-    if (mode === 'light' && theme?.mode !== 'light') theme = themesApi.getTheme('canvas-default') || theme;
-
-    const normalized = themesApi.normalizeTheme({
-      ...theme,
-      tokens: {
-        ...(theme?.tokens || {}),
-        ...(skin.customTokens || {})
-      }
-    });
-
-    return normalized.tokens;
-  }
-
-  function adjustColorBrightness(hex, percent) {
-    hex = hex.replace(/^#/, '');
-    let R = parseInt(hex.substring(0, 2), 16);
-    let G = parseInt(hex.substring(2, 4), 16);
-    let B = parseInt(hex.substring(4, 6), 16);
-
-    R = parseInt(R * (100 + percent) / 100);
-    G = parseInt(G * (100 + percent) / 100);
-    B = parseInt(B * (100 + percent) / 100);
-
-    R = (R < 255) ? R : 255;
-    G = (G < 255) ? G : 255;
-    B = (B < 255) ? B : 255;
-
-    const rHex = R.toString(16).padStart(2, '0');
-    const gHex = G.toString(16).padStart(2, '0');
-    const bHex = B.toString(16).padStart(2, '0');
-
-    return `#${rHex}${gHex}${bHex}`;
+    SIDE_PANEL_THEME_VARS.forEach(name => root.style.removeProperty(name));
+    root.dataset.canvascopePanelTheme = 'v8-dark';
   }
 
   /**

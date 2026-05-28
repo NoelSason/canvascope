@@ -120,8 +120,29 @@ class DocumentParser {
         indexedContent.push(pdfIndexItem);
         console.log('[Canvascope DocumentParser] Saved new PDF permanently to main index:', cleanTitle);
       }
-      
-      await chrome.storage.local.set({ indexedContent });
+
+      try {
+        await chrome.storage.local.set({ indexedContent });
+      } catch (writeErr) {
+        // Quota fallback: if the user denied `unlimitedStorage` or storage is
+        // capped, evict the oldest indexed PDFs and retry once. Newest item
+        // (the one we just pushed/updated) is preserved.
+        const msg = String(writeErr?.message || writeErr || '');
+        if (!/quota/i.test(msg)) throw writeErr;
+
+        const newestUrl = pdfIndexItem.url;
+        const fileEntries = indexedContent
+          .map((item, idx) => ({ item, idx }))
+          .filter(({ item }) => item?.type === 'file' && item.url !== newestUrl)
+          .sort((a, b) => (a.item.indexedAt || 0) - (b.item.indexedAt || 0));
+
+        const evictCount = Math.max(1, Math.ceil(fileEntries.length / 4));
+        const toEvict = new Set(fileEntries.slice(0, evictCount).map(e => e.idx));
+        const pruned = indexedContent.filter((_, idx) => !toEvict.has(idx));
+
+        console.warn(`[Canvascope DocumentParser] Storage quota hit; evicting ${toEvict.size} oldest indexed PDF(s) and retrying.`);
+        await chrome.storage.local.set({ indexedContent: pruned });
+      }
     } catch (e) {
       console.warn('[Canvascope DocumentParser] Failed to persist PDF to index:', e);
     }

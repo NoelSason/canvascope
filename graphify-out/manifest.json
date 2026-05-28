@@ -1,0 +1,477 @@
+{
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/slash-overlay.js": {
+    "mtime": 1779912991.964324,
+    "ast_hash": "c42f07d90b1d7c7356d82f4097a3206a",
+    "semantic_hash": "c42f07d90b1d7c7356d82f4097a3206a"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/background-cs-extras.js": {
+    "mtime": 1779341881.4479957,
+    "ast_hash": "7d1a0e1d64d9943601693a08a6de4347",
+    "semantic_hash": "7d1a0e1d64d9943601693a08a6de4347"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/popup.js": {
+    "mtime": 1779911881.8843424,
+    "ast_hash": "0f54aa23411f4479e828e8bdc5abb547",
+    "semantic_hash": "0f54aa23411f4479e828e8bdc5abb547"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/reminders.js": {
+    "mtime": 1779344924.775762,
+    "ast_hash": "1e53e5cca5162865e3063291116046d8",
+    "semantic_hash": "1e53e5cca5162865e3063291116046d8"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/background.js": {
+    "mtime": 1779857419.9647157,
+    "ast_hash": "92db93a88225aaf925916c0678e13a00",
+    "semantic_hash": "92db93a88225aaf925916c0678e13a00"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/eval_search.js": {
+    "mtime": 1773194508.2128189,
+    "ast_hash": "54ea05c4a78dd56ab15dc3796ad6299f",
+    "semantic_hash": "54ea05c4a78dd56ab15dc3796ad6299f"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/pdf-viewer-content.js": {
+    "mtime": 1778045037.6989675,
+    "ast_hash": "f1caa731e2358ccd40b8c441c1d3aa24",
+    "semantic_hash": "f1caa731e2358ccd40b8c441c1d3aa24"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/docviewer-skin.js": {
+    "mtime": 1779859967.7503262,
+    "ast_hash": "71f53c871d442be89ae729c49adf2a43",
+    "semantic_hash": "71f53c871d442be89ae729c49adf2a43"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/slash-commands-pack.js": {
+    "mtime": 1779819053.4436033,
+    "ast_hash": "5ca29949b65ca20bab6568be0d84154c",
+    "semantic_hash": "5ca29949b65ca20bab6568be0d84154c"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/package.json": {
+    "mtime": 1779821402.6237688,
+    "ast_hash": "c44edbf2c7038e06d8a17e2156b2bdcb",
+    "semantic_hash": "c44edbf2c7038e06d8a17e2156b2bdcb"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/manifest.json": {
+    "mtime": 1779857840.6321974,
+    "ast_hash": "6edf9186a6cfbc968149bfbf09e74eeb",
+    "semantic_hash": "6edf9186a6cfbc968149bfbf09e74eeb"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/offscreen.js": {
+    "mtime": 1779326693.4156852,
+    "ast_hash": "61031ed3ba904468c9021d13190da71a",
+    "semantic_hash": "61031ed3ba904468c9021d13190da71a"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/background-wrapper.js": {
+    "mtime": 1779342519.61307,
+    "ast_hash": "b67f831865305b654b2f3fbe520a7fbb",
+    "semantic_hash": "b67f831865305b654b2f3fbe520a7fbb"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/academic-tools.js": {
+    "mtime": 1779913670.4443767,
+    "ast_hash": "157cb74bdc1fd071a7cf25728656f240",
+    "semantic_hash": "157cb74bdc1fd071a7cf25728656f240"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/oauth-callback.js": {
+    "mtime": 1773194508.2142828,
+    "ast_hash": "2c16869eb9fdd5739df82d5d9af8bc81",
+    "semantic_hash": "2c16869eb9fdd5739df82d5d9af8bc81"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/canvas-skin.js": {
+    "mtime": 1779913726.693656,
+    "ast_hash": "3800f44e748cec92bc4df498d4ce998b",
+    "semantic_hash": "3800f44e748cec92bc4df498d4ce998b"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/content.js": {
+    "mtime": 1779912670.35382,
+    "ast_hash": "80f5a96745be380e0f5060dff61bb34f",
+    "semantic_hash": "80f5a96745be380e0f5060dff61bb34f"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/v8/sidepanel.js": {
+    "mtime": 1779912638.6786792,
+    "ast_hash": "4baddc28d65e46d10e4060e82f028948",
+    "semantic_hash": "4baddc28d65e46d10e4060e82f028948"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/v8/semantic-matcher.js": {
+    "mtime": 1779821331.8494248,
+    "ast_hash": "556cff941e06b61133fbc895e90b34c3",
+    "semantic_hash": "556cff941e06b61133fbc895e90b34c3"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/v8/document-parser.js": {
+    "mtime": 1779856333.5431864,
+    "ast_hash": "aa29c089ed7794544bfc2e13930b07a0",
+    "semantic_hash": "aa29c089ed7794544bfc2e13930b07a0"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/v8/rag-core.js": {
+    "mtime": 1779856338.6806803,
+    "ast_hash": "19db9381ff6d4a0887de151161d234a3",
+    "semantic_hash": "19db9381ff6d4a0887de151161d234a3"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/v8/local-ai.js": {
+    "mtime": 1779777369.034707,
+    "ast_hash": "2e9182ea19e8b5ac420e83c8116a2152",
+    "semantic_hash": "2e9182ea19e8b5ac420e83c8116a2152"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/tests/skin-themes.test.mjs": {
+    "mtime": 1779342452.3344579,
+    "ast_hash": "710e05fdaefd143e397f909d81bb8514",
+    "semantic_hash": "710e05fdaefd143e397f909d81bb8514"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/tests/legacy-regressions.test.mjs": {
+    "mtime": 1779860133.7333672,
+    "ast_hash": "673e367fc1accbc72c179fb543aea97e",
+    "semantic_hash": "673e367fc1accbc72c179fb543aea97e"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/tests/semantic-matcher.test.mjs": {
+    "mtime": 1779821397.6358128,
+    "ast_hash": "abb87dbac626fe5e755487c753b0b54d",
+    "semantic_hash": "abb87dbac626fe5e755487c753b0b54d"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/tests/backend-search-habits.test.mjs": {
+    "mtime": 1776193537.4343407,
+    "ast_hash": "1f8a0c05e3138f43fceaac4b25b70bdd",
+    "semantic_hash": "1f8a0c05e3138f43fceaac4b25b70bdd"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/tests/academic-tools-gpa.test.mjs": {
+    "mtime": 1779342478.3857641,
+    "ast_hash": "870fec77dd5fd1c714a72fe6be83c943",
+    "semantic_hash": "870fec77dd5fd1c714a72fe6be83c943"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/tests/document-parser.test.mjs": {
+    "mtime": 1779856342.2417111,
+    "ast_hash": "6aa6d2b497f73eef9205bf1cb0e61089",
+    "semantic_hash": "6aa6d2b497f73eef9205bf1cb0e61089"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/tests/rag-core.test.mjs": {
+    "mtime": 1779857638.9265733,
+    "ast_hash": "9a18fe32802d588411e99483e2a0fa55",
+    "semantic_hash": "9a18fe32802d588411e99483e2a0fa55"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/tests/legacy/test_pdf_send_context.js": {
+    "mtime": 1776120875.8057947,
+    "ast_hash": "b8762e3867e010874ed475eba2a70191",
+    "semantic_hash": "b8762e3867e010874ed475eba2a70191"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/tests/legacy/test_search_regressions.js": {
+    "mtime": 1779860143.0468192,
+    "ast_hash": "90fca32c3ddd4f4c6e95e5350c61327e",
+    "semantic_hash": "90fca32c3ddd4f4c6e95e5350c61327e"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/tests/legacy/test_slash_overlay.js": {
+    "mtime": 1776194955.8298948,
+    "ast_hash": "a7e95610920cdaefd47031f3dec9f7e3",
+    "semantic_hash": "a7e95610920cdaefd47031f3dec9f7e3"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/tests/legacy/test_backend_adaptive_suggestions.js": {
+    "mtime": 1777263398.1429431,
+    "ast_hash": "4dc236720d87962a09fd35123e0f8a5f",
+    "semantic_hash": "4dc236720d87962a09fd35123e0f8a5f"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/tests/legacy/test_rank.js": {
+    "mtime": 1776193537.435131,
+    "ast_hash": "1d12d56ec013f4eb6dd75877450e187a",
+    "semantic_hash": "1d12d56ec013f4eb6dd75877450e187a"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/tests/legacy/test_weekly_habits.js": {
+    "mtime": 1776196910.0714536,
+    "ast_hash": "8faca84ce05a070dbe0ada186e8291c5",
+    "semantic_hash": "8faca84ce05a070dbe0ada186e8291c5"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/tests/legacy/test_slash_commands.js": {
+    "mtime": 1776194532.9393764,
+    "ast_hash": "e7d14098880827b13a6b8ceb56cb6a85",
+    "semantic_hash": "e7d14098880827b13a6b8ceb56cb6a85"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/tests/legacy/test_temporal_lab.js": {
+    "mtime": 1779860149.2011201,
+    "ast_hash": "69759b115295ae5192d5981b0f18a850",
+    "semantic_hash": "69759b115295ae5192d5981b0f18a850"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/docs/bug-reports/google-form-responses.json": {
+    "mtime": 1773194508.2123487,
+    "ast_hash": "e7d19249e4a80c522a6593854ae09419",
+    "semantic_hash": "e7d19249e4a80c522a6593854ae09419"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/supabase/seed.sql": {
+    "mtime": 1776193537.4344835,
+    "ast_hash": "5f71bcaac6fdfa2fac1fe7d5aca39d51",
+    "semantic_hash": "5f71bcaac6fdfa2fac1fe7d5aca39d51"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/supabase/package.json": {
+    "mtime": 1779572594.2821388,
+    "ast_hash": "d0707362e90f00edd12435e9d3b9d71c",
+    "semantic_hash": "d0707362e90f00edd12435e9d3b9d71c"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/supabase/migrations/20260304211400_add_lectra_documents_storage.sql": {
+    "mtime": 1773194508.2235227,
+    "ast_hash": "0394779d7b964b9d2e740301f421ee10",
+    "semantic_hash": "0394779d7b964b9d2e740301f421ee10"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/supabase/migrations/20260302005800_dropbridge_v2_client_kind_lectra_ipad.sql": {
+    "mtime": 1773194508.2232718,
+    "ast_hash": "2884fd008d2bdaf7bd16b8709057f0de",
+    "semantic_hash": "2884fd008d2bdaf7bd16b8709057f0de"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/supabase/migrations/20260520120000_skin_and_tools.sql": {
+    "mtime": 1779342363.139935,
+    "ast_hash": "7bf3da8d2525b351b166a6790371d7de",
+    "semantic_hash": "7bf3da8d2525b351b166a6790371d7de"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/supabase/migrations/20260309120000_dropbridge_v2_wake_metadata_push.sql": {
+    "mtime": 1773194508.2237904,
+    "ast_hash": "569a765b734f26cd4513994cacfbda1b",
+    "semantic_hash": "569a765b734f26cd4513994cacfbda1b"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/supabase/migrations/20260220235732_init.sql": {
+    "mtime": 1773194508.2223382,
+    "ast_hash": "f4e3b897b1310988e88d526ebcec0d8f",
+    "semantic_hash": "f4e3b897b1310988e88d526ebcec0d8f"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/supabase/migrations/20260227190125_dropbridge_v2_account_link.sql": {
+    "mtime": 1773194508.22295,
+    "ast_hash": "578674f3b9b7de0a2e97f49cebd161e0",
+    "semantic_hash": "578674f3b9b7de0a2e97f49cebd161e0"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/supabase/migrations/20260414001500_search_habits_backend.sql": {
+    "mtime": 1776155077.2487798,
+    "ast_hash": "cf0ff600aa3c7b5b02a2e07855111256",
+    "semantic_hash": "cf0ff600aa3c7b5b02a2e07855111256"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/supabase/migrations/20260311161000_init_medmatch.sql": {
+    "mtime": 1776154603.940243,
+    "ast_hash": "04c58d341ba3c896cda11de04031d721",
+    "semantic_hash": "04c58d341ba3c896cda11de04031d721"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/supabase/migrations/20260227190124_dropbridge_install.sql": {
+    "mtime": 1773194508.2226658,
+    "ast_hash": "7b6d762298c3115d8fcabffa292abc5a",
+    "semantic_hash": "7b6d762298c3115d8fcabffa292abc5a"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/supabase/tests/01_core_schema.sql": {
+    "mtime": 1776193537.434768,
+    "ast_hash": "4e3ef1cf1a239cbcdc03d5b7de465c6b",
+    "semantic_hash": "4e3ef1cf1a239cbcdc03d5b7de465c6b"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/supabase/tests/02_search_habits_schema.sql": {
+    "mtime": 1776193873.8639646,
+    "ast_hash": "1133ccb67d4ca1b74c654e310ad77011",
+    "semantic_hash": "1133ccb67d4ca1b74c654e310ad77011"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/supabase/.temp/linked-project.json": {
+    "mtime": 1779342953.8538928,
+    "ast_hash": "db1bb505543fc11b3dd05a5e705adeb0",
+    "semantic_hash": "db1bb505543fc11b3dd05a5e705adeb0"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/supabase/functions/upload-file-v2/index.ts": {
+    "mtime": 1777663540.6702213,
+    "ast_hash": "aa4ec73efaeb5da2ce9a2fa30fb6e581",
+    "semantic_hash": "aa4ec73efaeb5da2ce9a2fa30fb6e581"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/supabase/functions/list-pending/index.ts": {
+    "mtime": 1773194508.220596,
+    "ast_hash": "ae6732e9f1d44294919769f1e5da5a70",
+    "semantic_hash": "ae6732e9f1d44294919769f1e5da5a70"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/supabase/functions/record-search-event/index.ts": {
+    "mtime": 1776148679.6946945,
+    "ast_hash": "97ab19f891c8aeb0df1a99d161a5a978",
+    "semantic_hash": "97ab19f891c8aeb0df1a99d161a5a978"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/supabase/functions/register-device/index.ts": {
+    "mtime": 1773194508.221052,
+    "ast_hash": "05e1001a76f5d7ec1cec8d2fd630f839",
+    "semantic_hash": "05e1001a76f5d7ec1cec8d2fd630f839"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/supabase/functions/cleanup-expired-uploads/index.ts": {
+    "mtime": 1773194508.2200112,
+    "ast_hash": "6acdeed5a3d9062df9b1eb6356bdde03",
+    "semantic_hash": "6acdeed5a3d9062df9b1eb6356bdde03"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/supabase/functions/list-pending-v2/index.ts": {
+    "mtime": 1773194508.220408,
+    "ast_hash": "8db7ae3b12ae8c8e4ddf027f0b637356",
+    "semantic_hash": "8db7ae3b12ae8c8e4ddf027f0b637356"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/supabase/functions/register-device-v2/index.ts": {
+    "mtime": 1777663540.6700377,
+    "ast_hash": "a238274e4698ce8ef1bf2da7c763e6dd",
+    "semantic_hash": "a238274e4698ce8ef1bf2da7c763e6dd"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/supabase/functions/update-upload-status-v2/index.ts": {
+    "mtime": 1773194508.2212567,
+    "ast_hash": "d6b1e5bb93feb75dbe123757de7f18c8",
+    "semantic_hash": "d6b1e5bb93feb75dbe123757de7f18c8"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/supabase/functions/upload-file/index.ts": {
+    "mtime": 1773194508.2219164,
+    "ast_hash": "f943f245d7514a161ae7b040016b2e2e",
+    "semantic_hash": "f943f245d7514a161ae7b040016b2e2e"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/supabase/functions/update-upload-status/index.ts": {
+    "mtime": 1773194508.221437,
+    "ast_hash": "e8bc06838c89542f182ab7d79d71e6df",
+    "semantic_hash": "e8bc06838c89542f182ab7d79d71e6df"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/supabase/functions/claim-upload-v2/index.ts": {
+    "mtime": 1776120786.3434482,
+    "ast_hash": "d872e48e9383b3c17d5d0253eb620e36",
+    "semantic_hash": "d872e48e9383b3c17d5d0253eb620e36"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/supabase/functions/_shared/search-habits.ts": {
+    "mtime": 1776193585.101909,
+    "ast_hash": "ad48175c7a2631a900cb8cab356a9127",
+    "semantic_hash": "ad48175c7a2631a900cb8cab356a9127"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/supabase/functions/_shared/apns.ts": {
+    "mtime": 1773194508.2189288,
+    "ast_hash": "d75e5babdf81917a9bb86314702dae8b",
+    "semantic_hash": "d75e5babdf81917a9bb86314702dae8b"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/supabase/functions/_shared/device-auth.ts": {
+    "mtime": 1773194508.2197523,
+    "ast_hash": "6f64a4da2767fe0ed54e5c60d36aece9",
+    "semantic_hash": "6f64a4da2767fe0ed54e5c60d36aece9"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/supabase/functions/_shared/cors.ts": {
+    "mtime": 1773194508.219432,
+    "ast_hash": "b741e6595de85891ff1c9662e87fd7d1",
+    "semantic_hash": "b741e6595de85891ff1c9662e87fd7d1"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/supabase/functions/_shared/auth-user.ts": {
+    "mtime": 1773194508.219051,
+    "ast_hash": "0d7eb45255f98655964b4f0e1e126f5c",
+    "semantic_hash": "0d7eb45255f98655964b4f0e1e126f5c"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/supabase/functions/get-search-suggestions/index.ts": {
+    "mtime": 1776148703.3899167,
+    "ast_hash": "f822027665cd6520cbd8713151d10d3a",
+    "semantic_hash": "f822027665cd6520cbd8713151d10d3a"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/supabase/functions/gemini-proxy/index.ts": {
+    "mtime": 1779777423.4629393,
+    "ast_hash": "7dd5f752e7563a11b121b8022df985d6",
+    "semantic_hash": "7dd5f752e7563a11b121b8022df985d6"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/supabase/functions/get-upload-status-v2/index.ts": {
+    "mtime": 1773194508.2202096,
+    "ast_hash": "48419f6e8a2910c18cafb3e9572aea32",
+    "semantic_hash": "48419f6e8a2910c18cafb3e9572aea32"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/components/radar.js": {
+    "mtime": 1778114682.4436002,
+    "ast_hash": "f1dbe61872fdba1a6b2ac1b3c2b881c6",
+    "semantic_hash": "f1dbe61872fdba1a6b2ac1b3c2b881c6"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/scripts/sync_google_form_responses.py": {
+    "mtime": 1773194508.21708,
+    "ast_hash": "bbd67aa8521a007ac6518c70749b2a39",
+    "semantic_hash": "bbd67aa8521a007ac6518c70749b2a39"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/scripts/benchmark_search.js": {
+    "mtime": 1779326693.4167285,
+    "ast_hash": "fefabc6cac2d13c0e0de1adf58510ee2",
+    "semantic_hash": "fefabc6cac2d13c0e0de1adf58510ee2"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/scripts/benchmark_indexing.js": {
+    "mtime": 1773194508.2169776,
+    "ast_hash": "e3aaf754e895b148da19a60e6df86fb3",
+    "semantic_hash": "e3aaf754e895b148da19a60e6df86fb3"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/scripts/add-school.sh": {
+    "mtime": 1777663540.668829,
+    "ast_hash": "0f571a720474d1d3d08ba3c0f530e2ed",
+    "semantic_hash": "0f571a720474d1d3d08ba3c0f530e2ed"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/scripts/run-release-tests.js": {
+    "mtime": 1779495134.5121748,
+    "ast_hash": "38b6182e1afcae51e08146b00a8cbacf",
+    "semantic_hash": "38b6182e1afcae51e08146b00a8cbacf"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/scripts/add_school.py": {
+    "mtime": 1777663540.6693578,
+    "ast_hash": "001c659f4119e14bfe749355b67299c6",
+    "semantic_hash": "001c659f4119e14bfe749355b67299c6"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/lib/skin-themes.js": {
+    "mtime": 1779421672.0031946,
+    "ast_hash": "ddbcd27b3259e5d2d9e9a0ee09dee402",
+    "semantic_hash": "ddbcd27b3259e5d2d9e9a0ee09dee402"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/_locales/es/messages.json": {
+    "mtime": 1779342390.4771352,
+    "ast_hash": "d4bdffbc22b8737585a33f1d117004a6",
+    "semantic_hash": "d4bdffbc22b8737585a33f1d117004a6"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/_locales/en/messages.json": {
+    "mtime": 1779342377.0794396,
+    "ast_hash": "5be53956ecb9362f1e2432d55b6c316b",
+    "semantic_hash": "5be53956ecb9362f1e2432d55b6c316b"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/offscreen.html": {
+    "mtime": 1779326693.4154592,
+    "ast_hash": "209f16197e0cc20aa8acecf9e8a6f34c",
+    "semantic_hash": "209f16197e0cc20aa8acecf9e8a6f34c"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/popup.html": {
+    "mtime": 1779859869.505108,
+    "ast_hash": "75c42d8d5753e1acd9d6c72cf20a0bba",
+    "semantic_hash": "75c42d8d5753e1acd9d6c72cf20a0bba"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/README.md": {
+    "mtime": 1779572613.1406064,
+    "ast_hash": "6f0cfd86ec133e44a4b4acc661aa2ab5",
+    "semantic_hash": "6f0cfd86ec133e44a4b4acc661aa2ab5"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/CHROMEWEBSTORE.md": {
+    "mtime": 1779856721.0846496,
+    "ast_hash": "ab90383b49478ddc5f4a457fbc9d2010",
+    "semantic_hash": "ab90383b49478ddc5f4a457fbc9d2010"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/oauth-callback.html": {
+    "mtime": 1779913706.8735113,
+    "ast_hash": "2fe7662064fcc501baa5fcbb89920b5a",
+    "semantic_hash": "2fe7662064fcc501baa5fcbb89920b5a"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/v8/sidepanel.html": {
+    "mtime": 1779859313.020957,
+    "ast_hash": "fb728e32dc1a7b28009cf8543fcdd695",
+    "semantic_hash": "fb728e32dc1a7b28009cf8543fcdd695"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/v8/implementation_plan.md": {
+    "mtime": 1779819211.1650233,
+    "ast_hash": "f3409835451951e00f3f53a290d183a0",
+    "semantic_hash": "f3409835451951e00f3f53a290d183a0"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/docs/TROUBLESHOOTING.md": {
+    "mtime": 1779572634.9232824,
+    "ast_hash": "0396b216027532d82177b6287d92c9e3",
+    "semantic_hash": "0396b216027532d82177b6287d92c9e3"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/docs/PRIVACY.md": {
+    "mtime": 1779572620.3191426,
+    "ast_hash": "5c94d5d2db1b14b6441484c328274f0f",
+    "semantic_hash": "5c94d5d2db1b14b6441484c328274f0f"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/docs/INSTALL.md": {
+    "mtime": 1779572616.6568127,
+    "ast_hash": "23e5f723fa59a5da93d844d8f3798dff",
+    "semantic_hash": "23e5f723fa59a5da93d844d8f3798dff"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/docs/BUG_FORM_SYNC_SETUP.md": {
+    "mtime": 1773194508.2073812,
+    "ast_hash": "f3122482a9df83505a8f219c502a9630",
+    "semantic_hash": "f3122482a9df83505a8f219c502a9630"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/docs/ROADMAP.md": {
+    "mtime": 1779572627.964449,
+    "ast_hash": "5888078e67877d529e009a2d27132751",
+    "semantic_hash": "5888078e67877d529e009a2d27132751"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/docs/SECURITY.md": {
+    "mtime": 1779572631.5292833,
+    "ast_hash": "3a18c9afed8d8f20807e61557d66113c",
+    "semantic_hash": "3a18c9afed8d8f20807e61557d66113c"
+  },
+  "/Users/noelsason/Desktop/Canvascope Inc./02-Subsidiaries/canvascope-extension/app/extension-core/.github/workflows/ci.yml": {
+    "mtime": 1779495132.4975429,
+    "ast_hash": "3bf73d41ccec3a6d77b4057aa9729f7e",
+    "semantic_hash": "3bf73d41ccec3a6d77b4057aa9729f7e"
+  }
+}

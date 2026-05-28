@@ -637,6 +637,7 @@
     pin:   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5"/><path d="M9 3h6l-1 5 3 4H7l3-4z"/></svg>',
     home:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m3 11 9-8 9 8v9a1 1 0 0 1-1 1h-5v-7h-6v7H4a1 1 0 0 1-1-1z"/></svg>',
     star:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l2.7 5.5 6 .9-4.4 4.2 1 6-5.3-2.8L6.7 19.6l1-6L3.3 9.4l6-.9z"/></svg>',
+    warn:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 10 18H2z"/><path d="M12 9v4M12 17h.01"/></svg>',
     bolt:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L4 14h7l-1 8 9-12h-7z"/></svg>'
   };
 
@@ -669,26 +670,31 @@
     :host {
       all: initial;
       display: block;
-      --bg:           #16151a;
-      --bg-soft:      #1c1b22;
-      --surface:      #20202a;
-      --surface-2:    #272731;
-      --surface-3:    #2e2e3a;
-      --border:       rgba(255, 255, 255, 0.05);
-      --border-hi:    rgba(255, 255, 255, 0.10);
-      --border-hot:   rgba(168, 144, 232, 0.30);
-      --text:         #ece9f1;
-      --text-dim:     #b6b0c2;
-      --muted:        #7c7689;
-      --dim:          #4f4a5c;
-      --accent:       #a890e8;
-      --accent-sat:   #8a6fe0;
-      --accent-bg:    rgba(168, 144, 232, 0.10);
-      --accent-bg-hi: rgba(168, 144, 232, 0.18);
-      --ok:           #7cc296;
-      --warn:         #e8b87a;
-      --bad:          #e88a8a;
-      --font-sans: 'Geist', 'Inter', -apple-system, BlinkMacSystemFont, ui-sans-serif, system-ui, sans-serif;
+      --bg:           #0a0a0d;
+      --bg-soft:      #0e0e12;
+      --surface:      #14141a;
+      --surface-2:    #1b1b22;
+      --surface-3:    #22222a;
+      --border:       #22222a;
+      --border-hi:    #32323c;
+      --border-hot:   rgba(185, 165, 255, 0.34);
+      --text:         #ececef;
+      --text-dim:     #9b9ba6;
+      --muted:        #65656f;
+      --dim:          #4b4b55;
+      --accent:       #b9a5ff;
+      --accent-sat:   #c9b9ff;
+      --accent-bg:    rgba(185, 165, 255, 0.14);
+      --accent-bg-hi: rgba(185, 165, 255, 0.20);
+      --on-accent:    #181226;
+      --ok:           #6fce9a;
+      --warn:         #e8b770;
+      --bad:          #e57373;
+      --r-1: 2px;
+      --r-2: 4px;
+      --r-3: 6px;
+      --r-4: 8px;
+      --font-sans: 'Geist', -apple-system, BlinkMacSystemFont, ui-sans-serif, system-ui, sans-serif;
       --font-mono: 'Geist Mono', 'JetBrains Mono', ui-monospace, Menlo, monospace;
     }
 
@@ -702,7 +708,7 @@
       position: fixed;
       inset: 0;
       z-index: 2147483646;
-      background: rgba(10, 8, 14, 0.55);
+      background: rgba(0, 0, 0, 0.40);
       backdrop-filter: blur(8px);
       -webkit-backdrop-filter: blur(8px);
       opacity: 0;
@@ -717,12 +723,12 @@
 
     .slash-container {
       position: fixed;
-      top: 16%;
+      top: 12vh;
       left: 50%;
       transform: translateX(-50%) scale(0.96);
       z-index: 2147483647;
-      width: 620px;
-      max-width: calc(100vw - 40px);
+      width: 720px;
+      max-width: calc(100vw - 32px);
       opacity: 0;
       transition: opacity ${ANIMATION_DURATION_MS}ms ease,
                   transform ${ANIMATION_DURATION_MS}ms cubic-bezier(0.16, 1, 0.3, 1);
@@ -730,7 +736,7 @@
       font-family: var(--font-sans);
       font-size: 14px;
       color: var(--text);
-      letter-spacing: -0.005em;
+      letter-spacing: 0;
       -webkit-font-smoothing: antialiased;
       font-variant-numeric: tabular-nums;
     }
@@ -742,12 +748,12 @@
     }
 
     .slash-panel {
-      background: var(--bg);
-      border: 1px solid var(--border-hi);
-      border-radius: 14px;
+      background: var(--bg-soft);
+      border: 1px solid var(--border);
+      border-radius: var(--r-4);
       box-shadow:
-        0 32px 80px rgba(0, 0, 0, 0.55),
-        0 0 0 1px rgba(168, 144, 232, 0.05);
+        0 24px 70px rgba(0, 0, 0, 0.48),
+        0 0 0 1px rgba(255, 255, 255, 0.02);
       overflow: hidden;
       position: relative;
     }
@@ -757,7 +763,8 @@
       position: relative;
       display: flex;
       align-items: center;
-      padding: 16px 18px;
+      height: 56px;
+      padding: 0 18px;
       gap: 12px;
       border-bottom: 1px solid var(--border);
     }
@@ -769,9 +776,9 @@
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      border-radius: 6px;
-      background: var(--accent-bg);
-      color: var(--accent);
+      border-radius: var(--r-2);
+      background: var(--accent);
+      color: var(--on-accent);
       font-family: var(--font-mono);
       font-size: 14px;
       font-weight: 600;
@@ -787,7 +794,7 @@
       font-size: 15px;
       font-family: var(--font-mono);
       font-weight: 500;
-      letter-spacing: -0.005em;
+      letter-spacing: 0;
       padding: 0;
       caret-color: var(--accent);
     }
@@ -806,7 +813,7 @@
       height: 18px;
       padding: 0 6px;
       border: 1px solid var(--border-hi);
-      border-radius: 4px;
+      border-radius: var(--r-1);
       background: var(--surface-2);
       color: var(--text-dim);
       font-family: var(--font-mono);
@@ -825,7 +832,7 @@
 
     /* ---------- RESULTS ---------- */
     .slash-body {
-      max-height: 420px;
+      max-height: min(520px, calc(78vh - 100px));
       overflow-y: auto;
       padding: 8px 0;
       position: relative;
@@ -839,11 +846,11 @@
       background: transparent;
     }
     .slash-body::-webkit-scrollbar-thumb {
-      background: rgba(168, 144, 232, 0.18);
-      border-radius: 4px;
+      background: var(--border-hi);
+      border-radius: var(--r-1);
     }
     .slash-body::-webkit-scrollbar-thumb:hover {
-      background: rgba(168, 144, 232, 0.32);
+      background: var(--muted);
     }
 
     .slash-section-label {
@@ -863,13 +870,13 @@
       column-gap: 14px;
       row-gap: 0;
       align-items: center;
-      padding: 10px 12px;
-      margin: 0 8px;
-      border-radius: 8px;
+      padding: 12px 18px;
+      margin: 0;
+      border-radius: 0;
       border: none;
       cursor: pointer;
       transition: background 120ms cubic-bezier(.2,.8,.2,1);
-      width: calc(100% - 16px);
+      width: 100%;
       text-align: left;
       background: none;
       color: inherit;
@@ -892,7 +899,7 @@
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      border-radius: 8px;
+      border-radius: var(--r-3);
       background: var(--surface-2);
       border: none;
       color: var(--text-dim);
@@ -918,7 +925,7 @@
       font-size: 13px;
       font-weight: 500;
       color: var(--text);
-      letter-spacing: -0.005em;
+      letter-spacing: 0;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
@@ -1000,6 +1007,12 @@
     .slash-pin-toggle.is-pinned {
       color: var(--accent);
     }
+    .slash-pin-toggle svg {
+      width: 13px;
+      height: 13px;
+      display: block;
+      stroke-width: 1.7;
+    }
     .slash-pin-toggle.is-flash {
       animation: slash-pin-flash 360ms cubic-bezier(.2,.8,.2,1);
     }
@@ -1011,9 +1024,9 @@
 
     /* ---------- FEEDBACK ---------- */
     .slash-feedback {
-      margin: 8px 16px 0;
+      margin: 8px 18px 0;
       padding: 10px 14px;
-      border-radius: 8px;
+      border-radius: var(--r-3);
       font-size: 12.5px;
       line-height: 1.45;
       border: 1px solid transparent;
@@ -1048,12 +1061,13 @@
       display: flex;
       align-items: center;
       gap: 14px;
-      padding: 10px 18px;
+      height: 44px;
+      padding: 0 18px;
       border-top: 1px solid var(--border);
-      font-family: var(--font-sans);
-      font-size: 11px;
+      font-family: var(--font-mono);
+      font-size: 10.5px;
       letter-spacing: 0;
-      text-transform: none;
+      text-transform: uppercase;
       color: var(--muted);
       position: relative;
       z-index: 1;
@@ -1085,7 +1099,7 @@
       min-width: 18px;
       height: 18px;
       padding: 0 5px;
-      border-radius: 4px;
+      border-radius: var(--r-1);
       border: 1px solid var(--border-hi);
       background: var(--surface-2);
       font-family: var(--font-mono);
@@ -1100,9 +1114,9 @@
       color: var(--warn);
       border: 1px solid var(--border-hi);
       padding: 3px 7px;
-      border-radius: 999px;
+      border-radius: var(--r-2);
       font-size: 10px;
-      letter-spacing: 0.06em;
+      letter-spacing: 0;
       text-transform: uppercase;
       font-family: var(--font-mono);
       align-self: center;
@@ -1359,7 +1373,7 @@
         item,
         title: item.title || 'Untitled',
         subtitle: [item.courseName, item.moduleName].filter(Boolean).join(' › '),
-        icon: '★',
+        icon: 'star',
         badge: 'Pinned',
         onSelect: () => executeOpenUrl(item.url)
       });
@@ -1448,12 +1462,7 @@
         const iconEl = document.createElement('span');
         iconEl.className = 'slash-item-icon';
         const iconKey = entry.icon || 'bolt';
-        // Use inline SVG when available, fall back to emoji/text
-        if (typeof iconKey === 'string' && ICON_SVGS[iconKey]) {
-          iconEl.innerHTML = getIconMarkup(iconKey);
-        } else {
-          iconEl.textContent = iconKey;
-        }
+        iconEl.innerHTML = getIconMarkup(iconKey);
         btn.appendChild(iconEl);
 
         const copy = document.createElement('div');
@@ -1490,7 +1499,7 @@
           badgeEl.className = 'slash-item-badge ' + entry.badgeClass;
           badgeEl.textContent = entry.badge;
           btn.appendChild(badgeEl);
-        } else {
+        } else if (!(entry.kind === 'item' && entry.item && entry.item.url)) {
           // Enter indicator — visible only on active row via CSS
           const enterEl = document.createElement('span');
           enterEl.className = 'slash-item-enter';
@@ -1505,7 +1514,7 @@
           const pinBtn = document.createElement('button');
           pinBtn.type = 'button';
           pinBtn.className = 'slash-pin-toggle' + (pinned ? ' is-pinned' : '');
-          pinBtn.textContent = pinned ? '★' : '☆';
+          pinBtn.innerHTML = getIconMarkup('star');
           pinBtn.setAttribute('aria-label', pinned ? 'Unpin item' : 'Pin item');
           pinBtn.addEventListener('mousedown', e => e.preventDefault());
           pinBtn.addEventListener('click', async (e) => {
@@ -1587,7 +1596,7 @@
       return [{
         kind: 'guidance', command: cmd, title: reason,
         subtitle: 'Open the popup → Settings to configure.',
-        icon: '⚠️', badge: 'Setup', badgeClass: 'badge-setup',
+        icon: 'warn', badge: 'Setup', badgeClass: 'badge-setup',
         onSelect: () => setFeedbackMsg(reason, 'info')
       }];
     }
@@ -1598,7 +1607,7 @@
       kind: 'item', command: cmd, item,
       title: item.title || 'Untitled PDF',
       subtitle: [item.courseName, item.moduleName].filter(Boolean).join(' › '),
-      icon: '📄', badge: 'Send',
+      icon: 'pdf', badge: 'Send',
       onSelect: () => executeLectraSend(item)
     }));
   }
@@ -1608,7 +1617,7 @@
       kind: 'action', command: cmd,
       title: 'Open Gradescope',
       subtitle: 'Launch gradescope.com in a new tab.',
-      icon: '🎓', badge: 'Open',
+      icon: 'cap', badge: 'Open',
       onSelect: () => executeGradescope()
     }];
   }
@@ -1620,7 +1629,7 @@
       kind: 'item', command: cmd, item,
       title: item.title || 'Untitled Course',
       subtitle: item.moduleName || '',
-      icon: '📚', badge: 'Go',
+      icon: 'books', badge: 'Go',
       onSelect: () => executeOpenUrl(item.url)
     }));
   }
@@ -1641,7 +1650,7 @@
       kind: 'item', command: cmd, item,
       title: item.title || 'Untitled',
       subtitle: [item.courseName, formatDueLabel(item)].filter(Boolean).join(' · '),
-      icon: '📅', badge: formatDueLabel(item),
+      icon: 'cal', badge: formatDueLabel(item),
       onSelect: () => executeOpenUrl(item.url)
     }));
   }
@@ -1651,7 +1660,7 @@
       kind: 'action', command: cmd,
       title: 'Refresh Canvascope Index',
       subtitle: 'Trigger a fresh sync for the current LMS tab.',
-      icon: '🔄', badge: 'Sync',
+      icon: 'sync', badge: 'Sync',
       onSelect: () => executeRefresh()
     }];
   }
@@ -1680,7 +1689,7 @@
       kind: 'action', command: cmd,
       title: 'Browse All Indexed Content',
       subtitle: 'Open the all-content browser in the popup.',
-      icon: '📖', badge: 'Browse',
+      icon: 'book', badge: 'Browse',
       onSelect: () => executeBrowse()
     }];
   }

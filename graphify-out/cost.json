@@ -1,0 +1,13 @@
+{
+  "runs": [
+    {
+      "date": "2026-05-28T05:40:02.351945+00:00",
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "files": 110,
+      "note": "semantic via Claude Code general-purpose subagents (sonnet); 3 of 12 hit plan-wide session limit but had already written their chunk files before the reply"
+    }
+  ],
+  "total_input_tokens": 0,
+  "total_output_tokens": 0
+}
