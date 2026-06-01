@@ -6686,7 +6686,9 @@ const MAX_NOTIFICATIONS_PER_CYCLE = 3;
 
 async function checkDeadlineReminders() {
     try {
-        const data = await chrome.storage.local.get(['indexedContent', 'reminderState']);
+        const data = await chrome.storage.local.get(['indexedContent', 'reminderState', 'settings']);
+        // Notifications are opt-in: off by default (incl. fresh installs).
+        if (data.settings?.notificationsEnabled !== true) return;
         const items = data.indexedContent || [];
         const state = data.reminderState || {};
         const now = Date.now();

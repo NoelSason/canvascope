@@ -3175,6 +3175,7 @@ const POPUP_UI_STORAGE_KEY = 'popupUi';
 const DEFAULT_EXTENSION_SETTINGS = Object.freeze({
   enableSendToLectra: false,
   enableAdaptiveLearning: true,
+  notificationsEnabled: false,
   selectedCourseFilters: [],
   customAlgorithm: DEFAULT_CUSTOM_ALGORITHM
 });
@@ -3236,6 +3237,7 @@ function normalizeExtensionSettings(rawSettings) {
     ...source,
     enableSendToLectra: Boolean(source.enableSendToLectra),
     enableAdaptiveLearning: source.enableAdaptiveLearning !== false,
+    notificationsEnabled: source.notificationsEnabled === true,
     selectedCourseFilters,
     customAlgorithm: normalizeCustomAlgorithm(source.customAlgorithm)
   };
@@ -3290,6 +3292,10 @@ function applyExtensionSettingsUi() {
 
   if (elements.enableAdaptiveLearningToggle) {
     elements.enableAdaptiveLearningToggle.checked = Boolean(state.extensionSettings.enableAdaptiveLearning);
+  }
+
+  if (elements.enableNotificationsToggle) {
+    elements.enableNotificationsToggle.checked = Boolean(state.extensionSettings.notificationsEnabled);
   }
 
   const customAlgorithm = getStoredCustomAlgorithm();
@@ -4634,6 +4640,7 @@ function initializeElements() {
   elements.accountAvatarPlaceholder = document.getElementById('account-avatar-placeholder');
   elements.enableSendToLectraToggle = document.getElementById('enable-send-to-lectra');
   elements.enableAdaptiveLearningToggle = document.getElementById('enable-adaptive-learning');
+  elements.enableNotificationsToggle = document.getElementById('enable-notifications');
   elements.adaptiveLearningPanel = document.getElementById('adaptive-learning-panel');
   elements.clearSearchHabitsBtn = document.getElementById('clear-search-habits');
   elements.enableCustomAlgorithmToggle = document.getElementById('enable-custom-algorithm');
@@ -5868,6 +5875,24 @@ function setupEventListeners() {
         }
       } catch (error) {
         console.error('[Canvascope] Failed to update adaptive learning setting:', error);
+        applyExtensionSettingsUi();
+      } finally {
+        toggle.disabled = false;
+      }
+    });
+  }
+
+  if (elements.enableNotificationsToggle) {
+    elements.enableNotificationsToggle.addEventListener('change', async (event) => {
+      const toggle = event.currentTarget;
+      const enabled = Boolean(toggle.checked);
+      toggle.disabled = true;
+
+      try {
+        await updateExtensionSettings({ notificationsEnabled: enabled });
+        showSyncedStatus(enabled ? 'Notifications enabled' : 'Notifications turned off');
+      } catch (error) {
+        console.error('[Canvascope] Failed to update notifications setting:', error);
         applyExtensionSettingsUi();
       } finally {
         toggle.disabled = false;

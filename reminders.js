@@ -179,7 +179,15 @@
     await writeStore({ oneShotReminders: prefs });
   }
 
+  async function notificationsEnabled() {
+    // Single user-facing gate (Settings → Notifications). Opt-in: off by
+    // default, including on a fresh install where `settings` is undefined.
+    const { settings } = await readStore(['settings']);
+    return settings?.notificationsEnabled === true;
+  }
+
   async function postNotification({ title, message, contextMessage, itemUrl }, prefs) {
+    if (!(await notificationsEnabled())) return;
     try {
       const options = {
         type: 'basic',
