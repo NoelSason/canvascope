@@ -5976,25 +5976,67 @@ async function clearExtensionOwnedSyncedItems(userId, legacyItems = []) {
     return rowIds.length;
 }
 
-async function insertSyncedRowsInBatches(rows, label) {
+/**
+ * Compute a deterministic UUID (v5-style, SHA-256 based) from a seed string.
+ * The same seed always yields the same UUID, so re-syncing the same logical
+ * item targets the same row instead of inserting a brand-new copy.
+ */
+async function deterministicSyncedItemId(seed) {
+    const bytes = new Uint8Array(
+        await crypto.subtle.digest('SHA-256', new TextEncoder().encode(String(seed)))
+    );
+    bytes[6] = (bytes[6] & 0x0f) | 0x50; // version 5
+    bytes[8] = (bytes[8] & 0x3f) | 0x80; // RFC 4122 variant
+    const hex = Array.from(bytes.slice(0, 16), (b) => b.toString(16).padStart(2, '0')).join('');
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
+}
+
+/**
+ * Stable identity seed for a synced row, namespaced by user + kind so the same
+ * logical item maps to one row forever. Used as the upsert conflict target.
+ */
+function syncedItemSeed(userId, kind, identity) {
+    return `synced_items|v1|${userId}|${kind}|${identity}`;
+}
+
+/**
+ * Drop rows sharing an id (last one wins) so a single upsert batch never
+ * references the same primary key twice — Postgres rejects that with
+ * "ON CONFLICT DO UPDATE command cannot affect row a second time".
+ */
+function dedupeRowsById(rows) {
+    const byId = new Map();
+    for (const row of rows) {
+        if (row && row.id) byId.set(row.id, row);
+    }
+    return Array.from(byId.values());
+}
+
+/**
+ * Upsert rows by primary key. Re-syncing overwrites the existing row in place
+ * instead of appending a copy — this is what prevents the duplicate explosion
+ * the old read-all/delete/reinsert path caused whenever its paginated read
+ * timed out (the failure was swallowed and the insert ran anyway).
+ */
+async function upsertSyncedRowsInBatches(rows, label) {
     if (!Array.isArray(rows) || rows.length === 0) return 0;
 
-    let totalInserted = 0;
+    let totalUpserted = 0;
     for (let index = 0; index < rows.length; index += EXTENSION_SYNC_BATCH_SIZE) {
         const batch = rows.slice(index, index + EXTENSION_SYNC_BATCH_SIZE);
         const { error } = await supabaseClient
             .from('synced_items')
-            .insert(batch);
+            .upsert(batch, { onConflict: 'id' });
 
         if (error) {
-            console.error(`[Canvascope Sync] ${label} batch insert error at offset ${index}:`, error);
+            console.error(`[Canvascope Sync] ${label} batch upsert error at offset ${index}:`, error);
             continue;
         }
 
-        totalInserted += batch.length;
+        totalUpserted += batch.length;
     }
 
-    return totalInserted;
+    return totalUpserted;
 }
 
 async function performSyncIndexedContentToSupabase() {
@@ -6026,54 +6068,63 @@ async function performSyncIndexedContentToSupabase() {
 
     console.log(`[Canvascope Sync] Syncing ${legacyItems.length} legacy items, ${courseSnapshots.length} course snapshots...`);
 
-    let deletedCount = 0;
-    try {
-        deletedCount = await clearExtensionOwnedSyncedItems(userId, [...legacyItems, ...lightweightItems]);
-    } catch (deleteError) {
-        console.error('[Canvascope Sync] Error clearing old items:', deleteError);
-    }
+    // Each row gets a deterministic id derived from (user + kind + canonical
+    // identity), and we upsert on that id. Re-syncing the same item overwrites
+    // its single row instead of appending a new copy, so the table can no
+    // longer balloon with duplicates. No destructive delete-all step is needed.
+    const syncedAt = new Date().toISOString();
 
-    const legacyRows = legacyItems.map((item) => ({
+    const legacyRows = dedupeRowsById(await Promise.all(legacyItems.map(async (item) => ({
+        id: await deterministicSyncedItemId(syncedItemSeed(userId, 'item', getCanonicalId(item))),
         user_id: userId,
         item_type: item.type || 'unknown',
         item_data: {
             sourceApp: 'canvascope_extension',
             ...item
         },
-        sync_status: 'synced'
-    }));
+        sync_status: 'synced',
+        updated_at: syncedAt
+    }))));
 
     const catalogRows = courseCatalog.length > 0
         ? [{
+            id: await deterministicSyncedItemId(syncedItemSeed(userId, 'catalog', COURSE_CATALOG_ITEM_TYPE)),
             user_id: userId,
             item_type: COURSE_CATALOG_ITEM_TYPE,
             item_data: {
                 schemaVersion: COURSE_SNAPSHOT_SCHEMA_VERSION,
                 sourceApp: 'canvascope_extension',
-                generatedAt: new Date().toISOString(),
+                generatedAt: syncedAt,
                 courseCatalog
             },
-            sync_status: 'synced'
+            sync_status: 'synced',
+            updated_at: syncedAt
         }]
         : [];
 
-    const snapshotRows = courseSnapshots.map((snapshot) => ({
-        user_id: userId,
-        item_type: COURSE_SNAPSHOT_ITEM_TYPE,
-        item_data: snapshot,
-        sync_status: 'synced'
-    }));
+    const snapshotRows = dedupeRowsById(await Promise.all(courseSnapshots.map(async (snapshot) => {
+        const identity = snapshot?.courseKey
+            || getCourseKey(snapshot)
+            || await deterministicSyncedItemId(JSON.stringify(snapshot));
+        return {
+            id: await deterministicSyncedItemId(syncedItemSeed(userId, 'snapshot', identity)),
+            user_id: userId,
+            item_type: COURSE_SNAPSHOT_ITEM_TYPE,
+            item_data: snapshot,
+            sync_status: 'synced',
+            updated_at: syncedAt
+        };
+    })));
 
-    const legacySynced = await insertSyncedRowsInBatches(legacyRows, 'legacy');
-    const catalogSynced = await insertSyncedRowsInBatches(catalogRows, 'catalog');
-    const snapshotSynced = await insertSyncedRowsInBatches(snapshotRows, 'snapshot');
+    const legacySynced = await upsertSyncedRowsInBatches(legacyRows, 'legacy');
+    const catalogSynced = await upsertSyncedRowsInBatches(catalogRows, 'catalog');
+    const snapshotSynced = await upsertSyncedRowsInBatches(snapshotRows, 'snapshot');
     const totalSynced = legacySynced + catalogSynced + snapshotSynced;
 
-    console.log(`[Canvascope Sync] Done! Synced ${totalSynced} rows after clearing ${deletedCount} extension-owned rows.`);
+    console.log(`[Canvascope Sync] Done! Upserted ${totalSynced} rows by deterministic id (no delete-all).`);
     return {
         success: true,
         synced: totalSynced,
-        deleted: deletedCount,
         legacySynced,
         catalogSynced,
         snapshotSynced,
