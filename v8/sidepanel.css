@@ -126,16 +126,16 @@ body,
 .brand-icon {
   width: 26px;
   height: 26px;
-  border-radius: var(--cs-r-1);
-  background: var(--cs-accent);
-  color: var(--cs-on-accent);
-  font-family: var(--cs-f-mono);
-  font-weight: 700;
-  font-size: 14px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  flex-shrink: 0;
+}
+.brand-icon img {
+  width: 26px;
+  height: 26px;
   object-fit: contain;
+  display: block;
 }
 
 .brand-title {

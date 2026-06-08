@@ -2843,6 +2843,133 @@ function detectCourseScope(query) {
   return null;
 }
 
+/**
+ * Build (and cache) a per-course registry from indexed content:
+ *   { courseId, courseName, normName, origin, aliases }
+ * Origin is derived from any indexed item's absolute URL for that course, so we
+ * can construct course-relative URLs (e.g. the grades page) without a stored host.
+ */
+function getCourseRegistry() {
+  const content = state.indexedContent || [];
+  if (state._courseRegistryCache && state._courseRegistryVersion === content.length) {
+    return state._courseRegistryCache;
+  }
+
+  const byCourse = new Map();
+  for (const item of content) {
+    if (!item || !item.courseName || !item.url) continue;
+
+    let origin = '';
+    let courseId = item.courseId != null ? String(item.courseId) : '';
+    try {
+      const u = new URL(item.url);
+      origin = u.origin;
+      if (!courseId) {
+        const m = u.pathname.match(/\/courses\/(\d+)/);
+        if (m) courseId = m[1];
+      }
+    } catch (_) {
+      continue;
+    }
+    if (!courseId || !origin || byCourse.has(courseId)) continue;
+
+    const courseName = item.courseName.trim();
+    byCourse.set(courseId, {
+      courseId,
+      courseName,
+      normName: normalizeText(courseName),
+      origin,
+      aliases: getCourseScopeAliases(courseName)
+    });
+  }
+
+  const registry = Array.from(byCourse.values());
+  state._courseRegistryCache = registry;
+  state._courseRegistryVersion = content.length;
+  return registry;
+}
+
+const GRADES_KEYWORD_RE = /^grade(s|book)?$/;
+
+/**
+ * Detect a "grades" intent (e.g. "chem grades", "physics gradebook") and resolve
+ * the most relevant course, returning a synthetic top result pointing at that
+ * course's grades page (course URL + /grades). Returns null when there's no
+ * grades keyword or no course term resolves.
+ */
+function buildGradesShortcut(query) {
+  const norm = normalizeText(query);
+  if (!norm) return null;
+
+  const tokens = norm.split(' ').filter(Boolean);
+  if (!tokens.some(t => GRADES_KEYWORD_RE.test(t))) return null;
+
+  const restTokens = tokens.filter(t => !GRADES_KEYWORD_RE.test(t));
+  const restQuery = restTokens.join(' ').trim();
+  if (!restQuery) return null; // bare "grades" with no course term — let normal search run
+
+  const registry = getCourseRegistry();
+  if (registry.length === 0) return null;
+
+  // Primary resolution: subject-keyword hints ("chem" -> Chemistry course key).
+  const hint = getCourseHintSignals(expandAbbreviations(restQuery));
+  let candidates = hint.hasHint
+    ? registry.filter(c => hint.matchedCourseKeys.has(c.normName))
+    : [];
+
+  // Fallback: fuzzy match over course names + code aliases.
+  if (candidates.length === 0 && typeof Fuse === 'function') {
+    const fuse = new Fuse(registry, {
+      includeScore: true,
+      threshold: 0.5,
+      ignoreLocation: true,
+      keys: ['courseName', 'normName', 'aliases']
+    });
+    const hits = fuse.search(restQuery);
+    if (hits.length > 0 && (hits[0].score ?? 1) <= 0.5) {
+      candidates = [hits[0].item];
+    }
+  }
+  if (candidates.length === 0) return null;
+
+  // Rank candidates by token overlap against the course name (prefix-aware),
+  // so "chem" prefers the closest matching chemistry course.
+  let best = candidates[0];
+  let bestScore = -1;
+  for (const c of candidates) {
+    const nameTokens = c.normName.split(' ').filter(Boolean);
+    let overlap = 0;
+    for (const t of restTokens) {
+      const variants = expandAbbreviations(t).split(' ').filter(Boolean);
+      const hit = variants.some(v =>
+        nameTokens.some(nt => nt === v || (v.length >= 3 && nt.startsWith(v)))
+      );
+      if (hit) overlap++;
+    }
+    if (overlap > bestScore) {
+      bestScore = overlap;
+      best = c;
+    }
+  }
+
+  if (!best.courseId || !best.origin) return null;
+  const url = `${best.origin}/courses/${best.courseId}/grades`;
+  if (!isValidLmsUrl(url)) return null;
+
+  return {
+    item: {
+      title: `${best.courseName} — Grades`,
+      courseName: best.courseName,
+      courseId: best.courseId,
+      type: 'grades',
+      url
+    },
+    score: Number.POSITIVE_INFINITY,
+    prePass: true,
+    gradesShortcut: true
+  };
+}
+
 function getQueryCourseHintBoost(item, normalizedQuery) {
   const hintSignals = getCourseHintSignals(normalizedQuery);
   if (!hintSignals.hasHint) return 0;
@@ -6779,7 +6906,15 @@ function runFastOverlayPreview(query) {
   }
 
   scored.sort((a, b) => b.score - a.score);
-  const results = scored.slice(0, MAX_RESULTS);
+  let results = scored.slice(0, MAX_RESULTS);
+
+  // Pin the grades shortcut so it shows instantly (before the debounced full search).
+  const gradesShortcut = buildGradesShortcut(query);
+  if (gradesShortcut) {
+    results = [gradesShortcut, ...results.filter(r => r.item?.url !== gradesShortcut.item.url)]
+      .slice(0, MAX_RESULTS);
+  }
+
   if (results.length === 0) {
     showNoResults(`No results for "${query}"`);
     updateOverlayFooter(0, Math.round(performance.now() - start));
@@ -6945,7 +7080,15 @@ function hideQuerySuggestions() {
 function performSearch(query, options = {}) {
   if (options.generation && options.generation !== state.searchGeneration) return;
 
+  // Grades shortcut (e.g. "chem grades" -> top result is the Chem course's grades page).
+  const gradesShortcut = buildGradesShortcut(query);
+
   if (!state.fuse) {
+    if (gradesShortcut) {
+      displayResults([gradesShortcut]);
+      updateOverlayFooter(1, 0);
+      return;
+    }
     showNoResults('No content indexed yet. Open Canvas or Brightspace to sync!');
     updateOverlayFooter(0, 0);
     return;
@@ -7017,6 +7160,11 @@ function performSearch(query, options = {}) {
     : temporalCorpus;
 
   if (searchCorpus.length === 0) {
+    if (gradesShortcut) {
+      displayResults([gradesShortcut]);
+      updateOverlayFooter(1, 0);
+      return;
+    }
     showNoResults(`No results for "${query}"`);
     updateOverlayFooter(0, 0);
     return;
@@ -7299,6 +7447,11 @@ function performSearch(query, options = {}) {
   }
 
   if (results.length === 0) {
+    if (gradesShortcut) {
+      displayResults([gradesShortcut]);
+      updateOverlayFooter(1, searchTimeMs);
+      return;
+    }
     showNoResults(`No results for "${query}"`);
     updateOverlayFooter(0, searchTimeMs);
     return;
@@ -7381,6 +7534,12 @@ function performSearch(query, options = {}) {
   }
 
   results = results.slice(0, MAX_RESULTS);
+
+  // Pin the grades shortcut as result #1 (deduped against any organic course match).
+  if (gradesShortcut) {
+    results = [gradesShortcut, ...results.filter(r => r.item?.url !== gradesShortcut.item.url)]
+      .slice(0, MAX_RESULTS);
+  }
 
   state.lastSearchTimeMs = searchTimeMs;
   state.lastResultCount = results.length;
@@ -8040,6 +8199,7 @@ function formatOverlayType(type) {
     'document': 'FILE',
     'video': 'VIDEO',
     'course': 'COURSE',
+    'grades': 'GRADES',
     'navigation': 'NAV',
     'link': 'LINK',
     'external': 'LINK',
