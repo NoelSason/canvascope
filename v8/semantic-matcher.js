@@ -15,10 +15,18 @@ class SemanticMatcher {
 
   /**
    * Generates a normalized concept vector from a text string.
+   * Supports both 384-dimensional dense vectors and legacy dictionary vectors.
    * @param {string} text - The input text
-   * @returns {Record<string, number>} Normalised concept vector
+   * @returns {Array<number>|Record<string, number>} Vector representation
    */
   static vectorize(text) {
+    if (typeof window !== 'undefined' && window.LocalEmbeddings) {
+      return window.LocalEmbeddings.generateFallbackEmbedding(text);
+    }
+    if (typeof globalThis !== 'undefined' && globalThis.LocalEmbeddings) {
+      return globalThis.LocalEmbeddings.generateFallbackEmbedding(text);
+    }
+
     const vector = {};
     const dims = this.DIMENSIONS;
     
@@ -63,11 +71,21 @@ class SemanticMatcher {
 
   /**
    * Computes the Cosine Similarity between two concept vectors.
-   * @param {Record<string, number>} v1 - First vector
-   * @param {Record<string, number>} v2 - Second vector
+   * Handles both arrays and concept dictionaries.
+   * @param {Array<number>|Record<string, number>} v1 - First vector
+   * @param {Array<number>|Record<string, number>} v2 - Second vector
    * @returns {number} Cosine similarity (between 0 and 1)
    */
   static cosineSimilarity(v1, v2) {
+    if (Array.isArray(v1) && Array.isArray(v2)) {
+      if (v1.length !== v2.length) return 0;
+      let dotProduct = 0;
+      for (let i = 0; i < v1.length; i++) {
+        dotProduct += (v1[i] || 0) * (v2[i] || 0);
+      }
+      return Math.max(0, Math.min(1, dotProduct));
+    }
+
     let dotProduct = 0;
     const keys = Object.keys(this.DIMENSIONS);
     

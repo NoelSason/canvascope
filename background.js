@@ -5594,6 +5594,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                         queryParams: {
                             access_type: 'offline',
                             prompt: 'consent',
+                            scope: 'https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/calendar.events'
                         },
                         skipBrowserRedirect: true
                     }
@@ -5886,6 +5887,124 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             } catch (err) {
                 console.error('[Canvascope Sync] Error fetching adaptive habits:', err);
                 sendResponse({ success: false, error: err.message });
+            }
+        })();
+        return true;
+    } else if (message.type === 'createGoogleCalendarEvent') {
+        (async () => {
+            try {
+                const { data: { session } } = await supabaseClient.auth.getSession();
+                const providerToken = session?.provider_token;
+                if (!providerToken) {
+                    sendResponse({ success: false, error: 'no_google_token', message: 'Google authentication token missing. Please sign out and sign in again.' });
+                    return;
+                }
+                
+                const eventPayload = message.event;
+                const response = await fetch('https://www.googleapis.com/calendar/v3/calendars/primary/events', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${providerToken}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(eventPayload)
+                });
+                
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    console.error('[Canvascope Calendar] Google Calendar API error:', errorText);
+                    if (response.status === 401) {
+                        sendResponse({ success: false, error: 'unauthorized', message: 'Google Calendar access expired. Please sign out and sign in again.' });
+                    } else {
+                        sendResponse({ success: false, error: 'api_error', message: `Google Calendar error: ${response.status} ${errorText}` });
+                    }
+                    return;
+                }
+                
+                const result = await response.json();
+                sendResponse({ success: true, eventId: result.id });
+            } catch (err) {
+                console.error('[Canvascope Calendar] Unhandled error:', err);
+                sendResponse({ success: false, error: 'exception', message: err.message });
+            }
+        })();
+        return true;
+    } else if (message.type === 'promptSyllabusAI') {
+        (async () => {
+            try {
+                const accessToken = await getSupabaseAccessToken();
+                if (!accessToken) {
+                    sendResponse({ success: false, error: 'not_signed_in', message: 'You must be signed in to Canvascope to use Syllabus Autopilot.' });
+                    return;
+                }
+                
+                const proxyUrl = 'https://vcadcdgnwxjlgaoqktkd.supabase.co/functions/v1/gemini-proxy';
+                const response = await fetch(proxyUrl, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${accessToken}`
+                    },
+                    body: JSON.stringify({
+                        prompt: message.prompt,
+                        systemInstruction: 'You are an academic syllabus parser. Extract all assignments, readings, and exams. Return ONLY a valid JSON array of objects. Do not wrap in backticks or markdown.'
+                    })
+                });
+                
+                if (!response.ok) {
+                    sendResponse({ success: false, error: 'api_error', message: `Cloud AI error: status ${response.status}` });
+                    return;
+                }
+                
+                if (!response.body) {
+                    sendResponse({ success: false, error: 'no_body', message: 'No response body returned from cloud AI.' });
+                    return;
+                }
+                
+                let fullText = '';
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder('utf-8');
+                let buffer = '';
+                let openBraces = 0;
+                let startIndex = -1;
+                
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    
+                    buffer += decoder.decode(value, { stream: true });
+                    let i = 0;
+                    while (i < buffer.length) {
+                        const char = buffer[i];
+                        if (char === '{') {
+                            if (openBraces === 0) {
+                                startIndex = i;
+                            }
+                            openBraces++;
+                        } else if (char === '}') {
+                            openBraces--;
+                            if (openBraces === 0 && startIndex !== -1) {
+                                const jsonStr = buffer.substring(startIndex, i + 1);
+                                try {
+                                    const parsed = JSON.parse(jsonStr);
+                                    const text = parsed?.candidates?.[0]?.content?.parts?.[0]?.text;
+                                    if (text) {
+                                        fullText += text;
+                                    }
+                                } catch (_) {}
+                                buffer = buffer.substring(i + 1);
+                                i = -1;
+                                startIndex = -1;
+                            }
+                        }
+                        i++;
+                    }
+                }
+                
+                sendResponse({ success: true, text: fullText.trim() });
+            } catch (err) {
+                console.error('[Canvascope Syllabus AI] prompt failed:', err);
+                sendResponse({ success: false, error: 'exception', message: err.message });
             }
         })();
         return true;

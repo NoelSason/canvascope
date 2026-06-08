@@ -65,7 +65,8 @@
       cmdRemind(),
       cmdSync(),
       cmdReload(),
-      cmdZen()
+      cmdZen(),
+      cmdAutopilot()
     ];
   }
 
@@ -681,5 +682,32 @@
     };
   }
 
-  console.log('[Canvascope Slash Pack] loaded — 14 commands registered.');
+  // -------------------------------------------------------------------------
+  // /autopilot /syllabus
+  // -------------------------------------------------------------------------
+  function cmdAutopilot() {
+    return {
+      order: 160, id: 'cs-autopilot', primaryAlias: 'autopilot',
+      aliases: ['syllabus', 'auto-schedule', 'scheduler'],
+      title: 'Syllabus Autopilot',
+      description: 'Extract course events from syllabus & sync to Google Calendar.',
+      keywords: ['syllabus', 'autopilot', 'schedule', 'gcal', 'calendar', 'import'],
+      icon: 'cal', needsArgument: false,
+      buildResults(arg, ctx) {
+        const tools = getToolsApi();
+        if (!tools) return [{ kind: 'guidance', title: 'Academic tools not loaded', icon: 'bolt' }];
+        return [{
+          kind: 'action', title: 'Run Syllabus Autopilot',
+          subtitle: 'Auto-extract tasks from active PDF syllabus.',
+          icon: 'cal', badge: 'Run',
+          onSelect: () => {
+            tools.openSyllabusAutopilot();
+            ctx.closeOverlay?.();
+          }
+        }];
+      }
+    };
+  }
+
+  console.log('[Canvascope Slash Pack] loaded — 15 commands registered.');
 })();

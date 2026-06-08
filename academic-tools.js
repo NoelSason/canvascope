@@ -973,6 +973,230 @@
     });
   }
 
+  async function openSyllabusAutopilot(pdfUrl) {
+    if (!pdfUrl) {
+      // Look for PDF urls on the active page
+      try {
+        const tabData = await new Promise((resolve) => {
+          chrome.runtime.sendMessage({ action: 'collectPdfCandidates' }, (response) => {
+            resolve(response);
+          });
+        });
+        pdfUrl = tabData?.candidates?.[0]?.url || tabData?.pageUrl;
+      } catch (_) {}
+    }
+
+    openModal(async (panel, root) => {
+      panel.innerHTML = '';
+      
+      const head = document.createElement('div');
+      head.className = 'panel__head';
+      head.innerHTML = `
+        <h2>Syllabus Autopilot</h2>
+        <div class="panel__sub">Extract course schedules and sync to Google Calendar</div>
+        <button class="panel__close" data-close>✕</button>
+      `;
+      head.querySelector('[data-close]').addEventListener('click', closeModal);
+      panel.appendChild(head);
+
+      const body = document.createElement('div');
+      body.className = 'panel__body';
+      panel.appendChild(body);
+
+      // Loading state UI
+      const loader = document.createElement('div');
+      loader.className = 'autopilot-loading';
+      loader.innerHTML = `
+        <div class="autopilot-spinner"></div>
+        <div class="autopilot-loading-text" data-loading-text>Step 1 of 3: Parsing syllabus PDF...</div>
+        <div class="autopilot-loading-sub">This runs 100% locally and may take a moment for scanned documents.</div>
+      `;
+      body.appendChild(loader);
+
+      const loadingText = loader.querySelector('[data-loading-text]');
+
+      try {
+        if (!pdfUrl || (!pdfUrl.endsWith('.pdf') && !pdfUrl.includes('/files/') && !pdfUrl.includes('/download'))) {
+          throw new Error('No syllabus PDF detected on the active page. Navigate to your course PDF page first.');
+        }
+
+        // 1. Fetch & Parse PDF
+        if (!window.DocumentParser) {
+          throw new Error('Document parser component not loaded.');
+        }
+        
+        const pages = await window.DocumentParser.fetchAndParsePdf(pdfUrl, 'Syllabus', 'General');
+        if (!pages || pages.length === 0) {
+          throw new Error('Could not parse any text from the PDF syllabus.');
+        }
+
+        loadingText.textContent = 'Step 2 of 3: Analyzing schedule with AI...';
+
+        // Combine pages and limit context length
+        const rawText = pages.join('\n').trim();
+        const docTextSample = rawText.substring(0, 15000);
+
+        // 2. Prompt Cloud AI proxy via message
+        const prompt = `Analyze this syllabus text and extract all assignments, homeworks, exams, projects, and due dates.
+Return ONLY a valid JSON array of objects. Do not write any markdown blocks (like \`\`\`json) or extra explanations. The response must be a single array of objects matching this exact format:
+[
+  {"title": "Homework 1: Intro to Python", "dueAt": "2026-09-12T23:59:00Z", "course": "General"},
+  {"title": "Midterm Exam", "dueAt": "2026-10-15T10:00:00Z", "course": "General"}
+]
+Text:
+${docTextSample}`;
+
+        const aiResponse = await new Promise((resolve) => {
+          chrome.runtime.sendMessage({
+            type: 'promptSyllabusAI',
+            prompt: prompt
+          }, (response) => resolve(response || { success: false, error: 'no_response' }));
+        });
+
+        if (!aiResponse.success) {
+          throw new Error(aiResponse.message || 'AI parsing request failed.');
+        }
+
+        loadingText.textContent = 'Step 3 of 3: Compiling schedule list...';
+
+        // Clean any markdown formatting if AI wrapped it
+        let cleanText = aiResponse.text.trim();
+        if (cleanText.startsWith('```')) {
+          cleanText = cleanText.replace(/^```[a-zA-Z]*\n/, '').replace(/\n```$/, '').trim();
+        }
+
+        let scheduleItems = [];
+        try {
+          scheduleItems = JSON.parse(cleanText);
+        } catch (parseErr) {
+          console.warn('[Canvascope Autopilot] JSON parse failed, cleanText:', cleanText);
+          throw new Error('Failed to parse the structured schedule JSON from AI.');
+        }
+
+        if (!Array.isArray(scheduleItems) || scheduleItems.length === 0) {
+          throw new Error('No assignments or key deadlines were found in the syllabus.');
+        }
+
+        // Render schedule items checklist
+        body.removeChild(loader);
+
+        const listContainer = document.createElement('div');
+        listContainer.className = 'autopilot-list-container';
+        listContainer.innerHTML = `
+          <div class="autopilot-meta-row">
+            <span>Found ${scheduleItems.length} calendar items. Select the ones to schedule:</span>
+          </div>
+          <ul class="autopilot-list">
+            ${scheduleItems.map((item, idx) => {
+              const dateVal = item.dueAt ? item.dueAt.substring(0, 16) : '';
+              return `
+                <li class="autopilot-item" data-idx="${idx}">
+                  <input type="checkbox" checked data-chk />
+                  <div class="autopilot-item-fields">
+                    <input type="text" value="${escapeHtml(item.title)}" data-title placeholder="Task Title" style="flex: 2; background: var(--cs-tool-bg-1); border: 1px solid var(--cs-tool-border); color: var(--cs-tool-text); padding: 4px 8px; font-size: 12px; border-radius: 4px;" />
+                    <input type="datetime-local" value="${dateVal}" data-date style="flex: 1; background: var(--cs-tool-bg-1); border: 1px solid var(--cs-tool-border); color: var(--cs-tool-text); padding: 4px 8px; font-size: 11px; border-radius: 4px;" />
+                  </div>
+                </li>
+              `;
+            }).join('')}
+          </ul>
+          <div class="autopilot-footer">
+            <label class="autopilot-sync-gcal-label" style="display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--cs-tool-text-2); cursor: pointer;">
+              <input type="checkbox" checked data-gcal-sync />
+              <span>Sync to my Google Calendar</span>
+            </label>
+            <button class="autopilot-btn-submit" data-submit-autopilot>Save and Schedule</button>
+          </div>
+        `;
+        body.appendChild(listContainer);
+
+        const submitBtn = listContainer.querySelector('[data-submit-autopilot]');
+        submitBtn.addEventListener('click', async () => {
+          submitBtn.disabled = true;
+          submitBtn.textContent = 'Scheduling...';
+
+          const rows = listContainer.querySelectorAll('.autopilot-item');
+          const syncGoogle = listContainer.querySelector('[data-gcal-sync]').checked;
+
+          let countSaved = 0;
+          let countCalendar = 0;
+
+          let courseNameVal = 'General';
+          try {
+            const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+            if (tab && tab.title) {
+              const parts = tab.title.split(':');
+              if (parts.length > 0) courseNameVal = parts[0].trim();
+            }
+          } catch (_) {}
+
+          for (const row of rows) {
+            const checked = row.querySelector('[data-chk]').checked;
+            if (!checked) continue;
+
+            const title = row.querySelector('[data-title]').value.trim();
+            const dateStr = row.querySelector('[data-date]').value;
+            const dueAt = dateStr ? new Date(dateStr).toISOString() : null;
+
+            if (!title) continue;
+
+            // 1. Add to customTodos
+            await addTodo(title, { dueAt, color: '#b297ff', courseId: courseNameVal });
+            countSaved++;
+
+            // 2. Add to Google Calendar if requested
+            if (syncGoogle && dueAt) {
+              const startDateTime = dueAt;
+              const endDateTime = new Date(new Date(dueAt).getTime() + 30 * 60 * 1000).toISOString();
+              
+              const gcalRes = await new Promise((resolve) => {
+                chrome.runtime.sendMessage({
+                  type: 'createGoogleCalendarEvent',
+                  event: {
+                    summary: title,
+                    description: `Course deadline for ${courseNameVal} - synced via Canvascope Syllabus Autopilot`,
+                    start: { dateTime: startDateTime },
+                    end: { dateTime: endDateTime }
+                  }
+                }, (response) => resolve(response || { success: false }));
+              });
+              if (gcalRes.success) {
+                countCalendar++;
+              }
+            }
+          }
+
+          try { chrome.runtime.sendMessage({ action: 'forceScan', reason: 'autopilot-sync' }); } catch (_) {}
+
+          closeModal();
+          
+          const calendarMsg = syncGoogle ? ` (${countCalendar} sent to Google Calendar)` : '';
+          const successToast = document.createElement('div');
+          successToast.style.cssText = `
+            position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
+            z-index: 2147483647; padding: 12px 20px; border-radius: 8px;
+            background: #101b16; color: #6fce9a; border: 1px solid rgba(111, 206, 154, 0.45);
+            font: 600 13px var(--cs-tool-font), system-ui;
+            box-shadow: 0 16px 42px rgba(0,0,0,0.45);
+          `;
+          successToast.textContent = `Autopilot synced: ${countSaved} tasks added${calendarMsg} ✓`;
+          document.body.appendChild(successToast);
+          setTimeout(() => successToast.remove(), 4000);
+        });
+
+      } catch (err) {
+        body.innerHTML = `
+          <div class="autopilot-error">
+            <div class="autopilot-error-title">Autopilot Parsing Failed</div>
+            <div class="autopilot-error-body">${escapeHtml(err.message)}</div>
+            <button class="autopilot-error-close" data-err-close>Close</button>
+          </div>
+        `;
+        body.querySelector('[data-err-close]').addEventListener('click', closeModal);
+      }
+    });
+  }
+
   window.CanvascopeAcademicTools = {
     openGpaCalculator,
     openGradesSummary,
@@ -985,7 +1209,8 @@
     closeModal,
     computeGpa,
     percentToLetter,
-    openZenSpace
+    openZenSpace,
+    openSyllabusAutopilot
   };
 
   // -------------------------------------------------------------------------
@@ -1474,6 +1699,132 @@
       border-left: 2px solid rgba(178, 151, 255, 0.28);
       padding: 8px 10px;
       border-radius: 0 6px 6px 0;
+    }
+    
+    /* Syllabus Autopilot Styles */
+    .autopilot-loading {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 40px 20px;
+      text-align: center;
+    }
+    .autopilot-spinner {
+      width: 36px;
+      height: 36px;
+      border: 3px solid var(--cs-tool-border);
+      border-top-color: var(--cs-tool-accent);
+      border-radius: 50%;
+      animation: autopilot-spin 1s linear infinite;
+      margin-bottom: 16px;
+    }
+    @keyframes autopilot-spin {
+      to { transform: rotate(360deg); }
+    }
+    .autopilot-loading-text {
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--cs-tool-text);
+      margin-bottom: 6px;
+    }
+    .autopilot-loading-sub {
+      font-size: 11px;
+      color: var(--cs-tool-text-3);
+    }
+    .autopilot-list-container {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      max-height: 55vh;
+    }
+    .autopilot-meta-row {
+      font-size: 12px;
+      color: var(--cs-tool-text-2);
+      font-weight: 500;
+    }
+    .autopilot-list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      border: 1px solid var(--cs-tool-border);
+      border-radius: 8px;
+      padding: 10px;
+      background: var(--cs-tool-bg-2);
+    }
+    .autopilot-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px;
+      background: var(--cs-tool-bg-3);
+      border-radius: 6px;
+      border: 1px solid var(--cs-tool-border);
+    }
+    .autopilot-item input[type="checkbox"] {
+      width: 16px;
+      height: 16px;
+      accent-color: var(--cs-tool-accent);
+      cursor: pointer;
+    }
+    .autopilot-item-fields {
+      display: flex;
+      flex: 1;
+      gap: 8px;
+    }
+    .autopilot-footer {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-top: 10px;
+      padding-top: 10px;
+      border-top: 1px solid var(--cs-tool-border);
+    }
+    .autopilot-btn-submit {
+      background: var(--cs-tool-accent);
+      color: #080a11;
+      font-weight: 600;
+      border: none;
+      border-radius: 6px;
+      padding: 8px 16px;
+      font-size: 13px;
+      cursor: pointer;
+    }
+    .autopilot-btn-submit:hover {
+      background: var(--cs-tool-accent-2);
+    }
+    .autopilot-error {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 24px 0;
+      text-align: center;
+    }
+    .autopilot-error-title {
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--cs-tool-danger);
+      margin-bottom: 8px;
+    }
+    .autopilot-error-body {
+      font-size: 12px;
+      color: var(--cs-tool-text-2);
+      margin-bottom: 16px;
+      max-width: 80%;
+      line-height: 1.5;
+    }
+    .autopilot-error-close {
+      background: var(--cs-tool-bg-3);
+      color: var(--cs-tool-text);
+      border: 1px solid var(--cs-tool-border);
+      border-radius: 6px;
+      padding: 6px 16px;
+      font-size: 12px;
+      cursor: pointer;
     }
   `;
 

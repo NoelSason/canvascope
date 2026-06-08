@@ -3,6 +3,14 @@
  * Handles UI interactions, local model lifecycle, and RAG context compilation.
  */
 document.addEventListener('DOMContentLoaded', () => {
+  // Initialize v9 neural and OCR components
+  if (window.LocalEmbeddings) {
+    window.LocalEmbeddings.initPipeline();
+  }
+  if (window.CanvascopeOCR) {
+    window.CanvascopeOCR.initWorker();
+  }
+
   const statusDot = document.querySelector('.status-dot');
   const statusText = document.querySelector('.status-text');
   const aiStatusBadge = document.getElementById('ai-status');

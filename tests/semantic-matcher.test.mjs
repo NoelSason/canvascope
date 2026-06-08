@@ -94,3 +94,31 @@ test('SemanticMatcher.rrfMerge prefers items ranked highly across multiple lists
   assert.equal(merged[2].title, 'Syllabus Notes');
   assert.equal(merged[3].title, 'Personal Gym');
 });
+
+test('SemanticMatcher.vectorize generates 384-dim fallback vectors when LocalEmbeddings is present', () => {
+  // Bind mock LocalEmbeddings to globalThis
+  globalThis.LocalEmbeddings = {
+    generateFallbackEmbedding: (text) => new Array(384).fill(0.5)
+  };
+
+  try {
+    const vec = SemanticMatcher.vectorize('test');
+    assert.ok(Array.isArray(vec));
+    assert.equal(vec.length, 384);
+    assert.equal(vec[0], 0.5);
+  } finally {
+    delete globalThis.LocalEmbeddings;
+  }
+});
+
+test('SemanticMatcher.cosineSimilarity computes similarity index for 384-dim array vectors', () => {
+  const v1 = new Array(384).fill(0).map((_, i) => i === 0 ? 1 : 0);
+  const v2 = new Array(384).fill(0).map((_, i) => i === 0 ? 1 : 0);
+  const v3 = new Array(384).fill(0).map((_, i) => i === 1 ? 1 : 0);
+
+  const sim12 = SemanticMatcher.cosineSimilarity(v1, v2);
+  const sim13 = SemanticMatcher.cosineSimilarity(v1, v3);
+
+  assert.equal(sim12, 1.0, 'Identical vectors should have cosine similarity 1.0');
+  assert.equal(sim13, 0.0, 'Orthogonal vectors should have cosine similarity 0.0');
+});

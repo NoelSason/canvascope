@@ -1953,6 +1953,27 @@ ${themesApi.buildCssVariables(merged)}
   border-color: transparent !important;
   box-shadow: none !important;
 }
+/* The module Prev/Next footer BAR should match the page background rather than
+   read as a raised surface strip. The buttons inside keep their surface styling
+   (handled by the .module-sequence-footer-button rules above). */
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .module-sequence-footer-content,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .module-sequence-footer__content,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .module-sequence-padding {
+  background-color: transparent !important;
+  box-shadow: none !important;
+  border-color: transparent !important;
+}
+/* Module / item-group headers (the collapsible "folder" title rows on Modules,
+   Assignments, etc.) read as a header bar instead of plain floating text: give
+   them a distinct sub-surface with a rounded top, overriding the flatten-panels
+   rule above. */
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .ig-header {
+  background-color: var(--cs-skin-surface2) !important;
+  border: 1px solid var(--cs-skin-border) !important;
+  border-bottom: 0 !important;
+  border-top-left-radius: var(--cs-skin-radius) !important;
+  border-top-right-radius: var(--cs-skin-radius) !important;
+}
 /* Alternating-row backgrounds on lists (announcements/assignments/modules):
    zebra-striping looks like extra panels on themed bgs — kill it. */
 .${BODY_ROOT_CLASS} .ic-Layout-contentMain .ig-row:nth-child(even),

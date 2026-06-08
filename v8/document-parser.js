@@ -25,7 +25,52 @@ class DocumentParser {
       try {
         const page = await pdf.getPage(pageNum);
         const textContent = await page.getTextContent();
-        const pageText = textContent.items.map(item => item.str).join(' ').trim();
+        let pageText = textContent.items.map(item => item.str).join(' ').trim();
+        
+        // OCR Fallback: if page contains very little text (e.g. scanned image PDF)
+        if (pageText.length < 50) {
+          console.log(`[Canvascope DocumentParser] Low selectable text on page ${pageNum} (${pageText.length} chars). Triggering local OCR...`);
+          try {
+            if (typeof document === 'undefined') {
+              throw new Error('document is undefined (not running in browser)');
+            }
+            const canvas = document.createElement('canvas');
+            const context = canvas.getContext('2d');
+            const viewport = page.getViewport({ scale: 1.5 }); // scale up for OCR quality
+            canvas.height = viewport.height;
+            canvas.width = viewport.width;
+
+            await page.render({
+              canvasContext: context,
+              viewport: viewport
+            }).promise;
+
+            const dataUrl = canvas.toDataURL('image/png');
+            let ocrText = '';
+
+            if (typeof window !== 'undefined' && window.CanvascopeOCR) {
+              ocrText = await window.CanvascopeOCR.recognize(dataUrl);
+            } else if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
+              const res = await new Promise((resolve) => {
+                chrome.runtime.sendMessage({
+                  type: 'canvascope-ocr-request',
+                  imageData: dataUrl
+                }, (response) => resolve(response || { success: false }));
+              });
+              if (res && res.success) {
+                ocrText = res.text || '';
+              }
+            }
+
+            if (ocrText) {
+              console.log(`[Canvascope DocumentParser] OCR page ${pageNum} success: extracted ${ocrText.length} chars.`);
+              pageText = (pageText + '\n' + ocrText).trim();
+            }
+          } catch (ocrErr) {
+            console.warn(`[Canvascope DocumentParser] OCR failed on page ${pageNum}:`, ocrErr);
+          }
+        }
+
         pagesText.push(pageText);
       } catch (err) {
         console.warn(`[Canvascope DocumentParser] Failed to extract page ${pageNum}:`, err);

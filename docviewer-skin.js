@@ -65,7 +65,7 @@
 
   function hasDocViewerChildFrame() {
     return Boolean(document.querySelector(
-      'iframe[src*="canvadocs"], iframe[src*="/file_preview"], #file-preview-iframe'
+      'iframe[src*="canvadoc"], iframe[src*="/file_preview"], iframe[src*="inline_view"], #file-preview-iframe'
     ));
   }
 
@@ -205,13 +205,13 @@ ${buildVars(tokens, mode)}
   background-color: var(--csdv-bg) !important;
 }
 
-:root.cs-docviewer-skin header,
-:root.cs-docviewer-skin nav,
-:root.cs-docviewer-skin [role="toolbar"],
-:root.cs-docviewer-skin [class*="toolbar"],
-:root.cs-docviewer-skin [class*="Toolbar"],
-:root.cs-docviewer-skin [class*="header"],
-:root.cs-docviewer-skin [class*="Header"] {
+:root.cs-docviewer-skin header:not(button):not([role="button"]):not(a):not(i):not(span):not(img):not(svg):not(input):not(select),
+:root.cs-docviewer-skin nav:not(button):not([role="button"]):not(a):not(i):not(span):not(img):not(svg):not(input):not(select),
+:root.cs-docviewer-skin [role="toolbar"]:not(button):not([role="button"]):not(a):not(i):not(span):not(img):not(svg):not(input):not(select),
+:root.cs-docviewer-skin [class*="toolbar"]:not(button):not([role="button"]):not(a):not(i):not(span):not(img):not(svg):not(input):not(select),
+:root.cs-docviewer-skin [class*="Toolbar"]:not(button):not([role="button"]):not(a):not(i):not(span):not(img):not(svg):not(input):not(select),
+:root.cs-docviewer-skin [class*="header"]:not(button):not([role="button"]):not(a):not(i):not(span):not(img):not(svg):not(input):not(select),
+:root.cs-docviewer-skin [class*="Header"]:not(button):not([role="button"]):not(a):not(i):not(span):not(img):not(svg):not(input):not(select) {
   background: var(--csdv-surface) !important;
   background-image: none !important;
   color: var(--csdv-text) !important;
@@ -240,15 +240,56 @@ ${buildVars(tokens, mode)}
   text-shadow: none !important;
 }
 
+/*
+ * The DocViewer toolbar (canvadocs.instructure.com .ViewerControls /
+ * .DocumentControls) should blend into the page rather than read as a separate
+ * strip, so paint the bar with the page background and keep only a hairline
+ * bottom edge to separate it from the document.
+ */
+:root.cs-docviewer-skin [class*="ViewerControls"],
+:root.cs-docviewer-skin [class*="DocumentControls"] {
+  background: var(--csdv-bg) !important;
+  background-image: none !important;
+  border-color: var(--csdv-border) !important;
+}
+
+/*
+ * Buttons sit lightly on the bar: a subtle raised surface and a soft border are
+ * enough to read as controls now that the icons themselves are high-contrast
+ * (see the fill:currentColor rule below). No heavy shadow, so nothing stands out
+ * as a stark box against the page.
+ */
 :root.cs-docviewer-skin button,
 :root.cs-docviewer-skin [role="button"],
 :root.cs-docviewer-skin select,
 :root.cs-docviewer-skin input {
-  background-color: var(--csdv-surface-2) !important;
-  background-image: none !important;
+  background-color: var(--csdv-surface) !important;
   color: var(--csdv-text) !important;
-  border-color: var(--csdv-border-hi) !important;
+  border: 1px solid var(--csdv-border-hi) !important;
   box-shadow: none !important;
+}
+
+/*
+ * Recolor toolbar icons to the text color directly rather than inverting them.
+ * The canvadocs viewer (loaded with ?theme=dark) draws most icons near-white but
+ * a few (e.g. the rotate/refresh control) already dark; a blanket invert(1)
+ * flips those the wrong way and leaves them faint. fill:currentColor recolors
+ * every monochrome SVG deterministically in both light and dark modes.
+ */
+:root.cs-docviewer-skin button svg,
+:root.cs-docviewer-skin button svg *,
+:root.cs-docviewer-skin [role="button"] svg,
+:root.cs-docviewer-skin [role="button"] svg *,
+:root.cs-docviewer-skin [role="toolbar"] svg,
+:root.cs-docviewer-skin [role="toolbar"] svg * {
+  filter: none !important;
+  fill: currentColor !important;
+}
+
+/* Raster icons (e.g. <img>) can't be recolored via fill; invert in light mode. */
+:root.cs-docviewer-skin-light button img,
+:root.cs-docviewer-skin-light [role="button"] img {
+  filter: invert(1) !important;
 }
 
 :root.cs-docviewer-skin button:hover,
@@ -277,14 +318,32 @@ ${buildVars(tokens, mode)}
   stroke: currentColor !important;
 }
 
+/*
+ * The grey area around the PDF page is pdf.js's scroll region (the viewer is
+ * pdf.js-based). Paint the scroll/viewer containers with bg-soft — one step
+ * darker than the page background — so the gutter matches the theme while still
+ * being distinguishable from the document page. Deliberately NOT targeting
+ * .page/.canvasWrapper/.textLayer so the actual pages stay their real colour.
+ */
 :root.cs-docviewer-skin [class*="pageContainer"],
 :root.cs-docviewer-skin [class*="PageContainer"],
 :root.cs-docviewer-skin [class*="page-container"],
 :root.cs-docviewer-skin [class*="document-container"],
 :root.cs-docviewer-skin [class*="DocumentContainer"],
+:root.cs-docviewer-skin [class*="DocumentView"],
+:root.cs-docviewer-skin [class*="documentView"],
+:root.cs-docviewer-skin [class*="Pages"],
 :root.cs-docviewer-skin [class*="scroll"],
-:root.cs-docviewer-skin [class*="Scroll"] {
-  background-color: var(--csdv-bg) !important;
+:root.cs-docviewer-skin [class*="Scroll"],
+:root.cs-docviewer-skin #outerContainer,
+:root.cs-docviewer-skin #mainContainer,
+:root.cs-docviewer-skin #viewerContainer,
+:root.cs-docviewer-skin #viewer,
+:root.cs-docviewer-skin .pdfViewer,
+:root.cs-docviewer-skin [class*="pdfViewer"],
+:root.cs-docviewer-skin [class*="viewerContainer"],
+:root.cs-docviewer-skin [class*="ViewerContainer"] {
+  background-color: var(--csdv-bg-soft) !important;
 }
 `;
   }
@@ -312,11 +371,52 @@ ${buildVars(tokens, mode)}
 }
 
 #file-preview-iframe,
-iframe[src*="canvadocs"],
-iframe[src*="/file_preview"] {
+iframe[src*="canvadoc"],
+iframe[src*="/file_preview"],
+iframe[src*="inline_view"] {
   background-color: var(--csdv-bg) !important;
   color-scheme: ${mode};
 }
+
+/*
+ * Canvas renders the full-screen file preview as an Instructure UI Modal whose
+ * emotion class names end in -modal/-modalHeader/-modalBody/-modalFooter. That
+ * chrome lives in this (parent) page, not the canvadocs frame, so the dark
+ * navy header/footer survive light themes unless we repaint them here. Scope to
+ * the modal that actually wraps the preview iframe so other dialogs are left be.
+ */
+[class*="-modal"]:has(#file-preview-iframe),
+[class*="-modal"]:has(#file-preview-iframe) [class*="modalHeader"],
+[class*="-modal"]:has(#file-preview-iframe) [class*="modalFooter"] {
+  background: var(--csdv-surface) !important;
+  background-image: none !important;
+  color: var(--csdv-text) !important;
+  border-color: var(--csdv-border-hi) !important;
+}
+
+[class*="-modal"]:has(#file-preview-iframe) [class*="modalBody"] {
+  background: var(--csdv-bg) !important;
+  color: var(--csdv-text) !important;
+}
+
+[class*="-modal"]:has(#file-preview-iframe) [class*="modalHeader"] *,
+[class*="-modal"]:has(#file-preview-iframe) [class*="modalFooter"] * {
+  color: var(--csdv-text) !important;
+  border-color: var(--csdv-border-hi) !important;
+}
+
+[class*="-modal"]:has(#file-preview-iframe) [class*="modalHeader"] svg,
+[class*="-modal"]:has(#file-preview-iframe) [class*="modalFooter"] svg {
+  fill: currentColor !important;
+  color: var(--csdv-text) !important;
+}
+${mode === 'light' ? `
+/* The "Alternative formats" (Ally) control is a fixed light-colored <img>, so
+ * color/fill cannot darken it. Invert it for legibility on a light header. */
+[class*="-modal"]:has(#file-preview-iframe) [class*="modalHeader"] img {
+  filter: invert(1) brightness(0.4) !important;
+}
+` : ''}
 `;
   }
 
