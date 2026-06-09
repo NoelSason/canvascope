@@ -5641,6 +5641,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
                             const accessToken = hashParams.get('access_token');
                             const refreshToken = hashParams.get('refresh_token');
+                            // Google provider tokens ride in the same hash. provider_refresh_token
+                            // is only returned because we pass access_type=offline + prompt=consent
+                            // above. Capture both: provider_token for the immediate fast path,
+                            // provider_refresh_token for durable server-side refresh.
+                            const providerToken = hashParams.get('provider_token');
+                            const providerRefreshToken = hashParams.get('provider_refresh_token');
 
                             if (accessToken && refreshToken) {
                                 supabaseClient.auth.setSession({
@@ -5657,6 +5663,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                                         console.log('[Canvascope Auth] Successfully authenticated!');
                                         const { data: { session } } = await supabaseClient.auth.getSession();
                                         await persistAuthStatusSnapshot(session || null);
+                                        // Persist the Google refresh token so calendar writes survive
+                                        // beyond the ~1h provider_token lifetime without re-auth.
+                                        await persistGoogleCalendarTokens(providerToken, providerRefreshToken)
+                                            .catch((e) => console.error('[Canvascope Calendar] Failed to persist Google tokens:', e));
                                         dropBridgeDebug('auth: OAuth success, starting DropBridge loop');
                                         startDropBridgeV2Loop('post-login').catch((error) => {
                                             console.error('[DropBridge v2] Post-login bootstrap failure:', parseErrorMessage(error));
@@ -5687,6 +5697,58 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
         return true;
 
+    }
+});
+
+// --- Google Calendar token helpers -------------------------------------------
+// The Google access token (provider_token) only lives ~1h and Supabase does not
+// auto-refresh it. We persist the long-lived provider_refresh_token server-side
+// and exchange it for fresh access tokens via the google-token-refresh edge fn,
+// so syllabus autopilot can write calendar events without forcing re-auth.
+const GOOGLE_PROVIDER_TOKEN_CACHE_KEY = 'canvascopeGoogleProviderToken';
+
+async function persistGoogleCalendarTokens(providerToken, providerRefreshToken) {
+    // Cache the short-lived access token locally for the immediate fast path.
+    if (providerToken) {
+        try { await chrome.storage.local.set({ [GOOGLE_PROVIDER_TOKEN_CACHE_KEY]: providerToken }); } catch (_) {}
+    }
+    // Durably store the refresh token server-side (RLS scopes the row to this user).
+    if (!providerRefreshToken) {
+        console.warn('[Canvascope Calendar] No provider_refresh_token in OAuth callback; calendar writes will rely on the short-lived token only.');
+        return;
+    }
+    const { data: { user } } = await supabaseClient.auth.getUser();
+    if (!user) throw new Error('No authenticated user to attach Google refresh token to');
+    const { error } = await supabaseClient
+        .from('google_calendar_tokens')
+        .upsert(
+            { user_id: user.id, refresh_token: providerRefreshToken, updated_at: new Date().toISOString() },
+            { onConflict: 'user_id' }
+        );
+    if (error) throw error;
+    console.log('[Canvascope Calendar] Stored Google refresh token for user', user.id);
+}
+
+// Ask the edge function to exchange the stored refresh token for a fresh access
+// token. Returns the access token string (also caches it locally).
+async function getFreshGoogleAccessToken() {
+    const { data, error } = await supabaseClient.functions.invoke('google-token-refresh');
+    if (error) throw new Error(`Google token refresh failed: ${error.message || error}`);
+    if (!data || !data.access_token) throw new Error('Google token refresh returned no access_token');
+    try { await chrome.storage.local.set({ [GOOGLE_PROVIDER_TOKEN_CACHE_KEY]: data.access_token }); } catch (_) {}
+    return data.access_token;
+}
+
+// Bridge: a content script (academic-tools.js -> openSyllabusAutopilot) can't reach
+// the sibling content.js collectPdfCandidates handler via runtime.sendMessage, so the
+// background forwards the request to the requesting tab and relays the result back.
+// Without this, autopilot always reported "No syllabus PDF detected on the active page."
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (message && message.action === 'collectPdfCandidates' && sender && sender.tab && typeof sender.tab.id === 'number') {
+        collectPdfCandidatesFromTab(sender.tab.id)
+            .then(sendResponse)
+            .catch((e) => sendResponse({ success: false, candidates: [], reason: String((e && e.message) || e) }));
+        return true;
     }
 });
 
@@ -5894,14 +5956,23 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         (async () => {
             try {
                 const { data: { session } } = await supabaseClient.auth.getSession();
-                const providerToken = session?.provider_token;
+                let providerToken = session?.provider_token;
                 if (!providerToken) {
-                    sendResponse({ success: false, error: 'no_google_token', message: 'Google authentication token missing. Please sign out and sign in again.' });
-                    return;
+                    const cached = await chrome.storage.local.get([GOOGLE_PROVIDER_TOKEN_CACHE_KEY]);
+                    providerToken = cached?.[GOOGLE_PROVIDER_TOKEN_CACHE_KEY] || null;
+                }
+                if (!providerToken) {
+                    try {
+                        providerToken = await getFreshGoogleAccessToken();
+                    } catch (e) {
+                        console.error('[Canvascope Calendar] No Google token and refresh failed:', e);
+                        sendResponse({ success: false, error: 'no_google_token', message: 'Google Calendar not connected. Please sign in with Google again to grant calendar access.' });
+                        return;
+                    }
                 }
                 
                 const eventPayload = message.event;
-                const response = await fetch('https://www.googleapis.com/calendar/v3/calendars/primary/events', {
+                let response = await fetch('https://www.googleapis.com/calendar/v3/calendars/primary/events', {
                     method: 'POST',
                     headers: {
                         'Authorization': `Bearer ${providerToken}`,
@@ -5909,7 +5980,26 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                     },
                     body: JSON.stringify(eventPayload)
                 });
-                
+
+                // Token expired mid-flight -> refresh once and retry.
+                if (response.status === 401) {
+                    try {
+                        providerToken = await getFreshGoogleAccessToken();
+                        response = await fetch('https://www.googleapis.com/calendar/v3/calendars/primary/events', {
+                            method: 'POST',
+                            headers: {
+                                'Authorization': `Bearer ${providerToken}`,
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify(eventPayload)
+                        });
+                    } catch (refreshErr) {
+                        console.error('[Canvascope Calendar] Refresh after 401 failed:', refreshErr);
+                        sendResponse({ success: false, error: 'unauthorized', message: 'Google Calendar access expired and could not be refreshed. Please reconnect your Google account.' });
+                        return;
+                    }
+                }
+
                 if (!response.ok) {
                     const errorText = await response.text();
                     console.error('[Canvascope Calendar] Google Calendar API error:', errorText);
@@ -5961,46 +6051,53 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                     return;
                 }
                 
-                let fullText = '';
+                // Buffer the entire streamed response, then parse. Gemini's
+                // streamGenerateContent returns a JSON ARRAY of response chunks; the
+                // model's own output (which contains many { } ) lives inside
+                // candidates[].content.parts[].text, so a naive brace-counter corrupts
+                // on those inner braces. Collect everything and parse structurally.
                 const reader = response.body.getReader();
                 const decoder = new TextDecoder('utf-8');
-                let buffer = '';
-                let openBraces = 0;
-                let startIndex = -1;
-                
+                let raw = '';
                 while (true) {
                     const { done, value } = await reader.read();
                     if (done) break;
-                    
-                    buffer += decoder.decode(value, { stream: true });
-                    let i = 0;
-                    while (i < buffer.length) {
-                        const char = buffer[i];
-                        if (char === '{') {
-                            if (openBraces === 0) {
-                                startIndex = i;
-                            }
-                            openBraces++;
-                        } else if (char === '}') {
-                            openBraces--;
-                            if (openBraces === 0 && startIndex !== -1) {
-                                const jsonStr = buffer.substring(startIndex, i + 1);
-                                try {
-                                    const parsed = JSON.parse(jsonStr);
-                                    const text = parsed?.candidates?.[0]?.content?.parts?.[0]?.text;
-                                    if (text) {
-                                        fullText += text;
-                                    }
-                                } catch (_) {}
-                                buffer = buffer.substring(i + 1);
-                                i = -1;
-                                startIndex = -1;
-                            }
+                    raw += decoder.decode(value, { stream: true });
+                }
+                raw += decoder.decode();
+
+                const collectText = (node) => {
+                    let out = '';
+                    const parts = node?.candidates?.[0]?.content?.parts;
+                    if (Array.isArray(parts)) {
+                        for (const p of parts) {
+                            if (p && typeof p.text === 'string') out += p.text;
                         }
-                        i++;
+                    }
+                    return out;
+                };
+
+                let fullText = '';
+                try {
+                    const arr = JSON.parse(raw);
+                    if (Array.isArray(arr)) {
+                        for (const chunk of arr) fullText += collectText(chunk);
+                    } else {
+                        fullText += collectText(arr);
+                    }
+                } catch (_) {
+                    // Fallback: line/SSE-delimited JSON objects.
+                    for (const line of raw.split('\n')) {
+                        const t = line.replace(/^data:\s*/, '').trim();
+                        if (!t || t === '[DONE]' || t === '[' || t === ']' || t === ',') continue;
+                        try { fullText += collectText(JSON.parse(t)); } catch (_) {}
                     }
                 }
-                
+
+                if (!fullText) {
+                    console.warn('[Canvascope Syllabus AI] No text extracted. Raw (first 800):', raw.slice(0, 800));
+                }
+
                 sendResponse({ success: true, text: fullText.trim() });
             } catch (err) {
                 console.error('[Canvascope Syllabus AI] prompt failed:', err);
@@ -6349,6 +6446,45 @@ async function handleAutoIndexPdf(message, sender) {
     }
 }
 
+// Like handleAutoIndexPdf, but returns the parsed page text to the caller. Used by
+// Syllabus Autopilot, which runs in the content-script world where DocumentParser
+// is not present — so we inject + parse in the tab and hand the text back.
+async function handleParsePdfText(message, sender) {
+    const tabId = sender && sender.tab && sender.tab.id;
+    const pdfUrl = message && message.pdfUrl;
+    if (!tabId || !pdfUrl) {
+        return { success: false, error: 'Missing tab id or PDF URL' };
+    }
+    try {
+        await chrome.scripting.executeScript({
+            target: { tabId },
+            files: ['lib/pdf.min.js', 'v8/document-parser.js']
+        });
+
+        const [{ result } = {}] = await chrome.scripting.executeScript({
+            target: { tabId },
+            func: async (url) => {
+                try {
+                    if (typeof DocumentParser === 'undefined') return { ok: false, error: 'parser-missing' };
+                    const pages = await DocumentParser.fetchAndParsePdf(url, 'Syllabus', 'General');
+                    return { ok: Array.isArray(pages) && pages.length > 0, pages: pages || [] };
+                } catch (e) {
+                    return { ok: false, error: (e && e.message) ? e.message : String(e) };
+                }
+            },
+            args: [pdfUrl]
+        });
+
+        if (result && result.ok) {
+            return { success: true, pages: result.pages };
+        }
+        return { success: false, error: (result && result.error) || 'no-pages' };
+    } catch (e) {
+        console.warn('[Canvascope Autopilot] parse injection failed:', e);
+        return { success: false, error: e && e.message ? e.message : String(e) };
+    }
+}
+
 // ============================================
 // MESSAGE PASSING (Popup/Content Script to Background)
 // ============================================
@@ -6428,6 +6564,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     if (message.action === 'autoIndexPdf') {
         handleAutoIndexPdf(message, sender).then(res => {
+            sendResponse(res);
+        }).catch(err => {
+            sendResponse({ success: false, error: err && err.message ? err.message : String(err) });
+        });
+        return true;
+    }
+
+    if (message.action === 'parsePdfText') {
+        handleParsePdfText(message, sender).then(res => {
             sendResponse(res);
         }).catch(err => {
             sendResponse({ success: false, error: err && err.message ? err.message : String(err) });

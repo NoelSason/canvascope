@@ -28,10 +28,9 @@ class LocalAIController {
 
   /**
    * Checks model availability and capabilities.
-   * @param {function} onDownloadProgress - Callback to track model downloading state
-   * @returns {Promise<string>} 'available' | 'after-download' | 'unavailable'
+   * @returns {Promise<string>} 'available' | 'downloadable' | 'downloading' | 'unavailable'
    */
-  async checkCapabilities(onDownloadProgress) {
+  async checkCapabilities() {
     if (!this.apiSurface) return 'unavailable';
 
     try {
@@ -58,23 +57,42 @@ class LocalAIController {
         availability = await self.ai.languageModel.capabilities();
         // Translate capabilities format if necessary
         if (availability && availability.available) {
-          availability = availability.available; // 'readily' or 'after-download' or 'no'
+          availability = availability.available;
         }
       }
 
       console.log('[Canvascope AI] Model availability status:', availability);
-
-      if (availability === 'readily' || availability === 'available') {
-        return 'available';
-      } else if (availability === 'after-download') {
-        return 'after-download';
-      }
-
-      return 'unavailable';
+      return this.normalizeAvailability(availability);
     } catch (error) {
       console.error('[Canvascope AI] Capability check failed:', error);
       return 'unavailable';
     }
+  }
+
+  /**
+   * Normalizes current Chrome Prompt API statuses plus older experimental names.
+   * @param {string|object|boolean} rawAvailability
+   * @returns {'available'|'downloadable'|'downloading'|'unavailable'}
+   */
+  normalizeAvailability(rawAvailability) {
+    let value = rawAvailability;
+    if (value && typeof value === 'object' && 'available' in value) {
+      value = value.available;
+    }
+    if (value === true) return 'available';
+    if (value === false || value == null) return 'unavailable';
+
+    const normalized = String(value).toLowerCase();
+    if (normalized === 'available' || normalized === 'readily') {
+      return 'available';
+    }
+    if (normalized === 'downloadable' || normalized === 'after-download') {
+      return 'downloadable';
+    }
+    if (normalized === 'downloading') {
+      return 'downloading';
+    }
+    return 'unavailable';
   }
 
   /**
@@ -91,8 +109,8 @@ class LocalAIController {
     const expectedOptions = {
       expectedInputs: [{ type: 'text', languages: ['en'] }],
       expectedOutputs: [{ type: 'text', languages: ['en'] }],
-      temperature: 0.6,
-      topK: 4
+      temperature: this.resolveTemperature(),
+      topK: this.resolveTopK()
     };
 
     if (systemPrompt) {
@@ -102,7 +120,9 @@ class LocalAIController {
     if (onDownloadProgress) {
       expectedOptions.monitor = (m) => {
         m.addEventListener('downloadprogress', (e) => {
-          const pct = e.total ? Math.floor((e.loaded / e.total) * 100) : 0;
+          const pct = e.total
+            ? Math.floor((e.loaded / e.total) * 100)
+            : Math.floor((e.loaded || 0) * 100);
           onDownloadProgress(pct);
         });
       };
@@ -121,6 +141,24 @@ class LocalAIController {
       console.error('[Canvascope AI] Session creation failed:', err);
       return false;
     }
+  }
+
+  resolveTemperature() {
+    const fallback = 0.6;
+    const max = Number(this.modelParams?.maxTemperature);
+    if (Number.isFinite(max) && max > 0) {
+      return Math.min(fallback, max);
+    }
+    return fallback;
+  }
+
+  resolveTopK() {
+    const fallback = 4;
+    const max = Number(this.modelParams?.maxTopK);
+    if (Number.isFinite(max) && max > 0) {
+      return Math.max(1, Math.min(fallback, Math.floor(max)));
+    }
+    return fallback;
   }
 
   /**

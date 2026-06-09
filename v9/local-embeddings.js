@@ -1,10 +1,8 @@
 /**
  * Canvascope Local Embeddings Controller
  * Generates dense semantic vectors (384 dimensions) for local RAG retrieval.
- * Employs a dual-pipeline approach:
- * 1. Primary: ONNX-based all-MiniLM-L6-v2 model via Transformers.js (when available/loaded).
- * 2. Fallback: Dense semantic vocabulary projection (24 distinct academic conceptual dimensions)
- *    hMap-projected into 384 dimensions for zero-dependency instant offline execution.
+ * Uses a dense semantic vocabulary projection hash-projected into 384
+ * dimensions for zero-dependency instant offline execution.
  */
 class LocalEmbeddingsController {
   constructor() {
@@ -14,32 +12,19 @@ class LocalEmbeddingsController {
   }
 
   /**
-   * Initializes the ONNX embedding pipeline inside the side panel.
-   * Loads the model dynamically.
+   * Initializes the side panel embedding controller.
+   * Remote module loading is intentionally disabled by the MV3 extension CSP,
+   * so the controller uses the bundled deterministic fallback.
    */
   async initPipeline() {
     if (this.initialized || this.loading) return;
     this.loading = true;
-    console.log('[Canvascope Embeddings] Initializing ONNX embedding pipeline...');
     try {
-      // Import Xenova Transformers.js dynamically from CDN or fallback
-      // Since MV3 CSP allows self + wasm-eval, we can load the module
-      const { pipeline } = await import('https://cdn.jsdelivr.net/npm/@xenova/transformers@2.14.0');
-      
-      // Load feature-extraction pipeline with MiniLM-L6 model
-      this.pipelineInstance = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2', {
-        quantized: true,
-        progress_callback: (info) => {
-          if (info.status === 'progress') {
-            console.log(`[Canvascope Embeddings] Loading ONNX model: ${info.loaded}/${info.total} (${info.progress.toFixed(1)}%)`);
-          }
-        }
-      });
-      
+      this.pipelineInstance = null;
       this.initialized = true;
-      console.log('[Canvascope Embeddings] ONNX local embeddings pipeline initialized successfully.');
+      console.log('[Canvascope Embeddings] Using bundled semantic fallback embeddings.');
     } catch (e) {
-      console.warn('[Canvascope Embeddings] Failed to load ONNX pipeline, utilizing semantic fallback:', e);
+      console.warn('[Canvascope Embeddings] Failed to initialize semantic fallback:', e);
     } finally {
       this.loading = false;
     }
@@ -53,7 +38,7 @@ class LocalEmbeddingsController {
   async getEmbedding(text) {
     if (!text) return new Array(384).fill(0);
 
-    // 1. Attempt ONNX model first
+    // 1. Use a bundled pipeline only if one is explicitly assigned later.
     if (this.initialized && this.pipelineInstance) {
       try {
         const output = await this.pipelineInstance(text, { pooling: 'mean', normalize: true });
@@ -62,11 +47,11 @@ class LocalEmbeddingsController {
           return vector;
         }
       } catch (err) {
-        console.warn('[Canvascope Embeddings] ONNX execution failed, falling back:', err);
+        console.warn('[Canvascope Embeddings] Pipeline execution failed, falling back:', err);
       }
     }
 
-    // 2. Fallback to 24-dimension Vocabulary Projection hashed into 384 dimensions
+    // 2. Fallback to 24-dimension vocabulary projection hashed into 384 dimensions
     return this.generateFallbackEmbedding(text);
   }
 

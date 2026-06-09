@@ -973,6 +973,29 @@
     });
   }
 
+  // Pull readable syllabus text from an HTML page — many courses use a Canvas
+  // "Syllabus" tab, a course home/front page, or a wiki page as the syllabus
+  // instead of a PDF. Prefer the main user-content container; cap for the prompt.
+  function extractSyllabusPageText() {
+    const selectors = [
+      '#course_syllabus',
+      '.syllabus_course_summary',
+      '#wiki_page_show .user_content',
+      '#content .user_content',
+      '.show-content.user_content',
+      '.user_content',
+      '#content',
+      'main'
+    ];
+    for (const sel of selectors) {
+      const el = document.querySelector(sel);
+      const text = el ? String(el.innerText || '').replace(/\n{3,}/g, '\n\n').trim() : '';
+      if (text && text.length > 60) return text.slice(0, 15000);
+    }
+    const bodyText = String((document.body && document.body.innerText) || '').trim();
+    return bodyText.slice(0, 15000);
+  }
+
   async function openSyllabusAutopilot(pdfUrl) {
     if (!pdfUrl) {
       // Look for PDF urls on the active page
@@ -984,6 +1007,19 @@
         });
         pdfUrl = tabData?.candidates?.[0]?.url || tabData?.pageUrl;
       } catch (_) {}
+    }
+
+    // Canvas file-preview pages (/courses/.../files/<id>) return HTML, not PDF bytes,
+    // so parsing them fails. Canonicalize any Canvas file URL to the /files/<id>/download
+    // endpoint, which serves the actual PDF and matches the auto-index cache key.
+    if (pdfUrl) {
+      const m = pdfUrl.match(/\/files\/(\d+)/);
+      if (m && !/\/files\/\d+\/download/.test(pdfUrl)) {
+        try {
+          const origin = new URL(pdfUrl).origin;
+          pdfUrl = `${origin}/files/${m[1]}/download?download_frd=1`;
+        } catch (_) {}
+      }
     }
 
     openModal(async (panel, root) => {
@@ -1016,18 +1052,28 @@
       const loadingText = loader.querySelector('[data-loading-text]');
 
       try {
-        if (!pdfUrl || (!pdfUrl.endsWith('.pdf') && !pdfUrl.includes('/files/') && !pdfUrl.includes('/download'))) {
-          throw new Error('No syllabus PDF detected on the active page. Navigate to your course PDF page first.');
-        }
+        const looksLikePdf = !!pdfUrl && (pdfUrl.endsWith('.pdf') || /\/files\/\d+/.test(pdfUrl) || pdfUrl.includes('/download'));
 
-        // 1. Fetch & Parse PDF
-        if (!window.DocumentParser) {
-          throw new Error('Document parser component not loaded.');
-        }
-        
-        const pages = await window.DocumentParser.fetchAndParsePdf(pdfUrl, 'Syllabus', 'General');
-        if (!pages || pages.length === 0) {
-          throw new Error('Could not parse any text from the PDF syllabus.');
+        let pages;
+        if (looksLikePdf) {
+          // 1a. PDF syllabus: parse in the background (DocumentParser is injected into
+          // the tab there; it is not available in this content-script world).
+          const parseResp = await new Promise((resolve) => {
+            chrome.runtime.sendMessage({ action: 'parsePdfText', pdfUrl }, (r) => resolve(r || { success: false }));
+          });
+          if (!parseResp.success || !Array.isArray(parseResp.pages) || parseResp.pages.length === 0) {
+            throw new Error('Could not parse any text from the PDF syllabus.' + (parseResp.error ? ` (${parseResp.error})` : ''));
+          }
+          pages = parseResp.pages;
+        } else {
+          // 1b. HTML syllabus: a Canvas "Syllabus" tab or a course home/front page used
+          // as the syllabus. Read the page's own text directly (we have DOM access here).
+          loadingText.textContent = 'Step 1 of 3: Reading syllabus page...';
+          const pageText = extractSyllabusPageText();
+          if (!pageText || pageText.length < 40) {
+            throw new Error('No syllabus content found. Open a syllabus PDF, or your Canvas Syllabus / course home page, and try again.');
+          }
+          pages = [pageText];
         }
 
         loadingText.textContent = 'Step 2 of 3: Analyzing schedule with AI...';
@@ -1059,17 +1105,48 @@ ${docTextSample}`;
 
         loadingText.textContent = 'Step 3 of 3: Compiling schedule list...';
 
-        // Clean any markdown formatting if AI wrapped it
-        let cleanText = aiResponse.text.trim();
-        if (cleanText.startsWith('```')) {
-          cleanText = cleanText.replace(/^```[a-zA-Z]*\n/, '').replace(/\n```$/, '').trim();
-        }
+        // Clean fences/prose, then parse tolerantly. The model can truncate the final
+        // object (token limit) or add stray text, so fall back to extracting whatever
+        // complete {...} objects exist (string-aware so braces inside values are safe).
+        let cleanText = String(aiResponse.text || '').trim();
+        cleanText = cleanText.replace(/```[a-zA-Z]*/g, '').replace(/```/g, '').trim();
+        const fb = cleanText.indexOf('[');
+        if (fb > 0) cleanText = cleanText.slice(fb);
+
+        const extractObjects = (s) => {
+          const items = [];
+          let depth = 0, start = -1, inStr = false, esc = false;
+          for (let i = 0; i < s.length; i++) {
+            const c = s[i];
+            if (inStr) {
+              if (esc) esc = false;
+              else if (c === '\\') esc = true;
+              else if (c === '"') inStr = false;
+              continue;
+            }
+            if (c === '"') { inStr = true; continue; }
+            if (c === '{') { if (depth === 0) start = i; depth++; }
+            else if (c === '}') {
+              depth--;
+              if (depth === 0 && start !== -1) {
+                try { items.push(JSON.parse(s.slice(start, i + 1))); } catch (_) {}
+                start = -1;
+              }
+            }
+          }
+          return items;
+        };
 
         let scheduleItems = [];
         try {
-          scheduleItems = JSON.parse(cleanText);
-        } catch (parseErr) {
-          console.warn('[Canvascope Autopilot] JSON parse failed, cleanText:', cleanText);
+          const lb = cleanText.lastIndexOf(']');
+          scheduleItems = JSON.parse(lb > 0 ? cleanText.slice(0, lb + 1) : cleanText);
+        } catch (_) {
+          scheduleItems = extractObjects(cleanText);
+        }
+        if (!Array.isArray(scheduleItems)) scheduleItems = [];
+        if (scheduleItems.length === 0) {
+          console.warn('[Canvascope Autopilot] No items parsed. Raw AI text:', aiResponse.text);
           throw new Error('Failed to parse the structured schedule JSON from AI.');
         }
 

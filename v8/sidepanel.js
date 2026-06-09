@@ -15,6 +15,8 @@ document.addEventListener('DOMContentLoaded', () => {
   const statusText = document.querySelector('.status-text');
   const aiStatusBadge = document.getElementById('ai-status');
   const contextLabel = document.getElementById('active-context-label');
+  const introPrivacyCopy = document.getElementById('intro-privacy-copy');
+  const privacyRouteLabel = document.getElementById('privacy-route-label');
   const chatHistory = document.getElementById('chat-history');
   const chatViewport = document.querySelector('.chat-viewport');
   const userPrompt = document.getElementById('user-prompt');
@@ -43,7 +45,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // Initialize the Local AI Controller
   const aiController = new LocalAIController();
   let aiSessionReady = false;
-  let aiMode = null; // 'local' | 'cloud'
+  let aiMode = null; // 'local' | 'cloud' | 'local-download'
 
   const SYSTEM_INSTRUCTION = `You are the Canvascope study assistant running inside a Chrome extension. Below each question you receive context drawn from the student's own saved data and the page they are viewing.
 
@@ -58,6 +60,7 @@ Style: concise (2-4 sentences or a short list). Use bold text, inline code backt
 
   // 1. Keep the sidepanel on the v8 dark UI.
   syncSkinTheme();
+  updatePrivacyRoute('checking');
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area === 'local' && changes.canvasSkin) {
       applySkinTokens(changes.canvasSkin.newValue);
@@ -88,7 +91,7 @@ Style: concise (2-4 sentences or a short list). Use bold text, inline code backt
   userPrompt.addEventListener('input', () => {
     userPrompt.style.height = 'auto';
     userPrompt.style.height = `${userPrompt.scrollHeight}px`;
-    sendBtn.disabled = !userPrompt.value.trim() || !aiSessionReady;
+    refreshSendState();
   });
 
   userPrompt.addEventListener('keydown', (e) => {
@@ -104,48 +107,16 @@ Style: concise (2-4 sentences or a short list). Use bold text, inline code backt
   suggestButtons.forEach(btn => {
     btn.addEventListener('click', () => {
       const prompt = btn.getAttribute('data-prompt');
-      if (!prompt) return; // ignore seed button here
+      if (!prompt) return; // ignore action-only buttons
       userPrompt.value = prompt;
       userPrompt.style.height = 'auto';
       userPrompt.style.height = `${userPrompt.scrollHeight}px`;
-      sendBtn.disabled = false;
+      refreshSendState();
       handleSubmit();
     });
   });
 
-  // 4.2 Setup Seed Developer Button
-  const seedBtn = document.getElementById('btn-seed-test');
-  if (seedBtn) {
-    seedBtn.addEventListener('click', async () => {
-      try {
-        const data = await chrome.storage.local.get(['customTodos']);
-        const todos = data.customTodos || [];
-        const testTodo = {
-          id: 'todo_test_rag_123',
-          title: 'Finish reading RAG paper',
-          dueAt: new Date(Date.now() + 86400000 * 3).toISOString(), // Due in 3 days
-          courseName: 'CS 101',
-          done: false,
-          createdAt: Date.now()
-        };
-        // Avoid duplicates
-        if (!todos.some(t => t.id === testTodo.id)) {
-          todos.push(testTodo);
-          await chrome.storage.local.set({ customTodos: todos });
-        }
-        
-        // Confirm write by reading again
-        const check = await chrome.storage.local.get(['customTodos']);
-        const currentTodos = check.customTodos || [];
-        
-        addSystemBubble(`**Mock task seeded**: Added \`"Finish reading RAG paper"\` (CS 101, due in 3 days) to storage.\n\n**Current tasks in storage:**\n\`\`\`json\n${JSON.stringify(currentTodos, null, 2)}\n\`\`\`\n\nTry asking: *"When do I need to finish reading the rag paper by?"*`);
-      } catch (e) {
-        addSystemBubble('**Failed to seed task**: ' + e.message);
-      }
-    });
-  }
-
-  // 4.3 Setup "Send PDF to Lectra" button — sends the PDF detected on the
+  // 4.2 Setup "Send PDF to Lectra" button — sends the PDF detected on the
   // active tab to Lectra via the background service worker (same backend the
   // in-page /ls slash command uses).
   const lectraBtn = document.getElementById('btn-lectra-send');
@@ -204,71 +175,120 @@ Style: concise (2-4 sentences or a short list). Use bold text, inline code backt
     root.dataset.canvascopePanelTheme = 'v8-dark';
   }
 
+  function canSubmitPrompt() {
+    return aiSessionReady || aiMode === 'local-download';
+  }
+
+  function refreshSendState() {
+    sendBtn.disabled = !userPrompt.value.trim() || !canSubmitPrompt();
+  }
+
+  function updatePrivacyRoute(route) {
+    if (!introPrivacyCopy || !privacyRouteLabel) return;
+
+    if (route === 'local') {
+      introPrivacyCopy.textContent = 'I am using Chrome\'s on-device model for answers. Ask me to summarize syllabus policies, analyze assignment guidelines, or extract the tasks on this page.';
+      privacyRouteLabel.textContent = 'On-device - Chrome Prompt API';
+      return;
+    }
+
+    if (route === 'cloud') {
+      introPrivacyCopy.textContent = 'Cloud fallback is active. Canvascope sends the retrieved prompt context to your authenticated Supabase AI endpoint for answers.';
+      privacyRouteLabel.textContent = 'Cloud fallback - Supabase Gemini';
+      return;
+    }
+
+    if (route === 'downloadable') {
+      introPrivacyCopy.textContent = 'Chrome can set up the on-device model. Send your first question to start local AI setup, then Canvascope will answer from page and course context.';
+      privacyRouteLabel.textContent = 'Local model setup required';
+      return;
+    }
+
+    if (route === 'auth-required') {
+      introPrivacyCopy.textContent = 'Local AI is unavailable in this browser. Sign in from the Canvascope popup to use cloud fallback.';
+      privacyRouteLabel.textContent = 'AI unavailable until sign-in';
+      return;
+    }
+
+    introPrivacyCopy.textContent = 'I use on-device AI when Chrome\'s local model is available. If cloud fallback is active, Canvascope will say so before sending prompt context.';
+    privacyRouteLabel.textContent = 'Checking AI route';
+  }
+
+  async function activateCloudFallback(messageText = '**Cloud fallback active**: Canvascope is routing AI requests securely through your Supabase account.') {
+    console.log('[Canvascope AI] Checking authentication for cloud fallback...');
+    const authRes = await new Promise((resolve) => {
+      chrome.runtime.sendMessage({ type: 'checkAuthStatus' }, (response) => {
+        resolve(response || { signedIn: false });
+      });
+    });
+
+    if (authRes.signedIn) {
+      updateUIStatus('cloud', 'Cloud AI Fallback');
+      updatePrivacyRoute('cloud');
+      aiMode = 'cloud';
+      aiSessionReady = true;
+      refreshSendState();
+      detectActiveCourseContext();
+      addSystemBubble(messageText);
+      return true;
+    }
+
+    updateUIStatus('error', 'Auth Required');
+    updatePrivacyRoute('auth-required');
+    aiMode = null;
+    aiSessionReady = false;
+    refreshSendState();
+    addSystemBubble('**Login required for AI fallback**: The local model is unavailable on this browser. Sign in from the Canvascope popup to use cloud fallback.');
+    return false;
+  }
+
   /**
    * Bootstraps the local Prompt API model capability check and session loading.
    */
   async function bootstrapLocalAI() {
     updateUIStatus('checking', 'Initializing...');
+    updatePrivacyRoute('checking');
 
     const availability = await aiController.checkCapabilities();
 
     if (availability === 'unavailable') {
-      console.log('[Canvascope AI] Local AI unavailable. Checking authentication for cloud fallback...');
-      
-      const authRes = await new Promise((resolve) => {
-        chrome.runtime.sendMessage({ type: 'checkAuthStatus' }, (response) => {
-          resolve(response || { signedIn: false });
-        });
-      });
-
-      if (authRes.signedIn) {
-        updateUIStatus('cloud', 'Cloud AI Fallback');
-        aiMode = 'cloud';
-        aiSessionReady = true;
-        sendBtn.disabled = !userPrompt.value.trim();
-        detectActiveCourseContext();
-        
-        addSystemBubble('**Cloud fallback active**: Canvascope is routing AI requests securely through your Supabase account.');
-      } else {
-        updateUIStatus('error', 'Auth Required');
-        addSystemBubble('**Login required for AI fallback**: The local model is unavailable on this browser. Sign in from the Canvascope popup to use cloud fallback.');
-      }
+      await activateCloudFallback();
       return;
     }
 
-    if (availability === 'after-download') {
-      updateUIStatus('checking', 'Downloading Model...');
-      addSystemBubble('**Model download required**: Your browser is downloading the local model in the background. Try again in a minute.');
-      
-      // Setup polling interval to wait for download to finish
-      const pollInterval = setInterval(async () => {
-        const check = await aiController.checkCapabilities();
-        if (check === 'available') {
-          clearInterval(pollInterval);
-          loadSession();
-        }
-      }, 5000);
+    if (availability === 'downloadable' || availability === 'downloading') {
+      aiMode = 'local-download';
+      aiSessionReady = false;
+      updateUIStatus('checking', availability === 'downloading' ? 'Model Downloading' : 'Model Ready to Download');
+      updatePrivacyRoute('downloadable');
+      refreshSendState();
+      detectActiveCourseContext();
+      addSystemBubble('**Local model setup required**: Send your first question to start Chrome\'s on-device model download and session setup. If setup fails, Canvascope can use cloud fallback after sign-in.');
       return;
     }
 
     // Load session immediately if ready
-    loadSession();
+    await loadSession();
   }
 
-  async function loadSession() {
+  async function loadSession({ onDownloadProgress = null } = {}) {
     updateUIStatus('checking', 'Starting session...');
     
-    const success = await aiController.initSession(SYSTEM_INSTRUCTION);
+    const success = await aiController.initSession(SYSTEM_INSTRUCTION, onDownloadProgress);
 
     if (success) {
       updateUIStatus('ready', 'Ready');
+      updatePrivacyRoute('local');
       aiSessionReady = true;
       aiMode = 'local';
-      sendBtn.disabled = !userPrompt.value.trim();
+      refreshSendState();
       detectActiveCourseContext();
+      return true;
     } else {
       updateUIStatus('error', 'Session Failed');
       addSystemBubble('**Failed to start AI session**: The browser failed to initialize the model container. Try restarting Chrome or clearing the extensions tab.');
+      refreshSendState();
+      return false;
     }
   }
 
@@ -402,12 +422,45 @@ Style: concise (2-4 sentences or a short list). Use bold text, inline code backt
     return bubble;
   }
 
+  async function ensureSessionForSubmit() {
+    if (aiSessionReady) return true;
+    if (aiMode !== 'local-download') return false;
+
+    updateUIStatus('checking', 'Starting Local AI');
+    const setupBubble = addSystemBubble('**Starting local AI setup...** Chrome may need to download the on-device model before answering.');
+    const setupContent = setupBubble.querySelector('.bubble-content');
+
+    const success = await loadSession({
+      onDownloadProgress: (pct) => {
+        updateUIStatus('checking', pct > 0 ? `Downloading ${pct}%` : 'Downloading Model');
+        if (setupContent) {
+          setupContent.innerHTML = parseSimpleMarkdown(`**Downloading local AI model...** ${pct > 0 ? `${pct}% complete.` : 'Starting download.'}`);
+        }
+      }
+    });
+
+    if (success) {
+      if (setupContent) {
+        setupContent.innerHTML = parseSimpleMarkdown('**Local AI ready**: Canvascope will answer using Chrome\'s on-device model.');
+      }
+      return true;
+    }
+
+    return activateCloudFallback('**Cloud fallback active**: Local AI setup failed, so Canvascope is routing AI requests through your authenticated Supabase AI endpoint.');
+  }
+
   /**
    * Main submit orchestrator. Grabs prompt, executes scrape, sends context, and streams text.
    */
   async function handleSubmit() {
     const prompt = userPrompt.value.trim();
-    if (!prompt || !aiSessionReady) return;
+    if (!prompt) return;
+
+    const ready = await ensureSessionForSubmit();
+    if (!ready) {
+      refreshSendState();
+      return;
+    }
 
     // 1. Reset text area
     userPrompt.value = '';
@@ -477,7 +530,7 @@ Style: concise (2-4 sentences or a short list). Use bold text, inline code backt
       }
       scrollViewport();
     } finally {
-      sendBtn.disabled = !userPrompt.value.trim();
+      refreshSendState();
     }
   }
 

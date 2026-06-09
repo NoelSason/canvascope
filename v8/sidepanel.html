@@ -13,7 +13,7 @@
     <header class="sidepanel-header">
       <div class="brand-row">
         <div class="logo-wrapper">
-          <span class="brand-icon" aria-hidden="true"><img src="../icons/icon128.png" alt="" /></span>
+          <span class="brand-icon" aria-hidden="true"><img src="../icons/logo.png" alt="" /></span>
           <span class="brand-title">Canvascope <span class="brand-sub">AI</span></span>
         </div>
         <div id="ai-status" class="ai-status-badge status-checking">
@@ -42,7 +42,7 @@
           <div class="bubble-avatar"></div>
           <div class="bubble-content">
             <p class="greeting-head">Your local course assistant.</p>
-            <p>I run on-device, so nothing leaves your machine. Ask me to summarize syllabus policies, analyze assignment guidelines, or extract the tasks on this page.</p>
+            <p id="intro-privacy-copy">I use on-device AI when Chrome's local model is available. If cloud fallback is active, Canvascope will say so before sending prompt context.</p>
           </div>
         </div>
       </div>
@@ -67,10 +67,6 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
           Send PDF to Lectra
         </button>
-        <button id="btn-seed-test" class="btn-suggest" style="border-style: dashed; opacity: 0.85;">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 2v6l-5.5 9.5A2 2 0 0 0 5.2 21h13.6a2 2 0 0 0 1.7-3.5L15 8V2"/><path d="M9 2h6"/></svg>
-          Seed RAG Task
-        </button>
       </div>
     </div>
 
@@ -93,7 +89,7 @@
           <rect x="4" y="11" width="16" height="9" rx="2"/>
           <path d="M8 11V7a4 4 0 0 1 8 0v4"/>
         </svg>
-        Local-first · Chrome Prompt API
+        <span id="privacy-route-label">Checking AI route</span>
       </div>
     </footer>
 
