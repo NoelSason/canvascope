@@ -288,6 +288,94 @@ class LocalAIController {
   }
 
   /**
+   * Streams an answer from the claude-proxy Edge Function (Claude Fable 5).
+   * `corpus` is the byte-stable course corpus that the proxy marks for prompt
+   * caching, so repeat questions in a session reuse it at ~10% input price.
+   * Yields text deltas parsed from the Anthropic SSE stream.
+   */
+  async *streamClaudeProxy(promptText, systemInstruction = '', corpus = '', maxTokens = 4096) {
+    // 1. Fetch active Supabase token from the background script
+    const authRes = await new Promise((resolve) => {
+      chrome.runtime.sendMessage({ type: 'getSupabaseSession' }, (response) => {
+        resolve(response || { success: false, error: 'No response from background script' });
+      });
+    });
+
+    if (!authRes.success || !authRes.accessToken) {
+      throw new Error(authRes.error || 'You must be signed in to use Course Brain cloud answers.');
+    }
+
+    // 2. Query the Supabase Edge Function
+    const proxyUrl = 'https://vcadcdgnwxjlgaoqktkd.supabase.co/functions/v1/claude-proxy';
+    const response = await fetch(proxyUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${authRes.accessToken}`
+      },
+      body: JSON.stringify({
+        prompt: promptText,
+        system: systemInstruction,
+        corpus,
+        maxTokens
+      })
+    });
+
+    if (!response.ok) {
+      let errorMessage = `Server responded with status ${response.status}`;
+      try {
+        const errorData = await response.json();
+        errorMessage = errorData.error || errorMessage;
+      } catch (_) {}
+      throw new Error(errorMessage);
+    }
+
+    if (!response.body) {
+      throw new Error('No response body returned from cloud AI service.');
+    }
+
+    // 3. Parse Anthropic SSE: text arrives as content_block_delta events
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder('utf-8');
+    let buffer = '';
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+
+        let newlineIndex;
+        while ((newlineIndex = buffer.indexOf('\n')) !== -1) {
+          const line = buffer.substring(0, newlineIndex).trim();
+          buffer = buffer.substring(newlineIndex + 1);
+
+          if (!line.startsWith('data:')) continue;
+          const data = line.substring(5).trim();
+          if (!data || data === '[DONE]') continue;
+
+          let event;
+          try {
+            event = JSON.parse(data);
+          } catch (e) {
+            console.warn('[Canvascope AI] Failed to parse Claude SSE fragment:', e);
+            continue;
+          }
+
+          if (event.type === 'content_block_delta' && event.delta?.type === 'text_delta' && event.delta.text) {
+            yield event.delta.text;
+          } else if (event.type === 'error') {
+            throw new Error(event.error?.message || 'Claude stream reported an error.');
+          }
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
+  }
+
+  /**
    * Destroys active session to release memory.
    */
   destroySession() {

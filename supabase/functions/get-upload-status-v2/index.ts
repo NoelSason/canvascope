@@ -37,6 +37,18 @@ Deno.serve(async (request) => {
       return json({ error: "Upload not found" }, 404);
     }
 
+    const { data: receiptRows, error: receiptError } = await admin
+      .from("dropbridge_receipts")
+      .select("stage, source, detail, created_at")
+      .eq("upload_id", uploadId)
+      .eq("user_id", user.id)
+      .order("created_at", { ascending: true })
+      .limit(40);
+
+    if (receiptError) {
+      console.error("Failed to fetch DropBridge receipts:", receiptError.message);
+    }
+
     return json({
       ok: true,
       uploadId: data.id,
@@ -44,6 +56,12 @@ Deno.serve(async (request) => {
       createdAt: data.created_at,
       downloadedAt: data.downloaded_at,
       expiresAt: data.expires_at,
+      receipts: (receiptRows ?? []).map((row) => ({
+        stage: row.stage,
+        source: row.source,
+        detail: row.detail ?? {},
+        createdAt: row.created_at,
+      })),
     });
   } catch (error) {
     if (error instanceof HttpError) {

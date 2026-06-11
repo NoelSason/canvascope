@@ -4,11 +4,14 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Canvascope AI Assistant</title>
+  <link rel="stylesheet" href="../tokens.css">
   <link rel="stylesheet" href="sidepanel.css">
+  <link rel="stylesheet" href="../components/radar.css">
+  <script src="../theme-boot.js"></script>
 </head>
 <body class="cs-theme-dark">
-  <div class="sidepanel-container">
-    
+  <div class="sidepanel-container view-chat-active" id="sidepanel-container">
+
     <!-- Top Header -->
     <header class="sidepanel-header">
       <div class="brand-row">
@@ -21,9 +24,25 @@
           <span class="status-text">Checking Local AI</span>
         </div>
       </div>
-      
-      <!-- Context Selector Banner -->
-      <div class="context-banner">
+
+      <!-- View tabs -->
+      <nav class="view-tabs" role="tablist" aria-label="Assistant views">
+        <button class="view-tab is-active" id="tab-chat" data-view="chat" role="tab" aria-selected="true" aria-controls="view-chat">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+          Chat
+        </button>
+        <button class="view-tab" id="tab-brain" data-view="brain" role="tab" aria-selected="false" aria-controls="view-brain">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/></svg>
+          Brain
+        </button>
+        <button class="view-tab" id="tab-plan" data-view="plan" role="tab" aria-selected="false" aria-controls="view-plan">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
+          Plan
+        </button>
+      </nav>
+
+      <!-- Context Selector Banner (chat view) -->
+      <div class="context-banner" id="context-banner">
         <div class="context-info">
           <svg class="icon-context" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"></path>
@@ -33,8 +52,8 @@
       </div>
     </header>
 
-    <!-- Main Chat Logs -->
-    <main class="chat-viewport">
+    <!-- ── CHAT VIEW ────────────────────────────── -->
+    <main class="chat-viewport sp-view is-active" id="view-chat" role="tabpanel" aria-labelledby="tab-chat">
       <div id="chat-history" class="chat-history">
         <!-- Initial system introduction bubble -->
         <div class="chat-bubble bubble-system animate-fade-in">
@@ -48,7 +67,51 @@
       </div>
     </main>
 
-    <!-- Suggestions Container -->
+    <!-- ── BRAIN VIEW ───────────────────────────── -->
+    <main class="brain-viewport sp-view" id="view-brain" role="tabpanel" aria-labelledby="tab-brain" hidden>
+      <div class="brain-toolbar">
+        <select id="brain-course-select" class="brain-course-select" aria-label="Course scope">
+          <option value="">All courses</option>
+        </select>
+        <span id="brain-corpus-stat" class="brain-corpus-stat"></span>
+      </div>
+      <div id="brain-thread" class="brain-thread">
+        <div class="brain-empty" id="brain-empty">
+          <div class="brain-empty-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/></svg>
+          </div>
+          <p class="brain-empty-title">Ask your whole course.</p>
+          <p class="brain-empty-copy">Answers come from your indexed files, PDFs, and notes — with sources you can click.</p>
+        </div>
+      </div>
+    </main>
+
+    <!-- ── PLAN VIEW ────────────────────────────── -->
+    <main class="plan-viewport sp-view" id="view-plan" role="tabpanel" aria-labelledby="tab-plan" hidden>
+      <section class="plan-radar-card">
+        <div class="plan-section-head">
+          <span class="plan-section-title">Pressure radar</span>
+        </div>
+        <div id="plan-radar-mount" class="plan-radar-mount"></div>
+      </section>
+      <section class="plan-actions">
+        <button id="btn-draft-week" class="btn-plan-primary">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+          Draft my week
+        </button>
+        <span class="plan-actions-hint">AI splits your deadlines into study blocks you can edit, save, and sync.</span>
+      </section>
+      <section id="plan-output" class="plan-output"></section>
+      <section class="plan-deadlines">
+        <div class="plan-section-head">
+          <span class="plan-section-title">Upcoming</span>
+          <span id="plan-deadline-count" class="plan-section-meta"></span>
+        </div>
+        <div id="plan-deadline-list" class="plan-deadline-list"></div>
+      </section>
+    </main>
+
+    <!-- Suggestions Container (chat view) -->
     <div id="suggestions-area" class="suggestions-area">
       <div class="suggestions-scroll">
         <button class="btn-suggest" data-prompt="Summarize the active assignment page">
@@ -59,7 +122,7 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
           Extract Tasks
         </button>
-        <button class="btn-suggest" data-prompt="Generate a 3-question conceptual quiz from this page context">
+        <button class="btn-suggest" id="btn-suggest-quiz" data-prompt="Generate a 3-question conceptual quiz from this page context">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3"/><path d="M12 17h.01"/><circle cx="12" cy="12" r="10"/></svg>
           Quick Practice Quiz
         </button>
@@ -70,12 +133,12 @@
       </div>
     </div>
 
-    <!-- Bottom Input Dock -->
-    <footer class="input-dock">
+    <!-- Bottom Input Dock (shared: chat + brain) -->
+    <footer class="input-dock" id="input-dock">
       <div class="input-container">
-        <textarea 
-          id="user-prompt" 
-          placeholder="Ask local AI about this course..." 
+        <textarea
+          id="user-prompt"
+          placeholder="Ask local AI about this course..."
           rows="1"
         ></textarea>
         <button id="send-btn" class="btn-send" disabled aria-label="Send prompt">
@@ -106,6 +169,10 @@
   <script src="../v9/ocr-worker.js"></script>
   <script src="local-ai.js"></script>
   <script src="rag-core.js"></script>
+  <script src="ai-router.js"></script>
+  <script src="../components/radar.js"></script>
+  <script src="course-brain.js"></script>
+  <script src="smart-planner.js"></script>
   <script src="sidepanel.js"></script>
 </body>
 </html>

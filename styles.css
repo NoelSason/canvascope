@@ -4,27 +4,28 @@
    ============================================ */
 
 :root {
-  --bg:           #0a0a0d;
-  --bg-soft:      #0e0e12;
-  --surface:      #14141a;
-  --surface-2:    #1b1b22;
-  --surface-3:    #22222a;
-  --border:       #22222a;
-  --border-hi:    #32323c;
-  --border-hot:   rgba(185, 165, 255, 0.34);
-  --text:         #ececef;
-  --text-dim:     #9b9ba6;
-  --muted:        #65656f;
-  --dim:          #4b4b55;
-  --accent:       #b9a5ff;
-  --accent-sat:   #c9b9ff;
-  --accent-deep:  #8f78ef;
-  --accent-bg:    rgba(185, 165, 255, 0.14);
-  --accent-bg-hi: rgba(185, 165, 255, 0.20);
-  --ok:           #6fce9a;
-  --warn:         #e8b770;
-  --bad:          #e57373;
-  --on-accent:    #181226;
+  /* Canonical values live in tokens.css (--ds-*); these are surface aliases. */
+  --bg:           var(--ds-bg-0);
+  --bg-soft:      var(--ds-bg-1);
+  --surface:      var(--ds-bg-2);
+  --surface-2:    var(--ds-bg-3);
+  --surface-3:    var(--ds-bg-4);
+  --border:       var(--ds-border);
+  --border-hi:    var(--ds-border-hi);
+  --border-hot:   var(--ds-border-hot);
+  --text:         var(--ds-text);
+  --text-dim:     var(--ds-text-2);
+  --muted:        var(--ds-text-3);
+  --dim:          var(--ds-text-4);
+  --accent:       var(--ds-accent);
+  --accent-sat:   var(--ds-accent-hi);
+  --accent-deep:  var(--ds-accent-deep);
+  --accent-bg:    var(--ds-accent-bg);
+  --accent-bg-hi: var(--ds-accent-bg-hi);
+  --ok:           var(--ds-ok);
+  --warn:         var(--ds-warn);
+  --bad:          var(--ds-bad);
+  --on-accent:    var(--ds-on-accent);
 
   --bg-1: var(--bg-soft);
   --bg-2: var(--surface);
@@ -54,17 +55,17 @@
   --hairline-strong:  var(--border-hi);
   --hairline-brand:   var(--border-hot);
   --signal-go:        var(--ok);
-  --signal-go-bg:     rgba(124, 194, 150, 0.12);
+  --signal-go-bg:     var(--ds-ok-bg);
   --signal-warn:      var(--warn);
-  --signal-warn-bg:   rgba(232, 184, 122, 0.12);
+  --signal-warn-bg:   var(--ds-warn-bg);
   --signal-stop:      var(--bad);
-  --signal-stop-bg:   rgba(232, 138, 138, 0.12);
+  --signal-stop-bg:   var(--ds-bad-bg);
   --glass-border:     var(--border-hi);
 
-  --font-sans: 'Geist', -apple-system, BlinkMacSystemFont, ui-sans-serif, system-ui, 'Segoe UI', sans-serif;
+  --font-sans: var(--ds-font-sans);
   --font-display: var(--font-sans);
   --font-body: var(--font-sans);
-  --font-mono: 'Geist Mono', 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  --font-mono: var(--ds-font-mono);
 
   --radius-xs: var(--r-1);
   --radius-sm: var(--r-2);
@@ -73,11 +74,11 @@
   --radius-xl: 10px;
   --radius-pill: 999px;
 
-  --ease-out:    cubic-bezier(.2, .8, .2, 1);
-  --ease-spring: cubic-bezier(.16, 1, .3, 1);
-  --dur-fast: 120ms;
-  --dur:      200ms;
-  --dur-slow: 320ms;
+  --ease-out:    var(--ds-ease-out);
+  --ease-spring: var(--ds-ease-spring);
+  --dur-fast: var(--ds-dur-fast);
+  --dur:      var(--ds-dur);
+  --dur-slow: var(--ds-dur-slow);
 
   --popup-w: 380px;
   --popup-h: 600px;
@@ -1365,6 +1366,52 @@ input:focus-visible, button:focus-visible, [tabindex]:focus-visible {
   font-size: 11px;
 }
 
+.dropbridge-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.dropbridge-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--muted);
+  box-shadow: none;
+  display: inline-block;
+  flex: 0 0 auto;
+}
+
+.dropbridge-status.realtime-connected .dropbridge-dot {
+  background: var(--ok);
+  box-shadow: 0 0 8px var(--ok);
+}
+
+.dropbridge-status.reconnecting .dropbridge-dot {
+  background: var(--warn);
+  box-shadow: 0 0 8px var(--warn);
+  animation: cs-pulse 1.2s ease-in-out infinite;
+}
+
+.dropbridge-status.fallback-polling .dropbridge-dot {
+  background: var(--warn);
+  box-shadow: 0 0 8px var(--warn);
+}
+
+.dropbridge-status.signed-out .dropbridge-dot {
+  background: var(--muted);
+}
+
+.dropbridge-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 #scan-progress {
   width: 60px;
   height: 4px;
@@ -2430,4 +2477,57 @@ body.in-overlay .results-container {
     scroll-behavior: auto !important;
     transition-duration: 0.01ms !important;
   }
+  .result-item, .recent-item-card, .home-section { opacity: 1; }
+}
+
+/* ============================================
+   v10 — POLISH
+   ============================================ */
+
+/* Staggered entry for result rows and home cards. JS sets --stagger-i
+   (or we fall back to nth-child for the first dozen rows). */
+@keyframes cs-row-in {
+  from { opacity: 0; transform: translateY(5px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.results-container .result-item,
+.recent-item-card,
+.home-section {
+  animation: cs-row-in var(--dur) var(--ease-out) backwards;
+}
+.results-container .result-item:nth-child(1)  { animation-delay: 0ms; }
+.results-container .result-item:nth-child(2)  { animation-delay: 24ms; }
+.results-container .result-item:nth-child(3)  { animation-delay: 48ms; }
+.results-container .result-item:nth-child(4)  { animation-delay: 72ms; }
+.results-container .result-item:nth-child(5)  { animation-delay: 96ms; }
+.results-container .result-item:nth-child(6)  { animation-delay: 120ms; }
+.results-container .result-item:nth-child(7)  { animation-delay: 144ms; }
+.results-container .result-item:nth-child(8)  { animation-delay: 168ms; }
+.results-container .result-item:nth-child(n+9) { animation-delay: 190ms; }
+.recent-item-card:nth-child(1) { animation-delay: 24ms; }
+.recent-item-card:nth-child(2) { animation-delay: 48ms; }
+.recent-item-card:nth-child(3) { animation-delay: 72ms; }
+.recent-item-card:nth-child(n+4) { animation-delay: 96ms; }
+
+/* Appearance segmented control (Settings → Appearance) */
+.appearance-seg {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  border-radius: var(--r-3);
+}
+.appearance-seg-btn {
+  padding: 6px 14px;
+  border-radius: var(--r-2);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-dim);
+  transition: color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
+}
+.appearance-seg-btn:hover { color: var(--text); }
+.appearance-seg-btn.is-active {
+  background: var(--accent-bg-hi);
+  color: var(--accent-sat);
 }

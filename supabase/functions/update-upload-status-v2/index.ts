@@ -1,6 +1,7 @@
 import { corsHeaders, json } from "../_shared/cors.ts";
 import { admin, requireUuid } from "../_shared/device-auth.ts";
 import { HttpError, requireAuthUser } from "../_shared/auth-user.ts";
+import { recordDropBridgeReceipt } from "../_shared/dropbridge-receipts.ts";
 
 type StatusV2Payload = {
   deviceId?: string;
@@ -84,6 +85,16 @@ Deno.serve(async (request) => {
     if ((status === "downloaded" || status === "canceled") && data.object_path) {
       await admin.storage.from("drops").remove([data.object_path]);
     }
+
+    await recordDropBridgeReceipt({
+      uploadId,
+      userId: user.id,
+      deviceId,
+      stage: status,
+      detail: {
+        clientKind: requestedClientKind,
+      },
+    });
 
     return json({ ok: true, uploadId, status });
   } catch (error) {

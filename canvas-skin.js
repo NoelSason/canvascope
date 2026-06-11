@@ -226,6 +226,7 @@
     document.documentElement.classList.remove(BODY_MODE_CLASS_PREFIX + 'light',
                                               BODY_MODE_CLASS_PREFIX + 'dark');
     stopDarkFixer();
+    stopContentContrastEnhancer();
     removeGradePills();
     hidePreview();
     cleanupPageTitleMarkers();
@@ -268,15 +269,21 @@
   // RENDER PIPELINE
   // -------------------------------------------------------------------------
 
+  // True while any visual customization is applied; the SPA DOM observer
+  // skips its (layout-forcing) re-apply work entirely when this is false.
+  let skinVisualsActive = false;
+
   function renderAll() {
     const mode = getEffectiveMode();
 
     if (!skin.enabled || isCanvasStockVisualState(mode)) {
       // Stock Canvas means stock Canvas: no classes, no variables, no card
       // padding changes, no grade pills, no dark fixer, and no sidebar edits.
+      skinVisualsActive = false;
       teardownVisualStyles();
       return;
     }
+    skinVisualsActive = true;
 
     document.documentElement.classList.add(BODY_ROOT_CLASS);
     document.documentElement.classList.remove(BODY_MODE_CLASS_PREFIX + 'light',
@@ -298,7 +305,10 @@
     if (skin.darkModeFixer && mode === 'dark') startDarkFixer();
     else stopDarkFixer();
 
-    startContentContrastEnhancer();
+    // The bright-content rule only exists while a theme paints, so the
+    // (computed-style heavy) enhancer has nothing to do without one.
+    if (hasThemePaint(mode)) startContentContrastEnhancer();
+    else stopContentContrastEnhancer();
   }
 
   // -------------------------------------------------------------------------
@@ -325,46 +335,79 @@
     return 0.299 * r + 0.587 * g + 0.114 * b;
   }
 
+  const CONTRAST_SKIP_SELECTOR = 'img,svg,canvas,video,iframe,picture,source,path,use,br,hr,script,style,link,meta';
+
   function enhanceUserContentContrast(scope) {
     const root = scope && scope.querySelectorAll ? scope : document;
     const userContents = root.matches?.('.user_content') ? [root] : [];
     root.querySelectorAll('.user_content').forEach(el => userContents.push(el));
     if (!userContents.length) return;
+    // Two-phase read/write: batch every getComputedStyle read before any
+    // classList write, otherwise each toggle invalidates style and forces a
+    // recalc for the next read (layout thrash on large user_content trees).
+    const toAdd = [];
+    const toRemove = [];
     userContents.forEach(uc => {
       uc.querySelectorAll('*').forEach(el => {
-        if (el.matches('img,svg,canvas,video,iframe,picture,source,path,use,br,hr,script,style,link,meta')) return;
-        const cs = getComputedStyle(el);
-        const lum = getLuminance(cs.backgroundColor);
-        if (lum == null) {
-          el.classList.remove(BRIGHT_CONTENT_CLASS);
-          return;
-        }
-        if (lum < 120) {
-          el.classList.add(BRIGHT_CONTENT_CLASS);
-        } else {
-          el.classList.remove(BRIGHT_CONTENT_CLASS);
+        if (el.matches(CONTRAST_SKIP_SELECTOR)) return;
+        const lum = getLuminance(getComputedStyle(el).backgroundColor);
+        const isMarked = el.classList.contains(BRIGHT_CONTENT_CLASS);
+        if (lum != null && lum < 120) {
+          if (!isMarked) toAdd.push(el);
+        } else if (isMarked) {
+          toRemove.push(el);
         }
       });
     });
+    for (const el of toAdd) el.classList.add(BRIGHT_CONTENT_CLASS);
+    for (const el of toRemove) el.classList.remove(BRIGHT_CONTENT_CLASS);
+  }
+
+  let contrastScanQueue = new Set();
+  let contrastScanScheduled = false;
+
+  function flushContrastScans() {
+    contrastScanScheduled = false;
+    const roots = Array.from(contrastScanQueue);
+    contrastScanQueue.clear();
+    for (const root of roots) {
+      if (!root.isConnected) continue;
+      // Skip roots contained inside another queued root.
+      if (roots.some(other => other !== root && other.contains(root))) continue;
+      enhanceUserContentContrast(root);
+    }
   }
 
   function startContentContrastEnhancer() {
     enhanceUserContentContrast(document);
     if (contentContrastObserver) return;
     contentContrastObserver = new MutationObserver(muts => {
-      let needs = false;
-      muts.forEach(m => {
-        m.addedNodes && m.addedNodes.forEach(n => {
-          if (n.nodeType === 1 && (n.matches?.('.user_content') || n.querySelector?.('.user_content'))) {
-            needs = true;
+      for (const m of muts) {
+        if (!m.addedNodes) continue;
+        for (const n of m.addedNodes) {
+          if (n.nodeType !== 1) continue;
+          if (n.matches?.('.user_content') || n.querySelector?.('.user_content')) {
+            contrastScanQueue.add(n);
           }
-        });
-      });
-      if (needs) enhanceUserContentContrast(document);
+        }
+      }
+      if (contrastScanQueue.size && !contrastScanScheduled) {
+        contrastScanScheduled = true;
+        requestAnimationFrame(flushContrastScans);
+      }
     });
     contentContrastObserver.observe(document.body || document.documentElement, {
       childList: true, subtree: true
     });
+  }
+
+  function stopContentContrastEnhancer() {
+    if (contentContrastObserver) {
+      contentContrastObserver.disconnect();
+      contentContrastObserver = null;
+    }
+    contrastScanQueue.clear();
+    contrastScanScheduled = false;
   }
 
   function renderThemeVars(mode) {
@@ -2564,10 +2607,18 @@ ${themesApi.buildCssVariables(merged)}
   // GRADE PILLS (injected onto dashboard cards)
   // -------------------------------------------------------------------------
 
+  // Grades cache: loaded once, kept fresh by the storage watcher. The render
+  // runs on every dashboard DOM mutation, so it must not hit storage itself.
+  let cachedGrades = null;
+
   function renderGradePills() {
     if (!skin.showGradePills || !isCanvasDashboardRoute()) return;
-    chrome.storage.local.get(['canvasGradesByCourse']).then(({ canvasGradesByCourse }) => {
-      const grades = canvasGradesByCourse || {};
+    const gradesPromise = cachedGrades
+      ? Promise.resolve({ canvasGradesByCourse: cachedGrades })
+      : chrome.storage.local.get(['canvasGradesByCourse']);
+    gradesPromise.then(({ canvasGradesByCourse }) => {
+      cachedGrades = canvasGradesByCourse || {};
+      const grades = cachedGrades;
       document.querySelectorAll('.ic-DashboardCard').forEach(card => {
         const link = card.querySelector('a.ic-DashboardCard__link, a[href*="/courses/"]');
         if (!link) return;
@@ -2860,13 +2911,39 @@ ${themesApi.buildCssVariables(merged)}
     scope.querySelectorAll(`[data-cs-skin-fixed], [data-cs-skin-computed-fixed], .${DARK_SURFACE_CLASS}`).forEach(restoreDarkFixerElement);
   }
 
+  // Added nodes are queued and processed once per animation frame. The fixer's
+  // scans force style + layout (getComputedStyle/getBoundingClientRect per
+  // candidate), so running it synchronously for every node in a React render
+  // burst froze the page; one batched pass per frame does the same work once.
+  let darkFixerQueue = new Set();
+  let darkFixerScheduled = false;
+
+  function flushDarkFixerQueue() {
+    darkFixerScheduled = false;
+    if (!darkFixerObserver) { darkFixerQueue.clear(); return; }
+    const roots = Array.from(darkFixerQueue);
+    darkFixerQueue.clear();
+    for (const root of roots) {
+      if (!root.isConnected) continue;
+      if (roots.some(other => other !== root && other.contains(root))) continue;
+      fixWhiteIslands(root);
+    }
+  }
+
   function startDarkFixer() {
     if (darkFixerObserver) return;
     fixWhiteIslands(document);
     darkFixerObserver = new MutationObserver(muts => {
-      muts.forEach(m => m.addedNodes && m.addedNodes.forEach(n => {
-        if (n.nodeType === 1) fixWhiteIslands(n);
-      }));
+      for (const m of muts) {
+        if (!m.addedNodes) continue;
+        for (const n of m.addedNodes) {
+          if (n.nodeType === 1) darkFixerQueue.add(n);
+        }
+      }
+      if (darkFixerQueue.size && !darkFixerScheduled) {
+        darkFixerScheduled = true;
+        requestAnimationFrame(flushDarkFixerQueue);
+      }
     });
     darkFixerObserver.observe(document.body || document.documentElement, {
       childList: true, subtree: true
@@ -2878,6 +2955,7 @@ ${themesApi.buildCssVariables(merged)}
       darkFixerObserver.disconnect();
       darkFixerObserver = null;
     }
+    darkFixerQueue.clear();
     cleanupDarkFixerState(document);
   }
 
@@ -3087,11 +3165,37 @@ ${themesApi.buildCssVariables(merged)}
   // PUBLIC API
   // -------------------------------------------------------------------------
 
+  // v10 polish: skin mutations crossfade instead of snapping. A temporary
+  // transition class rides the documentElement for the duration of the swap;
+  // prefers-reduced-motion users keep the instant behavior.
+  let skinFadeTimer = null;
+  function withSkinTransition(render) {
+    const root = document.documentElement;
+    const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (reduce) { render(); return; }
+    if (!document.getElementById('cs-skin-transition-style')) {
+      const style = document.createElement('style');
+      style.id = 'cs-skin-transition-style';
+      style.textContent = `
+        html.cs-skin-transition, html.cs-skin-transition body,
+        html.cs-skin-transition .ic-app-main-content, html.cs-skin-transition .ic-DashboardCard {
+          transition: background-color 320ms cubic-bezier(.2,.8,.2,1),
+                      color 320ms cubic-bezier(.2,.8,.2,1),
+                      border-color 320ms cubic-bezier(.2,.8,.2,1) !important;
+        }`;
+      document.head.appendChild(style);
+    }
+    root.classList.add('cs-skin-transition');
+    render();
+    clearTimeout(skinFadeTimer);
+    skinFadeTimer = setTimeout(() => root.classList.remove('cs-skin-transition'), 380);
+  }
+
   async function applySkin(patch) {
     deepMerge(skin, patch || {});
     skin.__updatedAt = Date.now();
     await chrome.storage.local.set({ [SKIN_STORAGE_KEY]: skin });
-    renderAll();
+    withSkinTransition(renderAll);
     // Best-effort push to Supabase via background; failures are silent.
     try { chrome.runtime.sendMessage({ action: 'csSkin.push', skin }); } catch { /* ignore */ }
     return skin;
@@ -3128,10 +3232,11 @@ ${themesApi.buildCssVariables(merged)}
     // avoid feedback loops.
     let pending = false;
     domObserver = new MutationObserver(() => {
-      if (pending) return;
+      if (pending || !skinVisualsActive) return;
       pending = true;
       requestAnimationFrame(() => {
         pending = false;
+        if (!skinVisualsActive) return;
         markPageTitleRows();
         if (isCanvasDashboardRoute()) {
           renderGradePills();
@@ -3156,8 +3261,19 @@ ${themesApi.buildCssVariables(merged)}
 
   function attachScheduledModeTicker() {
     if (scheduleAlarmTimer) clearInterval(scheduleAlarmTimer);
+    let lastScheduledMode = null;
     scheduleAlarmTimer = setInterval(() => {
-      if (skin.mode === 'scheduled' && skin.schedule?.enabled) renderAll();
+      if (skin.mode !== 'scheduled' || !skin.schedule?.enabled) {
+        lastScheduledMode = null;
+        return;
+      }
+      // Re-render only when the schedule actually crosses a boundary, not
+      // every minute of the day.
+      const nextMode = computeScheduledMode(skin.schedule);
+      if (nextMode !== lastScheduledMode) {
+        lastScheduledMode = nextMode;
+        renderAll();
+      }
     }, 60 * 1000);
   }
 
@@ -3169,7 +3285,10 @@ ${themesApi.buildCssVariables(merged)}
         skin = migrateStoredSkinState(deepMerge(defaultSkinState(), raw), raw);
         renderAll();
       }
-      if (changes.canvasGradesByCourse) renderGradePills();
+      if (changes.canvasGradesByCourse) {
+        cachedGrades = changes.canvasGradesByCourse.newValue || {};
+        renderGradePills();
+      }
     });
   }
 

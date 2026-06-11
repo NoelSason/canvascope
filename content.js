@@ -250,8 +250,6 @@ function notifyExtensionContextInvalidated() {
  * The popup can't directly access page content, so it sends us messages.
  */
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    console.log('[Canvascope Content] Received message:', message.action);
-
     // Special case: lightweight LMS detection (works without strict domain verification)
     if (message.action === 'checkIfCanvas') {
         const isCanvas = detectCanvasPage();
@@ -350,6 +348,39 @@ function detectBrightspacePage() {
     }
 
     return false;
+}
+
+// ============================================
+// SHARED SPA NAVIGATION WATCHER
+// Wraps history exactly once and fans URL-change events out to subscribers
+// (Lectra button refresh, PDF auto-index). Replaces per-feature polling and
+// duplicate history wrapping.
+// ============================================
+
+const canvascopeNavSubscribers = new Set();
+let canvascopeNavHooksInstalled = false;
+
+function subscribeToNavigation(callback) {
+    canvascopeNavSubscribers.add(callback);
+    if (canvascopeNavHooksInstalled) return;
+    canvascopeNavHooksInstalled = true;
+
+    const notify = () => {
+        canvascopeNavSubscribers.forEach(cb => {
+            try { cb(); } catch (_) { /* subscriber errors stay local */ }
+        });
+    };
+    window.addEventListener('popstate', notify);
+    window.addEventListener('hashchange', notify);
+    ['pushState', 'replaceState'].forEach((method) => {
+        const original = history[method];
+        if (typeof original !== 'function') return;
+        history[method] = function wrappedHistoryState(...args) {
+            const result = original.apply(this, args);
+            notify();
+            return result;
+        };
+    });
 }
 
 // ============================================
@@ -905,23 +936,14 @@ function installLectraNavigationHooks() {
     if (lectraHooksInstalled) return;
     lectraHooksInstalled = true;
 
-    const schedule = () => scheduleLectraPdfContextRefresh(40);
-    window.addEventListener('popstate', schedule);
-    window.addEventListener('hashchange', schedule);
-
-    ['pushState', 'replaceState'].forEach((method) => {
-        const original = history[method];
-        if (typeof original !== 'function') return;
-        history[method] = function wrappedHistoryState(...args) {
-            const result = original.apply(this, args);
-            schedule();
-            return result;
-        };
-    });
+    subscribeToNavigation(() => scheduleLectraPdfContextRefresh(40));
 
     const observer = new MutationObserver(() => {
+        // The feature is off by default; without this guard the observer
+        // schedules a refresh for every DOM mutation on every Canvas page.
+        if (!isSendToLectraEnabled()) return;
         if (!document.body || !lectraSendButton || !lectraSendButton.isConnected) {
-            scheduleLectraPdfContextRefresh(40);
+            scheduleLectraPdfContextRefresh(120);
         }
     });
     observer.observe(document.documentElement || document.body, { childList: true, subtree: true });
@@ -1972,15 +1994,15 @@ function maybeAutoIndexPdf() {
 
 // Run shortly after load (give Canvas time to render the file name), then watch for
 // SPA route changes (opening a file preview swaps ?preview=<id> without a full reload).
+// Event-driven via the shared navigation watcher — no polling.
 (function startAutoIndexWatcher() {
     __canvascopeAutoIndexLastUrl = window.location.href;
     setTimeout(maybeAutoIndexPdf, 1800);
-    setInterval(() => {
-        if (window.location.href !== __canvascopeAutoIndexLastUrl) {
-            __canvascopeAutoIndexLastUrl = window.location.href;
-            setTimeout(maybeAutoIndexPdf, 1500);
-        }
-    }, 1500);
+    subscribeToNavigation(() => {
+        if (window.location.href === __canvascopeAutoIndexLastUrl) return;
+        __canvascopeAutoIndexLastUrl = window.location.href;
+        setTimeout(maybeAutoIndexPdf, 1500);
+    });
 })();
 
 function isCmdKEvent(e) {
@@ -1994,7 +2016,6 @@ function isCmdKEvent(e) {
 document.addEventListener('keydown', (e) => {
     // Check for Cmd+K (Mac) or Ctrl+K (Windows/Linux)
     if (isCmdKEvent(e)) {
-        console.log('[Canvascope] Cmd+K pressed! activeElement:', document.activeElement?.tagName, document.activeElement?.id);
         e.preventDefault();
         e.stopPropagation();
         if (typeof e.stopImmediatePropagation === 'function') {

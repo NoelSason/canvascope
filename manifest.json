@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Canvascope",
-  "version": "8.0.1",
+  "version": "10.0.0",
   "minimum_chrome_version": "116",
   "default_locale": "en",
   "description": "Instantly search across your Canvas courses, files, and PDFs, customize your LMS theme, and run academic tasks via slash menu.",
@@ -109,17 +109,19 @@
   "web_accessible_resources": [
     {
       "resources": [
-        "lib/supabase.js",
-        "lib/pdf.min.js",
         "lib/pdf.worker.min.js",
-        "v8/document-parser.js",
         "popup.html",
-        "popup.js",
-        "styles.css",
         "icons/*"
       ],
       "matches": [
-        "<all_urls>"
+        "*://*.instructure.com/*",
+        "*://*.brightspace.com/*",
+        "*://*.d2l.com/*",
+        "*://bcourses.berkeley.edu/*",
+        "*://bruinlearn.ucla.edu/*",
+        "*://canvas.ucsd.edu/*",
+        "*://canvas.asu.edu/*",
+        "*://canvas.mit.edu/*"
       ]
     }
   ]

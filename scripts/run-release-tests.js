@@ -14,7 +14,8 @@ const steps = [
       'tests/legacy-regressions.test.mjs',
       'tests/skin-themes.test.mjs',
       'tests/academic-tools-gpa.test.mjs',
-      'tests/local-ai.test.mjs'
+      'tests/local-ai.test.mjs',
+      'tests/dropbridge-v2.test.mjs'
     ]
   },
   {

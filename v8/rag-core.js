@@ -361,4 +361,242 @@ class RAGCore {
 
     return compiledPrompt;
   }
+
+  /* ════════════════════════════════════════════
+     v10 Course Brain — course-scoped retrieval
+     with chunk-level provenance for citations.
+     ════════════════════════════════════════════ */
+
+  /**
+   * Distinct course names present in the indexed corpus, with item counts,
+   * for the Brain view's course picker. Sorted by volume (busiest first).
+   * @returns {Promise<Array<{courseName: string, count: number}>>}
+   */
+  static async listCourses() {
+    const corpus = await this.buildCorpus();
+    const counts = new Map();
+    corpus.forEach(item => {
+      const name = (item.courseName || '').trim();
+      if (!name || name === 'General' || name === 'Personal To-Do' || name === 'Planner Note') return;
+      counts.set(name, (counts.get(name) || 0) + 1);
+    });
+    return [...counts.entries()]
+      .map(([courseName, count]) => ({ courseName, count }))
+      .sort((a, b) => b.count - a.count);
+  }
+
+  /**
+   * Explodes the corpus into retrievable chunks that carry provenance.
+   * PDF items contribute one chunk per cached page; other items contribute
+   * a single chunk from their body text (or title-only when bodyless).
+   * @param {string} [courseName] - Optional course scope filter
+   * @returns {Promise<Array>} chunks: {title, courseName, type, url, page, text}
+   */
+  static async buildChunkIndex(courseName = '') {
+    const corpus = await this.buildCorpus();
+    const scope = courseName
+      ? corpus.filter(i => (i.courseName || '').toLowerCase() === courseName.toLowerCase())
+      : corpus;
+
+    const chunks = [];
+    scope.forEach(item => {
+      const base = {
+        title: item.title,
+        courseName: item.courseName,
+        type: item.type,
+        url: item.url || '',
+        dueAt: item.dueAt || null
+      };
+      if (Array.isArray(item.pages) && item.pages.length > 0) {
+        item.pages.forEach(page => {
+          const text = (page && page.text) ? String(page.text) : '';
+          if (!text.trim()) return;
+          chunks.push({ ...base, page: page.pageNum || null, text: text.substring(0, 1500) });
+        });
+      } else {
+        const text = (item.content || '').substring(0, 1500);
+        chunks.push({ ...base, page: null, text });
+      }
+    });
+    return chunks;
+  }
+
+  /**
+   * Ranks chunks for a question using the same lexical + semantic + RRF blend
+   * as retrieveLocalContext, but at chunk granularity so answers can cite the
+   * exact PDF page or item they came from.
+   * @param {string} question
+   * @param {{courseName?: string, limit?: number, charBudget?: number}} opts
+   * @returns {Promise<Array>} top chunks with provenance
+   */
+  static async retrieveBrainChunks(question, { courseName = '', limit = 6, charBudget = 6000 } = {}) {
+    const chunks = await this.buildChunkIndex(courseName);
+    if (chunks.length === 0) return [];
+
+    const tokens = question.toLowerCase()
+      .replace(/[^\w\s]/g, '')
+      .split(/\s+/)
+      .filter(w => w.length > 2);
+
+    const lexical = chunks.map(chunk => {
+      let score = 0;
+      const titleLower = chunk.title.toLowerCase();
+      const courseLower = chunk.courseName.toLowerCase();
+      const textLower = chunk.text.toLowerCase();
+      for (const token of tokens) {
+        if (titleLower.includes(token)) score += 10;
+        if (courseLower.includes(token)) score += 4;
+        if (textLower.includes(token)) score += 2;
+      }
+      return { chunk, score };
+    });
+
+    const strongMatches = lexical
+      .filter(x => x.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .map(x => x.chunk);
+
+    let semanticMatches = [];
+    if (typeof SemanticMatcher !== 'undefined') {
+      const queryVector = SemanticMatcher.vectorize(question);
+      const hasConcepts = Object.values(queryVector).some(val => val > 0);
+      if (hasConcepts) {
+        semanticMatches = chunks
+          .map(chunk => ({
+            chunk,
+            similarity: SemanticMatcher.cosineSimilarity(
+              queryVector,
+              SemanticMatcher.vectorize(`${chunk.title} ${chunk.text}`)
+            )
+          }))
+          .filter(x => x.similarity > 0.15)
+          .sort((a, b) => b.similarity - a.similarity)
+          .map(x => x.chunk);
+      }
+    }
+
+    const merged = (typeof SemanticMatcher !== 'undefined')
+      ? SemanticMatcher.rrfMerge(strongMatches, semanticMatches)
+      : strongMatches;
+
+    // Enforce both the chunk limit and a total character budget so the
+    // compiled prompt stays inside the on-device model's small window.
+    const out = [];
+    let used = 0;
+    for (const chunk of merged) {
+      if (out.length >= limit) break;
+      const cost = chunk.text.length + chunk.title.length + 64;
+      if (used + cost > charBudget && out.length > 0) continue;
+      out.push(chunk);
+      used += cost;
+    }
+    return out;
+  }
+
+  /**
+   * Compiles a citation-grounded Course Brain prompt from ranked chunks.
+   * @param {string} question
+   * @param {{courseName?: string}} opts
+   * @returns {Promise<{prompt: string, sources: Array}>} sources are 1-indexed
+   *   {n, title, courseName, type, url, page} matching the [n] cite markers.
+   */
+  static async compileBrainPrompt(question, { courseName = '' } = {}) {
+    const chunks = await this.retrieveBrainChunks(question, { courseName });
+
+    const sources = chunks.map((chunk, i) => ({
+      n: i + 1,
+      title: chunk.title,
+      courseName: chunk.courseName,
+      type: chunk.type,
+      url: chunk.url,
+      page: chunk.page
+    }));
+
+    let prompt = '';
+    if (chunks.length > 0) {
+      prompt += `=== COURSE SOURCES (cite as [n]) ===\n`;
+      chunks.forEach((chunk, i) => {
+        const loc = chunk.page ? ` — page ${chunk.page}` : '';
+        const due = chunk.dueAt ? ` — due ${new Date(chunk.dueAt).toLocaleDateString()}` : '';
+        prompt += `[${i + 1}] ${chunk.title} (${chunk.courseName}${loc}${due})\n${chunk.text}\n\n`;
+      });
+    } else {
+      prompt += `=== COURSE SOURCES ===\n(No indexed content matched this question${courseName ? ` in ${courseName}` : ''}. Tell the student nothing relevant is indexed yet and to open the course files once so Canvascope can index them.)\n\n`;
+    }
+
+    prompt += `=== QUESTION ===\nAnswer using ONLY the numbered sources above. After each claim, cite its source inline like [1] or [2]. Be concise (2-5 sentences or a short list). If the sources do not contain the answer, say so plainly — do not invent. Question: ${question}`;
+
+    return { prompt, sources };
+  }
+
+  /**
+   * Compiles the FULL indexed corpus for a course (or all courses) into one
+   * citation-numbered block for the Claude Fable 5 cloud route. Unlike
+   * retrieveBrainChunks there is no retrieval step and no 1500-char cap —
+   * the 1M-token window holds everything. Chunks are sorted so the output is
+   * byte-identical across calls; that stability is what lets the proxy's
+   * prompt cache serve repeat questions at ~10% input price.
+   * @param {string} [courseName] - Optional course scope filter
+   * @param {{charBudget?: number}} [opts] - Corpus character cap (~4 chars/token)
+   * @returns {Promise<{corpus: string, sources: Array, truncated: boolean}>}
+   *   sources are 1-indexed {n, title, courseName, type, url, page}.
+   */
+  static async compileCourseCorpus(courseName = '', { charBudget = 900000 } = {}) {
+    const corpus = await this.buildCorpus();
+    const scope = courseName
+      ? corpus.filter(i => (i.courseName || '').toLowerCase() === courseName.toLowerCase())
+      : corpus;
+
+    const chunks = [];
+    scope.forEach(item => {
+      const base = {
+        title: item.title || '',
+        courseName: item.courseName || '',
+        type: item.type,
+        url: item.url || '',
+        dueAt: item.dueAt || null
+      };
+      if (Array.isArray(item.pages) && item.pages.length > 0) {
+        item.pages.forEach(page => {
+          const text = (page && page.text) ? String(page.text) : '';
+          if (!text.trim()) return;
+          chunks.push({ ...base, page: page.pageNum || null, text });
+        });
+      } else {
+        const text = (item.content || '').trim();
+        chunks.push({ ...base, page: null, text: text || base.title });
+      }
+    });
+
+    chunks.sort((a, b) =>
+      a.courseName.localeCompare(b.courseName) ||
+      a.title.localeCompare(b.title) ||
+      (a.page || 0) - (b.page || 0)
+    );
+
+    const sources = [];
+    let text = `=== COURSE SOURCES (cite as [n]) ===\n`;
+    let truncated = false;
+    for (const chunk of chunks) {
+      const n = sources.length + 1;
+      const loc = chunk.page ? ` — page ${chunk.page}` : '';
+      const due = chunk.dueAt ? ` — due ${new Date(chunk.dueAt).toLocaleDateString()}` : '';
+      const block = `[${n}] ${chunk.title} (${chunk.courseName}${loc}${due})\n${chunk.text}\n\n`;
+      if (text.length + block.length > charBudget) {
+        truncated = true;
+        continue;
+      }
+      text += block;
+      sources.push({
+        n,
+        title: chunk.title,
+        courseName: chunk.courseName,
+        type: chunk.type,
+        url: chunk.url,
+        page: chunk.page
+      });
+    }
+
+    return { corpus: text, sources, truncated };
+  }
 }

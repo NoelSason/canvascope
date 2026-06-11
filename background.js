@@ -149,11 +149,13 @@ if (supabaseClient) {
         });
 
         if (event === 'SIGNED_OUT') {
+            clearDropBridgeV2SessionCache();
             stopDropBridgeV2Loop();
             return;
         }
 
         if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
+            rememberDropBridgeV2Session(session);
             startDropBridgeV2Loop(`auth-${event.toLowerCase()}`).catch((error) => {
                 console.error(`[DropBridge v2] Auth bootstrap failure (${event}):`, parseErrorMessage(error));
             });
@@ -175,8 +177,14 @@ const DROPBRIDGE_V2_RECEIVER_WARMUP_THROTTLE_MS = 15 * 1000;
 const DROPBRIDGE_V2_RECEIVER_RESTART_THROTTLE_MS = 5 * 1000;
 const DROPBRIDGE_V2_INTENTIONAL_CLOSE_GRACE_MS = 10 * 1000;
 const DROPBRIDGE_V2_FALLBACK_ALARM_NAME = 'dropBridgeV2FallbackPoll';
-const DROPBRIDGE_V2_FALLBACK_ALARM_MINUTES_MODERN = 0.5;
-const DROPBRIDGE_V2_FALLBACK_ALARM_MINUTES_LEGACY = 1;
+const DROPBRIDGE_V2_HEARTBEAT_ALARM_NAME = 'dropBridgeV2Heartbeat';
+const DROPBRIDGE_V2_HEARTBEAT_ALARM_MINUTES = 4;
+// The offscreen realtime receiver is the primary wake path; this alarm is a
+// safety net only. At 0.5 min it woke the service worker + hit Supabase
+// ~2,880×/day for a feature that is usually idle — 2 min keeps the fallback
+// while cutting that churn 4×.
+const DROPBRIDGE_V2_FALLBACK_ALARM_MINUTES_MODERN = 2;
+const DROPBRIDGE_V2_FALLBACK_ALARM_MINUTES_LEGACY = 2;
 const DROPBRIDGE_V2_FALLBACK_ALARM_MIN_CHROME_MAJOR = 120;
 const DROPBRIDGE_V2_OFFSCREEN_DOCUMENT_PATH = 'offscreen.html';
 const DROPBRIDGE_V2_OFFSCREEN_DOCUMENT_URL = chrome.runtime.getURL(DROPBRIDGE_V2_OFFSCREEN_DOCUMENT_PATH);
@@ -191,7 +199,7 @@ const DEFAULT_EXTENSION_SETTINGS = Object.freeze({
 const PDF_VIEWER_OVERLAY_CONTENT_SCRIPT_ID = 'canvascopePdfViewerOverlay';
 const PDF_VIEWER_OVERLAY_WEBSITE_ORIGINS = ['https://*/*', 'http://*/*'];
 const PDF_VIEWER_OVERLAY_FILE_MATCH = 'file:///*';
-const PDF_VIEWER_DEBUG = true;
+const PDF_VIEWER_DEBUG = false; // enable only for local debugging
 const STATIC_LMS_CONTENT_SCRIPT_MATCHES = (() => {
     const manifestContentScripts = chrome.runtime.getManifest()?.content_scripts || [];
     return manifestContentScripts
@@ -210,7 +218,12 @@ let dropBridgeV2LastRestartAt = 0;
 let dropBridgeV2IntentionalOffscreenCloseUntil = 0;
 let dropBridgeV2DiagnosticsState = null;
 let dropBridgeV2DiagnosticsWritePromise = Promise.resolve();
+let dropBridgeV2CachedAccessToken = null;
+let dropBridgeV2CachedAccessTokenExpiresAtMs = 0;
+let dropBridgeV2CachedUserId = null;
+let dropBridgeV2CachedDeviceId = null;
 const dropBridgeV2ActiveUploads = new Set();
+const dropBridgeV2TargetedClaimsInFlight = new Set();
 let syncIndexedContentPromise = null;
 let syncIndexedContentNeedsRerun = false;
 
@@ -395,6 +408,34 @@ function dropBridgeDebug(message, details = undefined) {
     console.log(`[DropBridge v2][debug][${timestamp}] ${message}`, details);
 }
 
+function clearDropBridgeV2SessionCache() {
+    dropBridgeV2CachedAccessToken = null;
+    dropBridgeV2CachedAccessTokenExpiresAtMs = 0;
+    dropBridgeV2CachedUserId = null;
+}
+
+function rememberDropBridgeV2Session(session) {
+    if (!session?.access_token) {
+        clearDropBridgeV2SessionCache();
+        return;
+    }
+
+    dropBridgeV2CachedAccessToken = session.access_token;
+    dropBridgeV2CachedUserId = session?.user?.id || null;
+    const expiresAtSeconds = Number(session.expires_at || 0);
+    dropBridgeV2CachedAccessTokenExpiresAtMs = Number.isFinite(expiresAtSeconds) && expiresAtSeconds > 0
+        ? expiresAtSeconds * 1000
+        : Date.now() + (5 * 60 * 1000);
+}
+
+function getDropBridgeV2CachedAccessToken() {
+    if (!dropBridgeV2CachedAccessToken) return null;
+    if (dropBridgeV2CachedAccessTokenExpiresAtMs <= Date.now() + 30 * 1000) {
+        return null;
+    }
+    return dropBridgeV2CachedAccessToken;
+}
+
 function getChromeMajorVersion(userAgent = navigator?.userAgent || '') {
     const match = String(userAgent).match(/Chrome\/(\d+)/i) || String(userAgent).match(/Chromium\/(\d+)/i);
     const major = Number(match?.[1] || 0);
@@ -500,19 +541,31 @@ async function hydrateDropBridgeV2SessionFromStorage() {
             userId: data?.session?.user?.id || null,
             expiresAtEpoch: data?.session?.expires_at || null
         });
+        rememberDropBridgeV2Session(data?.session || null);
         return data?.session || null;
     }
 
     dropBridgeDebug('hydrate session from storage: session usable without refresh');
+    rememberDropBridgeV2Session(session);
     return session;
 }
 
 async function getDropBridgeV2AccessToken() {
     if (!supabaseClient) return null;
+    const cached = getDropBridgeV2CachedAccessToken();
+    if (cached) {
+        dropBridgeDebug('get access token: returning cached access token', {
+            userId: dropBridgeV2CachedUserId,
+            expiresAtMs: dropBridgeV2CachedAccessTokenExpiresAtMs
+        });
+        return cached;
+    }
+
     dropBridgeDebug('get access token: begin');
     const { data: { session }, error } = await supabaseClient.auth.getSession();
     if (error) throw error;
     if (!session) {
+        clearDropBridgeV2SessionCache();
         dropBridgeDebug('get access token: no session available');
         return null;
     }
@@ -544,10 +597,12 @@ async function getDropBridgeV2AccessToken() {
             userId: data?.session?.user?.id || null,
             expiresAtEpoch: data?.session?.expires_at || null
         });
+        rememberDropBridgeV2Session(data?.session || null);
         return data?.session?.access_token || null;
     }
 
     dropBridgeDebug('get access token: returning existing access token');
+    rememberDropBridgeV2Session(session);
     return session.access_token || null;
 }
 
@@ -585,9 +640,14 @@ async function callCanvascopeSupabaseFunction(functionName, body = {}) {
 }
 
 async function getOrCreateDropBridgeV2DeviceId() {
+    if (isUuid(dropBridgeV2CachedDeviceId)) {
+        return dropBridgeV2CachedDeviceId;
+    }
+
     const stored = await chrome.storage.local.get([DROPBRIDGE_V2_STORAGE_DEVICE_ID, DROPBRIDGE_MODE_STORAGE_KEY]);
     const existingId = stored[DROPBRIDGE_V2_STORAGE_DEVICE_ID];
     if (isUuid(existingId)) {
+        dropBridgeV2CachedDeviceId = existingId;
         dropBridgeDebug('device id: using existing id', {
             deviceId: existingId,
             mode: stored[DROPBRIDGE_MODE_STORAGE_KEY] || null
@@ -604,6 +664,7 @@ async function getOrCreateDropBridgeV2DeviceId() {
         [DROPBRIDGE_V2_STORAGE_DEVICE_ID]: nextId,
         [DROPBRIDGE_MODE_STORAGE_KEY]: DROPBRIDGE_V2_MODE
     });
+    dropBridgeV2CachedDeviceId = nextId;
     console.log(`[DropBridge v2] Generated stable deviceId: ${nextId}`);
     dropBridgeDebug('device id: generated new id', { deviceId: nextId });
     return nextId;
@@ -715,6 +776,24 @@ async function tryClaimAndProcessDropBridgeV2UploadById({ uploadId, accessToken 
         return false;
     }
 
+    if (dropBridgeV2ActiveUploads.has(normalizedUploadId) || dropBridgeV2TargetedClaimsInFlight.has(normalizedUploadId)) {
+        dropBridgeDebug('targeted claim: skipped duplicate active upload', {
+            uploadId: normalizedUploadId,
+            reason
+        });
+        void updateDropBridgeV2Diagnostics({
+            lastTargetedClaimAt: new Date().toISOString(),
+            lastTargetedClaimUploadId: normalizedUploadId,
+            lastTargetedClaimResult: 'duplicate_active'
+        }, {
+            type: 'targeted_claim_skipped',
+            reason,
+            uploadId: normalizedUploadId,
+            result: 'duplicate_active'
+        });
+        return true;
+    }
+
     const resolvedAccessToken = accessToken || await getDropBridgeV2AccessToken();
     if (!resolvedAccessToken) {
         dropBridgeDebug('targeted claim: skipped missing access token', {
@@ -725,21 +804,58 @@ async function tryClaimAndProcessDropBridgeV2UploadById({ uploadId, accessToken 
     }
 
     const resolvedDeviceId = deviceId || await getOrCreateDropBridgeV2DeviceId();
+    const claimStartedAtMs = Date.now();
+    dropBridgeV2TargetedClaimsInFlight.add(normalizedUploadId);
+    void updateDropBridgeV2Diagnostics({
+        lastTargetedClaimStartedAt: new Date(claimStartedAtMs).toISOString(),
+        lastTargetedClaimUploadId: normalizedUploadId,
+        lastTargetedClaimReason: reason,
+        lastTargetedClaimResult: 'started'
+    }, {
+        type: 'targeted_claim_started',
+        reason,
+        uploadId: normalizedUploadId
+    });
     try {
         const payload = await claimDropBridgeV2UploadById({
             accessToken: resolvedAccessToken,
             deviceId: resolvedDeviceId,
             uploadId: normalizedUploadId
         });
+        const claimFinishedAtIso = new Date().toISOString();
         const upload = payload?.upload || null;
         if (!upload) {
             dropBridgeDebug('targeted claim: no upload returned', {
                 uploadId: normalizedUploadId,
                 reason
             });
+            void updateDropBridgeV2Diagnostics({
+                lastTargetedClaimFinishedAt: claimFinishedAtIso,
+                lastTargetedClaimDurationMs: Date.now() - claimStartedAtMs,
+                lastTargetedClaimResult: 'empty'
+            }, {
+                type: 'targeted_claim_finished',
+                reason,
+                uploadId: normalizedUploadId,
+                ok: false,
+                result: 'empty'
+            });
             return false;
         }
 
+        void updateDropBridgeV2Diagnostics({
+            lastTargetedClaimFinishedAt: claimFinishedAtIso,
+            lastTargetedClaimDurationMs: Date.now() - claimStartedAtMs,
+            lastTargetedClaimResult: 'claimed',
+            lastSignedUrlReceivedAt: upload.downloadUrl ? claimFinishedAtIso : null
+        }, {
+            type: 'targeted_claim_finished',
+            reason,
+            uploadId: normalizedUploadId,
+            ok: true,
+            result: 'claimed',
+            hasDownloadUrl: Boolean(upload.downloadUrl)
+        });
         dropBridgeDebug('targeted claim: processing claimed upload', {
             uploadId: normalizedUploadId,
             reason
@@ -747,12 +863,28 @@ async function tryClaimAndProcessDropBridgeV2UploadById({ uploadId, accessToken 
         await processDropBridgeV2Upload(upload, resolvedAccessToken, resolvedDeviceId);
         return true;
     } catch (error) {
+        const claimFinishedAtIso = new Date().toISOString();
         dropBridgeDebug('targeted claim: failed', {
             uploadId: normalizedUploadId,
             reason,
             error: parseErrorMessage(error)
         });
+        void updateDropBridgeV2Diagnostics({
+            lastTargetedClaimFinishedAt: claimFinishedAtIso,
+            lastTargetedClaimDurationMs: Date.now() - claimStartedAtMs,
+            lastTargetedClaimResult: 'error',
+            lastTargetedClaimError: parseErrorMessage(error)
+        }, {
+            type: 'targeted_claim_finished',
+            reason,
+            uploadId: normalizedUploadId,
+            ok: false,
+            result: 'error',
+            error: parseErrorMessage(error)
+        });
         return false;
+    } finally {
+        dropBridgeV2TargetedClaimsInFlight.delete(normalizedUploadId);
     }
 }
 
@@ -995,6 +1127,15 @@ async function triggerDropBridgeDownload(upload) {
                 }
 
                 downloadId = id;
+                void updateDropBridgeV2Diagnostics({
+                    lastChromeDownloadStartedAt: new Date().toISOString(),
+                    lastChromeDownloadUploadId: uploadId,
+                    lastChromeDownloadId: downloadId
+                }, {
+                    type: 'chrome_download_started',
+                    uploadId,
+                    downloadId
+                });
                 chrome.downloads.onChanged.addListener(onChanged);
                 chrome.downloads.onErased.addListener(onErased);
                 dropBridgeDebug('download: listener attached', { uploadId, downloadId });
@@ -1316,6 +1457,103 @@ async function buildDropBridgeV2ReceiverContext() {
     };
 }
 
+function summarizeDropBridgeV2Event(event) {
+    if (!event || typeof event !== 'object') return null;
+    const type = String(event.type || 'event');
+    const uploadId = event.uploadId ? String(event.uploadId) : null;
+    const status = event.status ? String(event.status) : null;
+    const reason = event.reason ? String(event.reason) : null;
+    return {
+        at: event.at || null,
+        type,
+        uploadId,
+        status,
+        reason
+    };
+}
+
+function buildDropBridgeV2HealthSummary({ diagnostics, signedIn }) {
+    if (!DROPBRIDGE_V2_ENABLED) {
+        return {
+            enabled: false,
+            signedIn: false,
+            health: 'disabled',
+            label: 'DropBridge off',
+            detail: 'Receiver disabled'
+        };
+    }
+
+    if (!signedIn) {
+        return {
+            enabled: true,
+            signedIn: false,
+            health: 'signed_out',
+            label: 'Signed out',
+            detail: 'Sign in to receive Lectra files'
+        };
+    }
+
+    const receiverStatus = String(diagnostics?.receiverStatus || '').toLowerCase();
+    const recentEvents = Array.isArray(diagnostics?.recentEvents) ? diagnostics.recentEvents : [];
+    const latestEvent = summarizeDropBridgeV2Event(recentEvents.length > 0 ? recentEvents[recentEvents.length - 1] : null);
+    if (receiverStatus === 'subscribed') {
+        return {
+            enabled: true,
+            signedIn: true,
+            health: 'realtime_connected',
+            label: 'Realtime connected',
+            detail: diagnostics?.lastWakeAt ? `Last wake ${diagnostics.lastWakeAt}` : 'Receiver is subscribed',
+            latestEvent,
+            receiverStatus
+        };
+    }
+
+    if (receiverStatus === 'connecting' || receiverStatus === 'creating' || receiverStatus === 'created' || receiverStatus === 'existing') {
+        return {
+            enabled: true,
+            signedIn: true,
+            health: 'reconnecting',
+            label: 'Reconnecting',
+            detail: 'Receiver is warming up',
+            latestEvent,
+            receiverStatus
+        };
+    }
+
+    return {
+        enabled: true,
+        signedIn: true,
+        health: 'fallback_polling',
+        label: 'Fallback polling',
+        detail: diagnostics?.receiverError || 'Realtime receiver is not subscribed',
+        latestEvent,
+        receiverStatus: receiverStatus || null
+    };
+}
+
+async function buildDropBridgeV2PopupStatus() {
+    const diagnostics = await getDropBridgeV2DiagnosticsState();
+    const authStatus = await resolveAuthStatus();
+    return {
+        ...buildDropBridgeV2HealthSummary({
+            diagnostics,
+            signedIn: Boolean(authStatus?.signedIn)
+        }),
+        diagnostics: {
+            receiverStatus: diagnostics?.receiverStatus || null,
+            receiverStatusAt: diagnostics?.receiverStatusAt || null,
+            receiverSubscribedAt: diagnostics?.receiverSubscribedAt || null,
+            lastWakeAt: diagnostics?.lastWakeAt || null,
+            lastWakeUploadId: diagnostics?.lastWakeUploadId || null,
+            lastTargetedClaimResult: diagnostics?.lastTargetedClaimResult || null,
+            lastDownloadStatus: diagnostics?.lastDownloadStatus || null,
+            lastAckStatus: diagnostics?.lastAckStatus || null,
+            lastHeartbeatAt: diagnostics?.lastHeartbeatAt || null,
+            fallbackAlarmPeriodMinutes: diagnostics?.fallbackAlarmPeriodMinutes || null
+        }
+    };
+}
+
 async function requestDropBridgeV2Poll(reason = 'manual') {
     if (!DROPBRIDGE_V2_ENABLED || !supabaseClient) {
         return;
@@ -1402,6 +1640,85 @@ async function registerDropBridgeV2Device(reason = 'startup', accessToken = null
         deviceId
     });
     return true;
+}
+
+async function heartbeatDropBridgeV2Device(reason = 'heartbeat', accessToken = null, deviceId = null) {
+    if (!DROPBRIDGE_V2_ENABLED || !supabaseClient) return false;
+    const token = accessToken || await getDropBridgeV2AccessToken();
+    if (!token) {
+        void updateDropBridgeV2Diagnostics({
+            lastHeartbeatAt: new Date().toISOString(),
+            lastHeartbeatResult: 'no_access_token'
+        }, {
+            type: 'heartbeat',
+            reason,
+            ok: false,
+            result: 'no_access_token'
+        });
+        return false;
+    }
+
+    const resolvedDeviceId = deviceId || await getOrCreateDropBridgeV2DeviceId();
+    try {
+        const payload = await callDropBridgeV2Function('heartbeat-device-v2', {
+            deviceId: resolvedDeviceId,
+            clientKind: 'canvascope_extension'
+        }, token);
+        void updateDropBridgeV2Diagnostics({
+            lastHeartbeatAt: payload?.lastSeenAt || new Date().toISOString(),
+            lastHeartbeatResult: 'ok'
+        }, {
+            type: 'heartbeat',
+            reason,
+            ok: true,
+            deviceId: resolvedDeviceId
+        });
+        return true;
+    } catch (error) {
+        void updateDropBridgeV2Diagnostics({
+            lastHeartbeatAt: new Date().toISOString(),
+            lastHeartbeatResult: 'error',
+            lastHeartbeatError: parseErrorMessage(error)
+        }, {
+            type: 'heartbeat',
+            reason,
+            ok: false,
+            deviceId: resolvedDeviceId,
+            error: parseErrorMessage(error)
+        });
+        console.warn('[DropBridge v2] Heartbeat failed:', parseErrorMessage(error));
+        return false;
+    }
+}
+
+async function ensureDropBridgeV2HeartbeatAlarm(reason = 'startup') {
+    const existing = await chrome.alarms.get(DROPBRIDGE_V2_HEARTBEAT_ALARM_NAME);
+    const shouldRecreate = !existing || Number(existing.periodInMinutes) !== DROPBRIDGE_V2_HEARTBEAT_ALARM_MINUTES;
+    if (shouldRecreate) {
+        await chrome.alarms.create(DROPBRIDGE_V2_HEARTBEAT_ALARM_NAME, {
+            when: Date.now() + Math.max(1000, Math.round(DROPBRIDGE_V2_HEARTBEAT_ALARM_MINUTES * 60 * 1000)),
+            periodInMinutes: DROPBRIDGE_V2_HEARTBEAT_ALARM_MINUTES
+        });
+    }
+
+    void updateDropBridgeV2Diagnostics({
+        heartbeatAlarmPeriodMinutes: DROPBRIDGE_V2_HEARTBEAT_ALARM_MINUTES,
+        heartbeatAlarmEnsuredAt: new Date().toISOString()
+    }, {
+        type: 'heartbeat_alarm',
+        reason,
+        periodInMinutes: DROPBRIDGE_V2_HEARTBEAT_ALARM_MINUTES
+    });
+}
+
+async function clearDropBridgeV2HeartbeatAlarm(reason = 'stop') {
+    await chrome.alarms.clear(DROPBRIDGE_V2_HEARTBEAT_ALARM_NAME);
+    void updateDropBridgeV2Diagnostics({
+        heartbeatAlarmClearedAt: new Date().toISOString()
+    }, {
+        type: 'heartbeat_alarm_cleared',
+        reason
+    });
 }
 
 async function pollDropBridgeV2Once(reason = 'alarm') {
@@ -1541,6 +1858,9 @@ function stopDropBridgeV2Loop() {
     clearDropBridgeV2FallbackAlarm('loop-stop').catch((error) => {
         console.warn('[DropBridge v2] Failed to clear fallback alarm:', parseErrorMessage(error));
     });
+    clearDropBridgeV2HeartbeatAlarm('loop-stop').catch((error) => {
+        console.warn('[DropBridge v2] Failed to clear heartbeat alarm:', parseErrorMessage(error));
+    });
     closeDropBridgeV2OffscreenReceiver('loop-stop').catch((error) => {
         console.warn('[DropBridge v2] Failed to close offscreen receiver:', parseErrorMessage(error));
     });
@@ -1574,6 +1894,10 @@ async function startDropBridgeV2Loop(reason = 'startup') {
         }
 
         await ensureDropBridgeV2FallbackAlarm(reason);
+        await ensureDropBridgeV2HeartbeatAlarm(reason);
+        void heartbeatDropBridgeV2Device(`${reason}-heartbeat`, accessToken).catch((error) => {
+            console.warn('[DropBridge v2] Startup heartbeat failure:', parseErrorMessage(error));
+        });
         await ensureDropBridgeV2OffscreenReceiver(reason);
 
         await requestDropBridgeV2Poll(`${reason}-immediate`);
@@ -2066,6 +2390,9 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
     syncPdfViewerOverlayRegistration('settings-changed').catch((error) => {
         console.warn('[Canvascope PDF Viewer] Failed to sync overlay registration after settings change:', parseErrorMessage(error));
     });
+    ensureDropBridgeV2LoopWarm('settings-changed').catch((error) => {
+        console.warn('[DropBridge v2] Settings-change warmup failed:', parseErrorMessage(error));
+    });
 });
 
 chrome.permissions.onAdded.addListener(() => {
@@ -2132,6 +2459,11 @@ chrome.alarms.onAlarm.addListener((alarm) => {
     if (alarm.name === DROPBRIDGE_V2_FALLBACK_ALARM_NAME) {
         requestDropBridgeV2Poll('alarm').catch((error) => {
             console.error('[DropBridge v2] Alarm-triggered poll failure:', parseErrorMessage(error));
+        });
+    }
+    if (alarm.name === DROPBRIDGE_V2_HEARTBEAT_ALARM_NAME) {
+        heartbeatDropBridgeV2Device('alarm').catch((error) => {
+            console.error('[DropBridge v2] Alarm-triggered heartbeat failure:', parseErrorMessage(error));
         });
     }
 });
@@ -2297,11 +2629,15 @@ async function performBackgroundScan(baseUrl, platform = 'canvas') {
             };
         };
 
-        // Helper for progressive yield
-        const incrementalSave = async (newContent) => {
-            if (!newContent || newContent.length === 0) return;
-            allContent.push(...newContent);
+        // Helper for progressive yield. Persisting re-dedups and rewrites the
+        // ENTIRE index (plus course artifacts), so doing it after every course
+        // made scans O(courses × index size) in storage writes. Throttle to one
+        // progress flush every couple of seconds; the final save below always
+        // writes the complete result.
+        const PROGRESS_PERSIST_INTERVAL_MS = 2000;
+        let lastProgressPersistAt = 0;
 
+        const writeIndexedContentSnapshot = async () => {
             const scannedCourseKeys = new Set(allContent.map(getCourseKey).filter(Boolean));
             const preservedItems = existingContent.filter(item => {
                 const key = getCourseKey(item);
@@ -2312,6 +2648,20 @@ async function performBackgroundScan(baseUrl, platform = 'canvas') {
             const mergedContent = deduplicateCrossType(deduplicateContent([...preservedItems, ...allContent]));
 
             await chrome.storage.local.set({ indexedContent: mergedContent });
+        };
+
+        const incrementalSave = async (newContent, hasSnapshot = false) => {
+            if (!newContent || newContent.length === 0) return;
+            allContent.push(...newContent);
+
+            const now = Date.now();
+            if (now - lastProgressPersistAt < PROGRESS_PERSIST_INTERVAL_MS) return;
+            lastProgressPersistAt = now;
+
+            if (hasSnapshot) {
+                await persistCourseArtifacts();
+            }
+            await writeIndexedContentSnapshot();
         };
 
         // --- PHASE 1: Fast Pass ---
@@ -2343,10 +2693,7 @@ async function performBackgroundScan(baseUrl, platform = 'canvas') {
                     status: `Fast indexing ${fastCount}/${courses.length} courses`
                 });
 
-                if (snapshot) {
-                    await persistCourseArtifacts();
-                }
-                await incrementalSave(courseContent);
+                await incrementalSave(courseContent, Boolean(snapshot));
             } catch (e) {
                 console.warn(`[Canvascope] Fast Phase Error on ${course.name}:`, e.message);
             }
@@ -2372,10 +2719,7 @@ async function performBackgroundScan(baseUrl, platform = 'canvas') {
                         status: `Deep indexing ${deepCount}/${courses.length} courses`
                     });
 
-                    if (snapshot) {
-                        await persistCourseArtifacts();
-                    }
-                    await incrementalSave(courseContent);
+                    await incrementalSave(courseContent, Boolean(snapshot));
                 } catch (e) {
                     console.warn(`[Canvascope] Deep Phase Error on ${course.name}:`, e.message);
                 }
@@ -5952,6 +6296,28 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             }
         })();
         return true;
+    } else if (message.type === 'canvascope-open-sidepanel') {
+        // v10: open the AI sidepanel on a specific view (chat|brain|plan),
+        // optionally carrying a question/action the panel runs on load.
+        // The intent is parked in storage because sidePanel.open() can't pass
+        // arguments; sidepanel.js consumes and clears it.
+        (async () => {
+            try {
+                const intent = Object.assign({}, message.intent || {}, { ts: Date.now() });
+                await chrome.storage.local.set({ sidepanelIntent: intent });
+                let windowId = sender?.tab?.windowId;
+                if (windowId == null) {
+                    const w = await chrome.windows.getCurrent();
+                    windowId = w?.id;
+                }
+                await chrome.sidePanel.open({ windowId });
+                sendResponse({ success: true });
+            } catch (err) {
+                console.error('[Canvascope] Failed to open sidepanel:', err);
+                sendResponse({ success: false, message: err.message });
+            }
+        })();
+        return true;
     } else if (message.type === 'createGoogleCalendarEvent') {
         (async () => {
             try {
@@ -6491,11 +6857,25 @@ async function handleParsePdfText(message, sender) {
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.action === 'getStatus') {
-        chrome.storage.local.get(['indexedContent', 'settings']).then(data => {
+        (async () => {
+            const data = await chrome.storage.local.get(['indexedContent', 'settings']);
             sendResponse({
                 itemCount: data.indexedContent?.length || 0,
                 lastScan: data.settings?.lastScanTime || 0,
-                isScanning
+                isScanning,
+                dropBridge: await buildDropBridgeV2PopupStatus()
+            });
+        })().catch((error) => {
+            sendResponse({
+                itemCount: 0,
+                lastScan: 0,
+                isScanning,
+                dropBridge: {
+                    enabled: DROPBRIDGE_V2_ENABLED,
+                    health: 'fallback_polling',
+                    label: 'Fallback polling',
+                    detail: parseErrorMessage(error)
+                }
             });
         });
         return true;
@@ -6665,15 +7045,29 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                 const wakeReason = String(message.reason || 'offscreen');
                 const topic = message.topic ? String(message.topic) : null;
                 const uploadId = message.uploadId ? String(message.uploadId) : null;
+                const realtimeReceivedAt = message.realtimeReceivedAt ? String(message.realtimeReceivedAt) : new Date().toISOString();
+                const wakeUpload = message.upload && typeof message.upload === 'object' ? message.upload : {};
+                const rawWakeSizeBytes = wakeUpload.sizeBytes;
+                const wakeSizeBytes = rawWakeSizeBytes === null || rawWakeSizeBytes === undefined || rawWakeSizeBytes === ''
+                    ? null
+                    : Number(rawWakeSizeBytes);
+                const normalizedWakeSizeBytes = Number.isFinite(wakeSizeBytes) ? wakeSizeBytes : null;
                 void updateDropBridgeV2Diagnostics({
-                    lastWakeAt: new Date().toISOString(),
+                    lastWakeAt: realtimeReceivedAt,
                     lastWakeReason: wakeReason,
-                    lastWakeTopic: topic
+                    lastWakeTopic: topic,
+                    lastWakeUploadId: uploadId,
+                    lastWakeFileName: wakeUpload.fileName ? String(wakeUpload.fileName) : null,
+                    lastWakeSizeBytes: normalizedWakeSizeBytes,
+                    lastWakeMimeType: wakeUpload.mimeType ? String(wakeUpload.mimeType) : null,
+                    lastWakeCreatedAt: wakeUpload.createdAt ? String(wakeUpload.createdAt) : null
                 }, {
                     type: 'receiver_wake',
                     reason: wakeReason,
                     topic,
-                    uploadId
+                    uploadId,
+                    fileName: wakeUpload.fileName ? String(wakeUpload.fileName) : null,
+                    sizeBytes: normalizedWakeSizeBytes
                 });
                 let handledByTargetedClaim = false;
                 if (uploadId) {

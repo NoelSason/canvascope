@@ -2,6 +2,7 @@ import { corsHeaders, json } from "../_shared/cors.ts";
 import { admin, sanitizeFileName } from "../_shared/device-auth.ts";
 import { HttpError, requireAuthUser } from "../_shared/auth-user.ts";
 import { sendApnsPush } from "../_shared/apns.ts";
+import { recordDropBridgeReceipt } from "../_shared/dropbridge-receipts.ts";
 
 const MAX_FILE_BYTES = 25 * 1024 * 1024;
 const QUEUE_RETENTION_MS = 24 * 60 * 60 * 1000;
@@ -111,6 +112,7 @@ Deno.serve(async (request) => {
     const objectPath = `${user.id}/${receiver.id}/${uploadId}-${fileName}`;
     const contentType = file.type || "application/octet-stream";
     const expiresAt = new Date(Date.now() + QUEUE_RETENTION_MS).toISOString();
+    const receiverWasActive = Boolean(receiver.last_seen_at && receiver.last_seen_at > activeReceiverCutoff);
     const arrayBuffer = await file.arrayBuffer();
 
     const { error: storageError } = await admin.storage.from("drops").upload(objectPath, arrayBuffer, {
@@ -140,6 +142,20 @@ Deno.serve(async (request) => {
       throw new Error(`Failed to record upload metadata: ${rowError.message}`);
     }
 
+    await recordDropBridgeReceipt({
+      uploadId,
+      userId: user.id,
+      deviceId: receiver.id,
+      stage: "queued",
+      detail: {
+        receiverKind,
+        senderKind: senderKind || null,
+        fileName,
+        sizeBytes: file.size,
+        mimeType: contentType,
+      },
+    });
+
     if (receiver.push_token && receiver.push_environment) {
       try {
         await sendApnsPush(receiver.push_token, receiver.push_environment, {
@@ -158,6 +174,8 @@ Deno.serve(async (request) => {
       sizeBytes: file.size,
       contentType,
       receiverId: receiver.id,
+      receiverLastSeenAt: receiver.last_seen_at,
+      receiverWasActive,
       expiresAt,
     });
   } catch (error) {

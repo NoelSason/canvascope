@@ -1,6 +1,7 @@
 import { corsHeaders, json } from "../_shared/cors.ts";
 import { admin, requireUuid } from "../_shared/device-auth.ts";
 import { HttpError, requireAuthUser } from "../_shared/auth-user.ts";
+import { recordDropBridgeReceipt } from "../_shared/dropbridge-receipts.ts";
 
 type PendingV2Payload = {
   deviceId?: string;
@@ -210,6 +211,17 @@ Deno.serve(async (request) => {
     const uploads = [];
 
     for (const row of claimedRows) {
+      await recordDropBridgeReceipt({
+        uploadId: row.id,
+        userId: user.id,
+        deviceId,
+        stage: "claimed",
+        detail: {
+          method: "fallback_list",
+          clientKind: requestedClientKind,
+        },
+      });
+
       const { data: signedData, error: signedError } = await admin.storage
         .from("drops")
         .createSignedUrl(row.object_path, 60 * 5);
@@ -223,6 +235,17 @@ Deno.serve(async (request) => {
           .eq("device_id", deviceId);
         continue;
       }
+
+      await recordDropBridgeReceipt({
+        uploadId: row.id,
+        userId: user.id,
+        deviceId,
+        stage: "signed_url_issued",
+        detail: {
+          method: "fallback_list",
+          ttlSeconds: 60 * 5,
+        },
+      });
 
       uploads.push({
         id: row.id,

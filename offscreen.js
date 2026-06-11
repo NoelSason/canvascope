@@ -5,6 +5,7 @@
     const DROPBRIDGE_STATUS_ACTION = 'dropbridgeReceiverStatus';
     const DROPBRIDGE_WAKE_EVENT = 'upload_queued';
     const RECONNECT_DELAY_MS = 2000;
+    const RECONNECT_MAX_DELAY_MS = 60000;
 
     let supabaseClient = null;
     let currentContextKey = '';
@@ -12,6 +13,7 @@
     let currentChannel = null;
     let connectPromise = null;
     let reconnectTimer = null;
+    let reconnectDelayMs = RECONNECT_DELAY_MS;
 
     function log(message, details = undefined) {
         if (details === undefined) {
@@ -77,6 +79,20 @@
         ].join('|');
     }
 
+    function normalizeWakeUpload(payload) {
+        const row = payload?.new && typeof payload.new === 'object'
+            ? payload.new
+            : (payload && typeof payload === 'object' ? payload : {});
+        const uploadId = row.uploadId || row.id || null;
+        return {
+            uploadId,
+            fileName: row.fileName || row.file_name || null,
+            sizeBytes: row.sizeBytes ?? row.size_bytes ?? null,
+            mimeType: row.mimeType || row.mime_type || null,
+            createdAt: row.createdAt || row.created_at || null
+        };
+    }
+
     async function reportStatus(status, details = {}) {
         await sendRuntimeMessage({
             action: DROPBRIDGE_STATUS_ACTION,
@@ -100,13 +116,18 @@
         }
     }
 
-    function scheduleReconnect(reason, delayMs = RECONNECT_DELAY_MS) {
+    function scheduleReconnect(reason) {
         if (reconnectTimer) return;
+        // Exponential backoff (2s → 60s cap) so an extended outage doesn't
+        // turn into a constant retry loop; reset to the base delay once a
+        // subscription succeeds.
+        const delayMs = reconnectDelayMs;
+        reconnectDelayMs = Math.min(reconnectDelayMs * 2, RECONNECT_MAX_DELAY_MS);
         reconnectTimer = setTimeout(() => {
             reconnectTimer = null;
             ensureReceiverConnected(reason).catch((error) => {
                 log('Reconnect failed', parseErrorMessage(error));
-                scheduleReconnect(`${reason}-retry`, delayMs);
+                scheduleReconnect(`${reason}-retry`);
             });
         }, delayMs);
     }
@@ -196,14 +217,20 @@
         });
 
         channel.on('broadcast', { event: wakeEvent }, (payload) => {
-            const uploadId = payload?.new?.id || payload?.new?.uploadId || null;
+            const upload = normalizeWakeUpload(payload);
+            const uploadId = upload.uploadId || null;
+            const realtimeReceivedAt = new Date().toISOString();
             log('Wake event received', {
                 topic: context.topic,
-                uploadId
+                uploadId,
+                fileName: upload.fileName,
+                sizeBytes: upload.sizeBytes
             });
             void notifyWake('upload_queued', {
                 topic: context.topic,
-                uploadId
+                uploadId,
+                upload,
+                realtimeReceivedAt
             });
         });
 
@@ -223,6 +250,7 @@
 
             if (status === 'SUBSCRIBED') {
                 clearReconnectTimer();
+                reconnectDelayMs = RECONNECT_DELAY_MS;
                 void reportStatus('subscribed', {
                     reason,
                     topic: context.topic

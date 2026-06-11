@@ -1,0 +1,100 @@
+/* ============================================
+   Canvascope v10 — Canonical design tokens
+   Single source of truth for popup, sidepanel,
+   and slash surfaces. Dark is the default;
+   [data-theme="light"] switches the neutral/text/accent ramps.
+   Surface CSS files (styles.css, v8/sidepanel.css)
+   alias their historical var names onto these.
+   ============================================ */
+
+:root {
+  color-scheme: dark;
+
+  /* ── Neutrals (unified dark ramp) ── */
+  --ds-bg-0:      #07090f;
+  --ds-bg-1:      #0b0e15;
+  --ds-bg-2:      #11141d;
+  --ds-bg-3:      #181c28;
+  --ds-bg-4:      #222838;
+  --ds-border:    #232837;
+  --ds-border-hi: #32384a;
+
+  /* ── Text ramp ── */
+  --ds-text:   #edf0f8;
+  --ds-text-2: #a9afbf;
+  --ds-text-3: #747b8f;
+  --ds-text-4: #4f5668;
+
+  /* ── Accent: violet ── */
+  --ds-accent:        #b9a5ff;
+  --ds-accent-hi:     #c9b9ff;
+  --ds-accent-deep:   #8f78ef;
+  --ds-accent-bg:     rgba(185, 165, 255, 0.14);
+  --ds-accent-bg-hi:  rgba(185, 165, 255, 0.20);
+  --ds-border-hot:    rgba(185, 165, 255, 0.36);
+  --ds-on-accent:     #181226;
+
+  /* ── Status ── */
+  --ds-ok:      #6fce9a;
+  --ds-ok-bg:   rgba(111, 206, 154, 0.12);
+  --ds-warn:    #e8b770;
+  --ds-warn-bg: rgba(232, 183, 112, 0.12);
+  --ds-bad:     #e57373;
+  --ds-bad-bg:  rgba(229, 115, 115, 0.12);
+  --ds-cloud:   #b9a5ff;
+
+  /* ── Type ── */
+  --ds-font-sans: 'Geist', -apple-system, BlinkMacSystemFont, ui-sans-serif, system-ui, 'Segoe UI', sans-serif;
+  --ds-font-mono: 'Geist Mono', 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+
+  /* ── Radius (soft scale) ── */
+  --ds-r-1: 2px;
+  --ds-r-2: 4px;
+  --ds-r-3: 6px;
+  --ds-r-4: 8px;
+  --ds-r-5: 10px;
+  --ds-r-pill: 999px;
+
+  /* ── Motion ── */
+  --ds-ease-out:    cubic-bezier(.2, .8, .2, 1);
+  --ds-ease-spring: cubic-bezier(.16, 1, .3, 1);
+  --ds-dur-fast: 120ms;
+  --ds-dur:      200ms;
+  --ds-dur-slow: 320ms;
+}
+
+/* ============================================
+   LIGHT THEME — explicit opt-in
+   ============================================ */
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --ds-bg-0:      #f5f5f8;
+  --ds-bg-1:      #fbfbfd;
+  --ds-bg-2:      #ffffff;
+  --ds-bg-3:      #f3f2f8;
+  --ds-bg-4:      #ecebf4;
+  --ds-border:    #e3e2ec;
+  --ds-border-hi: #d2d0e0;
+
+  --ds-text:   #1a1a22;
+  --ds-text-2: #4e4e5c;
+  --ds-text-3: #74747f;
+  --ds-text-4: #9b9ba6;
+
+  --ds-accent:        #7a5cf0;
+  --ds-accent-hi:     #8f78ef;
+  --ds-accent-deep:   #6847e0;
+  --ds-accent-bg:     rgba(122, 92, 240, 0.10);
+  --ds-accent-bg-hi:  rgba(122, 92, 240, 0.16);
+  --ds-border-hot:    rgba(122, 92, 240, 0.34);
+  --ds-on-accent:     #ffffff;
+
+  --ds-ok:      #2e9e67;
+  --ds-ok-bg:   rgba(46, 158, 103, 0.10);
+  --ds-warn:    #b07c28;
+  --ds-warn-bg: rgba(176, 124, 40, 0.10);
+  --ds-bad:     #cc4f4f;
+  --ds-bad-bg:  rgba(204, 79, 79, 0.10);
+  --ds-cloud:   #7a5cf0;
+}

@@ -392,3 +392,5 @@ verify_jwt = false
 [functions.upload-file-v2]
 verify_jwt = false
 
+[functions.heartbeat-device-v2]
+verify_jwt = false

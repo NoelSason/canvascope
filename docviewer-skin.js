@@ -420,13 +420,20 @@ ${mode === 'light' ? `
 `;
   }
 
+  // The skin is cached in memory and kept fresh by the storage listener.
+  // render() runs from a subtree MutationObserver, so it must never await a
+  // chrome.storage round-trip per mutation.
+  let cachedSkin = null;
+
   async function loadSkin() {
+    if (cachedSkin) return cachedSkin;
     try {
       const data = await chrome.storage.local.get(['canvasSkin']);
-      return deepMerge(JSON.parse(JSON.stringify(DEFAULT_SKIN)), data.canvasSkin || {});
+      cachedSkin = deepMerge(JSON.parse(JSON.stringify(DEFAULT_SKIN)), data.canvasSkin || {});
     } catch (_) {
-      return JSON.parse(JSON.stringify(DEFAULT_SKIN));
+      cachedSkin = JSON.parse(JSON.stringify(DEFAULT_SKIN));
     }
+    return cachedSkin;
   }
 
   async function render() {
@@ -446,7 +453,21 @@ ${mode === 'light' ? `
   function observeParentForPreviewFrame() {
     if (isDocViewerFrame()) return;
     if (!document.documentElement) return;
-    const observer = new MutationObserver(() => { void render(); });
+    // Batched per animation frame, and re-rendered only when the preview
+    // iframe actually appears/disappears — not for unrelated page mutations.
+    let scheduled = false;
+    let lastHadFrame = hasDocViewerChildFrame();
+    const observer = new MutationObserver(() => {
+      if (scheduled) return;
+      scheduled = true;
+      requestAnimationFrame(() => {
+        scheduled = false;
+        const hasFrame = hasDocViewerChildFrame();
+        if (hasFrame === lastHadFrame) return;
+        lastHadFrame = hasFrame;
+        void render();
+      });
+    });
     observer.observe(document.documentElement, { childList: true, subtree: true });
   }
 
@@ -455,7 +476,10 @@ ${mode === 'light' ? `
 
   try {
     chrome.storage.onChanged.addListener((changes, area) => {
-      if (area === 'local' && changes.canvasSkin) void render();
+      if (area === 'local' && changes.canvasSkin) {
+        cachedSkin = deepMerge(JSON.parse(JSON.stringify(DEFAULT_SKIN)), changes.canvasSkin.newValue || {});
+        void render();
+      }
     });
   } catch (_) {
     // Non-extension test contexts do not expose chrome.storage.

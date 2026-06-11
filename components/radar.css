@@ -1,0 +1,157 @@
+/* ============================================
+   Canvascope v10 — Targeting grid (radar.js)
+   Shared by popup + sidepanel; written against
+   the canonical --ds-* tokens (tokens.css).
+   Rows = courses, columns = urgency windows.
+   ============================================ */
+.cs-grid { display: flex; flex-direction: column; gap: 10px; }
+.cs-grid-empty {
+  text-align: center;
+  font-family: var(--ds-font-mono);
+  font-size: 10.5px;
+  color: var(--ds-text-4);
+  padding: 18px 0;
+}
+.cs-grid-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+.cs-grid-title {
+  font-family: var(--ds-font-mono);
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--ds-text-3);
+}
+.cs-grid-total {
+  font-family: var(--ds-font-mono);
+  font-size: 10.5px;
+  color: var(--ds-accent);
+}
+.cs-grid-table {
+  display: grid;
+  gap: 3px;
+  align-items: stretch;
+}
+.cs-grid-h {
+  font-family: var(--ds-font-mono);
+  font-size: 9px;
+  letter-spacing: 0.4px;
+  color: var(--ds-text-4);
+  text-align: center;
+  padding-bottom: 2px;
+}
+.cs-grid-h-corner { text-align: left; }
+.cs-grid-h-col.tone-stop { color: var(--ds-bad); }
+.cs-grid-h-col.tone-warn { color: var(--ds-warn); }
+.cs-grid-course {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  background: transparent;
+  border: none;
+  color: var(--ds-text-2);
+  font-family: var(--ds-font-sans);
+  font-size: 10.5px;
+  text-align: left;
+  padding: 0 4px;
+  cursor: pointer;
+  border-radius: var(--ds-r-2);
+  transition: color var(--ds-dur-fast) var(--ds-ease-out), background var(--ds-dur-fast) var(--ds-ease-out);
+}
+.cs-grid-course:hover { color: var(--ds-text); background: var(--ds-bg-2); }
+.cs-grid-course-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cs-grid-course-total { font-family: var(--ds-font-mono); color: var(--ds-text-4); flex-shrink: 0; }
+.cs-grid-cell {
+  display: grid;
+  place-items: center;
+  min-height: 26px;
+  border-radius: var(--ds-r-2);
+  border: 1px solid var(--ds-border);
+  background: var(--ds-bg-1);
+  cursor: pointer;
+  padding: 0;
+  transition: border-color var(--ds-dur-fast) var(--ds-ease-out), transform var(--ds-dur-fast) var(--ds-ease-out);
+}
+.cs-grid-cell:disabled { cursor: default; }
+.cs-grid-cell.has-count:hover { border-color: var(--ds-border-hot); transform: scale(1.06); }
+.cs-grid-cell-num { font-family: var(--ds-font-mono); font-size: 11px; font-weight: 600; }
+.cs-grid-cell-empty { color: var(--ds-text-4); font-size: 10px; }
+.cs-grid-cell.tone-stop.has-count { background: var(--ds-bad-bg); border-color: var(--ds-bad); }
+.cs-grid-cell.tone-stop .cs-grid-cell-num { color: var(--ds-bad); }
+.cs-grid-cell.tone-warn.has-count { background: var(--ds-warn-bg); border-color: var(--ds-warn); }
+.cs-grid-cell.tone-warn .cs-grid-cell-num { color: var(--ds-warn); }
+.cs-grid-cell.tone-go.has-count { background: var(--ds-ok-bg); }
+.cs-grid-cell.tone-go .cs-grid-cell-num { color: var(--ds-ok); }
+.cs-grid-cell.tone-mute.has-count { background: var(--ds-bg-3); }
+.cs-grid-cell.tone-mute .cs-grid-cell-num { color: var(--ds-text-3); }
+/* Intensity ramp (i-1..i-4 from radar.js) */
+.cs-grid-cell.i-3.has-count, .cs-grid-cell.i-4.has-count { box-shadow: inset 0 0 0 1px currentColor; }
+
+.cs-grid-callout {
+  border-top: 1px solid var(--ds-border);
+  padding-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.cs-grid-callout-head { display: flex; align-items: center; justify-content: space-between; }
+.cs-grid-callout-kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--ds-font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.4px;
+}
+.cs-grid-callout-kicker .cs-status-dot {
+  width: 6px; height: 6px;
+  border-radius: var(--ds-r-pill);
+  background: currentColor;
+}
+.cs-grid-callout-kicker.tone-stop { color: var(--ds-bad); }
+.cs-grid-callout-kicker.tone-warn { color: var(--ds-warn); }
+.cs-grid-callout-kicker.tone-go   { color: var(--ds-ok); }
+.cs-grid-callout-kicker.tone-mute { color: var(--ds-text-3); }
+.cs-grid-callout-count { font-family: var(--ds-font-mono); font-size: 12px; color: var(--ds-text-2); }
+.cs-grid-callout-title { font-size: 12px; font-weight: 600; color: var(--ds-text); }
+.cs-grid-callout-meta { font-family: var(--ds-font-mono); font-size: 10.5px; color: var(--ds-text-3); }
+.cs-grid-callout-actions { display: flex; gap: 8px; margin-top: 4px; }
+.cs-grid-callout-empty {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--ds-text-3);
+}
+.cs-grid .cs-btn {
+  padding: 5px 10px;
+  border-radius: var(--ds-r-2);
+  font-family: var(--ds-font-sans);
+  font-size: 10.5px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid var(--ds-border-hi);
+  background: var(--ds-bg-2);
+  color: var(--ds-text-2);
+  transition: border-color var(--ds-dur-fast) var(--ds-ease-out);
+}
+.cs-grid .cs-btn--primary { background: var(--ds-accent); color: var(--ds-on-accent); border-color: transparent; }
+.cs-grid .cs-btn:hover { border-color: var(--ds-border-hot); }
+.cs-grid .cs-btn--primary:hover { background: var(--ds-accent-hi); }
+.cs-grid-strip { display: flex; gap: 12px; }
+.cs-grid-strip-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--ds-font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.4px;
+}
+.cs-grid-strip-dot { width: 5px; height: 5px; border-radius: var(--ds-r-pill); background: currentColor; }
+.cs-grid-strip-cell.tone-stop { color: var(--ds-bad); }
+.cs-grid-strip-cell.tone-warn { color: var(--ds-warn); }
+.cs-grid-strip-cell.tone-go   { color: var(--ds-ok); }
+.cs-grid-strip-cell strong { color: var(--ds-text-2); }

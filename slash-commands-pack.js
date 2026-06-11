@@ -66,8 +66,91 @@
       cmdSync(),
       cmdReload(),
       cmdZen(),
-      cmdAutopilot()
+      cmdAutopilot(),
+      cmdAsk(),
+      cmdPlan(),
+      cmdQuiz()
     ];
+  }
+
+  // -------------------------------------------------------------------------
+  // v10 sidepanel commands — /ask, /plan, /quiz open the AI sidepanel on a
+  // specific view via the background 'canvascope-open-sidepanel' handler.
+  // -------------------------------------------------------------------------
+  function openSidepanel(intent, ctx) {
+    return new Promise((resolve) => {
+      chrome.runtime.sendMessage({ type: 'canvascope-open-sidepanel', intent }, (res) => {
+        void chrome.runtime.lastError;
+        if (res?.success) {
+          ctx?.setFeedbackMsg?.('Opening sidepanel ✓', 'success');
+          setTimeout(() => ctx?.closeOverlay?.(), 400);
+        } else {
+          ctx?.setFeedbackMsg?.(res?.message || 'Could not open the sidepanel.', 'error');
+        }
+        resolve(res);
+      });
+    });
+  }
+
+  function cmdAsk() {
+    return {
+      order: 22, id: 'cs-ask', primaryAlias: 'ask',
+      aliases: ['brain', 'question'],
+      title: 'Ask Course Brain',
+      description: 'Course-wide AI answer with cited sources from your indexed files.',
+      keywords: ['ask', 'brain', 'ai', 'question', 'answer', 'course', 'sources'],
+      icon: 'bolt', badge: 'AI', needsArgument: false,
+      buildResults(arg, ctx) {
+        const q = String(arg || '').trim();
+        return [{
+          kind: 'action',
+          title: q ? `Ask Brain: "${q}"` : 'Open Course Brain',
+          subtitle: q ? 'Answers from your indexed course content, with sources.' : 'Type a question after /ask, or browse in the sidepanel.',
+          icon: 'bolt', badge: 'AI',
+          onSelect: () => openSidepanel({ view: 'brain', question: q || null }, ctx)
+        }];
+      }
+    };
+  }
+
+  function cmdPlan() {
+    return {
+      order: 23, id: 'cs-plan', primaryAlias: 'plan',
+      aliases: ['week', 'studyplan'],
+      title: 'Smart Planner',
+      description: 'AI drafts study blocks from your deadlines — edit, save, sync.',
+      keywords: ['plan', 'planner', 'week', 'study', 'schedule', 'blocks'],
+      icon: 'cal', badge: 'AI', needsArgument: false,
+      buildResults(arg, ctx) {
+        return [{
+          kind: 'action',
+          title: 'Open Smart Planner',
+          subtitle: 'Pressure radar + AI-drafted study blocks for the next two weeks.',
+          icon: 'cal', badge: 'AI',
+          onSelect: () => openSidepanel({ view: 'plan' }, ctx)
+        }];
+      }
+    };
+  }
+
+  function cmdQuiz() {
+    return {
+      order: 24, id: 'cs-quiz', primaryAlias: 'quiz',
+      aliases: ['practice', 'test-me'],
+      title: 'Practice quiz',
+      description: 'Generate a practice quiz grounded in your indexed course content.',
+      keywords: ['quiz', 'practice', 'test', 'questions', 'study'],
+      icon: 'bolt', badge: 'AI', needsArgument: false,
+      buildResults(arg, ctx) {
+        return [{
+          kind: 'action',
+          title: 'Generate practice quiz',
+          subtitle: 'Questions with answers, sourced from your course materials.',
+          icon: 'bolt', badge: 'AI',
+          onSelect: () => openSidepanel({ view: 'brain', action: 'quiz' }, ctx)
+        }];
+      }
+    };
   }
 
   // -------------------------------------------------------------------------

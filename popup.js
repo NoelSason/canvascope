@@ -1305,7 +1305,38 @@ function renderHomeSections() {
 
   const primaryRecent = state.recentlyOpened[0];
   const additionalRecents = state.recentlyOpened.slice(1, MAX_RECENTS);
-  const hasHomeContent = Boolean(primaryRecent || additionalRecents.length > 0);
+
+  // v10: pressure radar — course × urgency grid over dated work (radar.js).
+  const radarSection = document.getElementById('radar-section');
+  let hasRadar = false;
+  if (radarSection && window.CanvascopeRadar) {
+    const now = Date.now();
+    const datedItems = (state.indexedContent || []).filter((item) => {
+      if (!item || !item.dueAt || item.completed) return false;
+      const ts = new Date(item.dueAt).getTime();
+      return Number.isFinite(ts) && ts > now - 14 * 24 * 60 * 60 * 1000 && ts < now + 14 * 24 * 60 * 60 * 1000;
+    });
+    if (datedItems.length > 0) {
+      radarSection.innerHTML = '';
+      const title = document.createElement('div');
+      title.className = 'home-section-title';
+      title.textContent = 'Pressure radar';
+      radarSection.appendChild(title);
+      const mount = document.createElement('div');
+      radarSection.appendChild(mount);
+      window.CanvascopeRadar.render(mount, {
+        items: datedItems,
+        now,
+        onOpen: (item, event) => openResult(item, event)
+      });
+      radarSection.classList.remove('hidden');
+      hasRadar = true;
+    } else {
+      radarSection.classList.add('hidden');
+    }
+  }
+
+  const hasHomeContent = Boolean(primaryRecent || additionalRecents.length > 0 || hasRadar);
 
   elements.continueSection.innerHTML = '';
   elements.recentlyOpenedSection.innerHTML = '';
@@ -4569,6 +4600,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   elements.syncIcon = document.getElementById('sync-icon');
   elements.syncText = document.getElementById('sync-text');
   elements.scanProgress = document.getElementById('scan-progress');
+  elements.dropBridgeStatus = document.getElementById('dropbridge-status');
+  elements.dropBridgeText = document.getElementById('dropbridge-text');
+  elements.dropBridgeDot = document.getElementById('dropbridge-dot');
   elements.refreshBtn = document.getElementById('refresh-btn');
   elements.settingsBtn = document.getElementById('settings-btn');
   elements.loadingShell = document.getElementById('loading-shell');
@@ -4625,7 +4659,13 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   try {
     chrome.storage.onChanged.addListener((changes, areaName) => {
-      if (areaName !== 'local' || !changes.settings) return;
+      if (areaName !== 'local') return;
+
+      if (changes.dropBridgeV2Diagnostics) {
+        void getBackgroundStatus();
+      }
+
+      if (!changes.settings) return;
 
       const previousCourseKey = selectedCourseFiltersKey(state.filters.course);
       const previousSendToLectra = Boolean(state.extensionSettings.enableSendToLectra);
@@ -4787,6 +4827,9 @@ function initializeElements() {
   elements.syncStatus = document.getElementById('sync-status');
   elements.syncIcon = document.getElementById('sync-icon');
   elements.syncText = document.getElementById('sync-text');
+  elements.dropBridgeStatus = document.getElementById('dropbridge-status');
+  elements.dropBridgeText = document.getElementById('dropbridge-text');
+  elements.dropBridgeDot = document.getElementById('dropbridge-dot');
 
   // Custom Dropdown Elements
   elements.courseWrapper = document.getElementById('course-select-wrapper');
@@ -6685,6 +6728,32 @@ function updateSyncStatus(status) {
       showSyncedStatus('Open Canvas or Brightspace to sync');
     }
   }
+  updateDropBridgeStatus(status.dropBridge);
+}
+
+function normalizeDropBridgeHealthClass(health) {
+  return String(health || 'signed_out')
+    .replace(/_/g, '-')
+    .replace(/[^a-z0-9-]/gi, '')
+    .toLowerCase() || 'signed-out';
+}
+
+function formatDropBridgeLatestEvent(dropBridge) {
+  const event = dropBridge?.latestEvent;
+  if (!event) return dropBridge?.detail || '';
+  const type = String(event.type || 'event').replace(/_/g, ' ');
+  const uploadSuffix = event.uploadId ? ` · ${String(event.uploadId).slice(0, 8)}` : '';
+  return `${type}${uploadSuffix}`;
+}
+
+function updateDropBridgeStatus(dropBridge) {
+  if (!elements.dropBridgeStatus || !elements.dropBridgeText) return;
+  const health = dropBridge?.health || 'signed_out';
+  const label = dropBridge?.label || 'Signed out';
+  const className = normalizeDropBridgeHealthClass(health);
+  elements.dropBridgeStatus.className = `dropbridge-status ${className}`;
+  elements.dropBridgeText.textContent = label;
+  elements.dropBridgeStatus.title = formatDropBridgeLatestEvent(dropBridge) || label;
 }
 
 function showScanningStatus() {
@@ -9456,10 +9525,41 @@ function showBrowseCategory(type, items) {
   function wireThemeBtn() {
     const btn = document.getElementById('cs-theme-btn');
     if (!btn) return;
+    const ORDER = ['dark', 'light'];
+    const label = (t) => `Theme: ${t} (click to switch)`;
+    btn.title = label(document.documentElement?.dataset?.theme || 'dark');
     btn.addEventListener('click', () => {
-      // Decorative — flash the icon as feedback
+      const current = document.documentElement?.dataset?.theme || 'dark';
+      const next = ORDER[(ORDER.indexOf(current) + 1) % ORDER.length];
+      if (window.__canvascopeSetUiTheme) window.__canvascopeSetUiTheme(next);
+      btn.title = label(next);
+      syncAppearanceSeg(next);
       btn.style.transform = 'rotate(60deg)';
       setTimeout(() => { btn.style.transform = ''; }, 220);
+    });
+  }
+
+  // Settings → Appearance segmented control (dark | light | auto).
+  function syncAppearanceSeg(theme) {
+    // VM test harnesses stub document without querySelectorAll.
+    if (typeof document.querySelectorAll !== 'function') return;
+    document.querySelectorAll('.appearance-seg-btn').forEach((b) => {
+      b.classList.toggle('is-active', b.dataset.uiTheme === theme);
+      b.setAttribute('aria-pressed', String(b.dataset.uiTheme === theme));
+    });
+  }
+
+  function wireAppearanceSeg() {
+    const seg = document.getElementById('appearance-seg');
+    if (!seg) return;
+    syncAppearanceSeg(document.documentElement?.dataset?.theme || 'dark');
+    seg.addEventListener('click', (e) => {
+      const btn = e.target.closest('.appearance-seg-btn');
+      if (!btn) return;
+      if (window.__canvascopeSetUiTheme) window.__canvascopeSetUiTheme(btn.dataset.uiTheme);
+      syncAppearanceSeg(btn.dataset.uiTheme);
+      const themeBtn = document.getElementById('cs-theme-btn');
+      if (themeBtn) themeBtn.title = `Theme: ${btn.dataset.uiTheme} (click to switch)`;
     });
   }
 
@@ -9513,6 +9613,7 @@ function showBrowseCategory(type, items) {
     wireChipRow();
     wireTopBarSearch();
     wireThemeBtn();
+    wireAppearanceSeg();
     wireAiBtn();
     refreshStatsCompact();
 

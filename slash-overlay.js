@@ -698,6 +698,41 @@
       --font-mono: 'Geist Mono', 'JetBrains Mono', ui-monospace, Menlo, monospace;
     }
 
+    /* Light surface — applied when the host carries .cs-slash-theme-light
+       (set from the live Canvas skin mode). Mirrors the popup's light ramp so
+       the palette reads as the same product UI, not a dark box on a light page. */
+    :host(.cs-slash-theme-light) {
+      --bg:           #f5f5f8;
+      --bg-soft:      #ffffff;
+      --surface:      #f3f2f8;
+      --surface-2:    #ecebf4;
+      --surface-3:    #e3e2ec;
+      --border:       #e6e5ef;
+      --border-hi:    #d2d0e0;
+      --border-hot:   rgba(122, 92, 240, 0.34);
+      --text:         #1a1a22;
+      --text-dim:     #4e4e5c;
+      --muted:        #74747f;
+      --dim:          #9b9ba6;
+      --accent:       #7a5cf0;
+      --accent-sat:   #6847e0;
+      --accent-bg:    rgba(122, 92, 240, 0.10);
+      --accent-bg-hi: rgba(122, 92, 240, 0.16);
+      --on-accent:    #ffffff;
+      --ok:           #2e9e67;
+      --warn:         #b07c28;
+      --bad:          #cc4f4f;
+    }
+    :host(.cs-slash-theme-light) .slash-backdrop {
+      background: rgba(20, 18, 40, 0.22);
+    }
+    :host(.cs-slash-theme-light) .slash-panel {
+      box-shadow:
+        0 24px 60px rgba(20, 18, 40, 0.20),
+        0 2px 8px rgba(20, 18, 40, 0.08),
+        0 0 0 1px rgba(20, 18, 40, 0.05);
+    }
+
     * {
       box-sizing: border-box;
       margin: 0;
@@ -864,6 +899,14 @@
       display: block;
     }
 
+    @keyframes slash-row-in {
+      from { opacity: 0; transform: translateY(4px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .slash-item { animation: none !important; }
+    }
+
     .slash-item {
       display: grid;
       grid-template-columns: 36px 1fr auto;
@@ -883,7 +926,14 @@
       font-family: inherit;
       font-size: inherit;
       position: relative;
+      animation: slash-row-in 160ms cubic-bezier(.2,.8,.2,1) backwards;
     }
+    .slash-item:nth-child(2)  { animation-delay: 18ms; }
+    .slash-item:nth-child(3)  { animation-delay: 36ms; }
+    .slash-item:nth-child(4)  { animation-delay: 54ms; }
+    .slash-item:nth-child(5)  { animation-delay: 72ms; }
+    .slash-item:nth-child(6)  { animation-delay: 90ms; }
+    .slash-item:nth-child(n+7) { animation-delay: 104ms; }
 
     .slash-item:hover {
       background: var(--surface);
@@ -1242,9 +1292,27 @@
   // OPEN / CLOSE
   // ============================================
 
+  // The overlay lives in a closed shadow root, so it can't inherit the page's
+  // theme. canvas-skin.js resolves the effective Canvas mode (incl.
+  // auto/system/scheduled) and reflects it as a class on <html>; we read that
+  // so the palette matches the page it's drawn over. No skin class → stock
+  // Canvas/LMS, which is light.
+  function resolveOverlayThemeMode() {
+    const cls = document.documentElement.classList;
+    if (cls.contains('cs-skin-mode-dark')) return 'dark';
+    if (cls.contains('cs-skin-mode-light')) return 'light';
+    return 'light';
+  }
+
+  function applyOverlayTheme() {
+    if (!overlayRoot) return;
+    overlayRoot.classList.toggle('cs-slash-theme-light', resolveOverlayThemeMode() === 'light');
+  }
+
   async function openOverlay() {
     if (isOpen) return;
     if (!overlayRoot) createOverlayDOM();
+    applyOverlayTheme();
 
     isOpen = true;
     highlightedIndex = 0;

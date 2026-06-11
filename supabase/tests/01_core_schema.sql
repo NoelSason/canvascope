@@ -1,12 +1,13 @@
 begin;
 
-select plan(36);
+select plan(41);
 
 select ok(to_regclass('public.users') is not null, 'public.users exists');
 select ok(to_regclass('public.preferences') is not null, 'public.preferences exists');
 select ok(to_regclass('public.synced_items') is not null, 'public.synced_items exists');
 select ok(to_regclass('public.devices') is not null, 'public.devices exists');
 select ok(to_regclass('public.uploads') is not null, 'public.uploads exists');
+select ok(to_regclass('public.dropbridge_receipts') is not null, 'public.dropbridge_receipts exists');
 select ok(to_regclass('public.app_users') is not null, 'public.app_users exists');
 select ok(to_regclass('public.schools') is not null, 'public.schools exists');
 select ok(to_regclass('public.requirements') is not null, 'public.requirements exists');
@@ -50,6 +51,13 @@ select ok((
   where n.nspname = 'public' and c.relname = 'uploads'
 ), 'public.uploads has RLS enabled');
 
+select ok((
+  select c.relrowsecurity
+  from pg_class as c
+  join pg_namespace as n on n.oid = c.relnamespace
+  where n.nspname = 'public' and c.relname = 'dropbridge_receipts'
+), 'public.dropbridge_receipts has RLS enabled');
+
 select ok(exists(
   select 1
   from storage.buckets
@@ -83,6 +91,30 @@ select ok(exists(
   where tgname = 'dropbridge_upload_wake_broadcast'
     and not tgisinternal
 ), 'dropbridge upload wake trigger exists');
+
+select ok(exists(
+  select 1
+  from pg_indexes
+  where schemaname = 'public'
+    and tablename = 'uploads'
+    and indexname = 'idx_uploads_direct_claim_lookup'
+), 'uploads direct claim lookup index exists');
+
+select ok(exists(
+  select 1
+  from pg_indexes
+  where schemaname = 'public'
+    and tablename = 'devices'
+    and indexname = 'idx_devices_user_kind_last_seen'
+), 'devices user/kind last_seen index exists');
+
+select ok(exists(
+  select 1
+  from pg_indexes
+  where schemaname = 'public'
+    and tablename = 'dropbridge_receipts'
+    and indexname = 'idx_dropbridge_receipts_upload_created'
+), 'dropbridge receipts upload index exists');
 
 select ok(exists(
   select 1

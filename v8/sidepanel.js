@@ -1,6 +1,8 @@
 /**
- * Canvascope AI Sidepanel Controller
- * Handles UI interactions, local model lifecycle, and RAG context compilation.
+ * Canvascope AI Sidepanel Controller (v10)
+ * Multi-view shell (Chat · Brain · Plan) over the shared AIRouter.
+ * Chat keeps the v8 active-page RAG flow; Brain answers course-wide with
+ * citations (course-brain.js); Plan drafts study blocks (smart-planner.js).
  */
 document.addEventListener('DOMContentLoaded', () => {
   // Initialize v9 neural and OCR components
@@ -18,10 +20,14 @@ document.addEventListener('DOMContentLoaded', () => {
   const introPrivacyCopy = document.getElementById('intro-privacy-copy');
   const privacyRouteLabel = document.getElementById('privacy-route-label');
   const chatHistory = document.getElementById('chat-history');
-  const chatViewport = document.querySelector('.chat-viewport');
+  const chatViewport = document.getElementById('view-chat');
   const userPrompt = document.getElementById('user-prompt');
   const sendBtn = document.getElementById('send-btn');
   const suggestButtons = document.querySelectorAll('.btn-suggest');
+  const container = document.getElementById('sidepanel-container');
+  const viewTabs = document.querySelectorAll('.view-tab');
+  const views = { chat: document.getElementById('view-chat'), brain: document.getElementById('view-brain'), plan: document.getElementById('view-plan') };
+  let activeView = 'chat';
   const SIDE_PANEL_THEME_VARS = [
     '--cs-bg',
     '--cs-bg-1',
@@ -42,11 +48,6 @@ document.addEventListener('DOMContentLoaded', () => {
     '--cs-on-accent'
   ];
 
-  // Initialize the Local AI Controller
-  const aiController = new LocalAIController();
-  let aiSessionReady = false;
-  let aiMode = null; // 'local' | 'cloud' | 'local-download'
-
   const SYSTEM_INSTRUCTION = `You are the Canvascope study assistant running inside a Chrome extension. Below each question you receive context drawn from the student's own saved data and the page they are viewing.
 
 How to use the context:
@@ -58,7 +59,8 @@ How to use the context:
 
 Style: concise (2-4 sentences or a short list). Use bold text, inline code backticks, and lists where appropriate.`;
 
-  // 1. Keep the sidepanel on the v8 dark UI.
+  // 1. Keep the sidepanel pinned to its own theme tokens (theme-boot owns
+  //    [data-theme]; this only clears stale inline overrides).
   syncSkinTheme();
   updatePrivacyRoute('checking');
   chrome.storage.onChanged.addListener((changes, area) => {
@@ -67,8 +69,8 @@ Style: concise (2-4 sentences or a short list). Use bold text, inline code backt
     }
   });
 
-  // 2. Initialize and bootstrap the local model
-  bootstrapLocalAI();
+  // 2. Bootstrap the shared AI route (local Nano first, cloud fallback).
+  bootstrapAIRoute();
 
   // 2.2 Listen for active tab activation and page completion to update context dynamically
   chrome.tabs.onActivated.addListener(() => detectActiveCourseContext());
@@ -79,13 +81,88 @@ Style: concise (2-4 sentences or a short list). Use bold text, inline code backt
   });
 
   // 2.1 Pull the latest Supabase-synced study data (todos, notes) into local
-  // storage so the RAG context reflects items added on other devices. Todos are
-  // stored local-first in chrome.storage.local and mirrored to Supabase
-  // (user_custom_todos); this merge is best-effort and silently no-ops when the
-  // user is signed out or offline.
+  // storage so the RAG context reflects items added on other devices.
   try {
     chrome.runtime.sendMessage({ action: 'csTools.pull' }, () => { void chrome.runtime.lastError; });
   } catch (_) { /* ignore */ }
+
+  // 2.3 Initialize the Brain and Plan view modules.
+  if (window.CourseBrain) {
+    window.CourseBrain.init({ markdown: parseSimpleMarkdown });
+  }
+  if (window.SmartPlanner) {
+    window.SmartPlanner.init({ markdown: parseSimpleMarkdown });
+  }
+
+  // 2.4 View tab switching.
+  viewTabs.forEach(tab => {
+    tab.addEventListener('click', () => switchView(tab.dataset.view));
+  });
+
+  // 2.5 Consume slash-command intents (/ask, /plan, /quiz park one in storage
+  // before background opens this panel; also honored while already open).
+  // The on-load consume happens at the end of bootstrapAIRoute() so the AI
+  // route is settled before an intent question fires.
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === 'local' && changes.sidepanelIntent?.newValue) {
+      consumeSidepanelIntent();
+    }
+  });
+
+  async function consumeSidepanelIntent() {
+    try {
+      const { sidepanelIntent } = await chrome.storage.local.get('sidepanelIntent');
+      if (!sidepanelIntent || !sidepanelIntent.ts || Date.now() - sidepanelIntent.ts > 30000) return;
+      await chrome.storage.local.remove('sidepanelIntent');
+
+      const { view, question, action } = sidepanelIntent;
+      if (view) switchView(view);
+      if (action === 'quiz' && window.CourseBrain) {
+        window.CourseBrain.quiz();
+      } else if (view === 'brain' && question && window.CourseBrain) {
+        window.CourseBrain.ask(question);
+      }
+    } catch (e) {
+      console.warn('[Canvascope AI] Sidepanel intent consume failed:', e);
+    }
+  }
+
+  function switchView(name) {
+    if (!views[name] || name === activeView) return;
+    activeView = name;
+
+    viewTabs.forEach(tab => {
+      const isActive = tab.dataset.view === name;
+      tab.classList.toggle('is-active', isActive);
+      tab.setAttribute('aria-selected', String(isActive));
+    });
+
+    Object.entries(views).forEach(([key, el]) => {
+      if (!el) return;
+      if (key === name) {
+        el.hidden = false;
+        // Restart the crossfade.
+        el.classList.remove('is-active');
+        void el.offsetWidth;
+        el.classList.add('is-active');
+      } else {
+        el.hidden = true;
+        el.classList.remove('is-active');
+      }
+    });
+
+    container.className = container.className.replace(/view-\w+-active/g, '').trim() + ` view-${name}-active`;
+
+    if (name === 'chat') {
+      userPrompt.placeholder = 'Ask local AI about this course...';
+    } else if (name === 'brain') {
+      userPrompt.placeholder = 'Ask anything across your course…';
+      if (window.CourseBrain) window.CourseBrain.refresh();
+    } else if (name === 'plan') {
+      if (window.SmartPlanner) window.SmartPlanner.refresh();
+    }
+    refreshSendState();
+  }
 
   // 3. Setup TextArea Auto-Resize & Enter key triggers
   userPrompt.addEventListener('input', () => {
@@ -167,20 +244,27 @@ Style: concise (2-4 sentences or a short list). Use bold text, inline code backt
   }
 
   /**
-   * Clears older inline theme overrides and pins the sidepanel to the v8 dark UI.
+   * Clears older inline theme overrides; tokens.css + theme-boot now drive
+   * the actual palette via [data-theme] on <html>.
    */
   function applySkinTokens() {
     const root = document.documentElement;
     SIDE_PANEL_THEME_VARS.forEach(name => root.style.removeProperty(name));
-    root.dataset.canvascopePanelTheme = 'v8-dark';
+    root.dataset.canvascopePanelTheme = 'v10';
+  }
+
+  function routeState() {
+    return window.AIRouter ? AIRouter.getState() : { mode: null, ready: false };
   }
 
   function canSubmitPrompt() {
-    return aiSessionReady || aiMode === 'local-download';
+    const s = routeState();
+    return s.ready || s.mode === 'local-download';
   }
 
   function refreshSendState() {
-    sendBtn.disabled = !userPrompt.value.trim() || !canSubmitPrompt();
+    const needsInput = activeView !== 'plan';
+    sendBtn.disabled = !needsInput || !userPrompt.value.trim() || !canSubmitPrompt();
   }
 
   function updatePrivacyRoute(route) {
@@ -214,82 +298,38 @@ Style: concise (2-4 sentences or a short list). Use bold text, inline code backt
     privacyRouteLabel.textContent = 'Checking AI route';
   }
 
-  async function activateCloudFallback(messageText = '**Cloud fallback active**: Canvascope is routing AI requests securely through your Supabase account.') {
-    console.log('[Canvascope AI] Checking authentication for cloud fallback...');
-    const authRes = await new Promise((resolve) => {
-      chrome.runtime.sendMessage({ type: 'checkAuthStatus' }, (response) => {
-        resolve(response || { signedIn: false });
-      });
-    });
-
-    if (authRes.signedIn) {
+  /** Map an AIRouter state onto the status badge + privacy strip + bubbles. */
+  function reflectRouteState(state, { announce = false } = {}) {
+    if (state.mode === 'local' && state.ready) {
+      updateUIStatus('ready', 'Ready');
+      updatePrivacyRoute('local');
+    } else if (state.mode === 'cloud' && state.ready) {
       updateUIStatus('cloud', 'Cloud AI Fallback');
       updatePrivacyRoute('cloud');
-      aiMode = 'cloud';
-      aiSessionReady = true;
-      refreshSendState();
-      detectActiveCourseContext();
-      addSystemBubble(messageText);
-      return true;
+      if (announce) addSystemBubble('**Cloud fallback active**: Canvascope is routing AI requests securely through your Supabase account.');
+    } else if (state.mode === 'local-download') {
+      updateUIStatus('checking', state.availability === 'downloading' ? 'Model Downloading' : 'Model Ready to Download');
+      updatePrivacyRoute('downloadable');
+      if (announce) addSystemBubble('**Local model setup required**: Send your first question to start Chrome\'s on-device model download and session setup. If setup fails, Canvascope can use cloud fallback after sign-in.');
+    } else {
+      updateUIStatus('error', 'Auth Required');
+      updatePrivacyRoute('auth-required');
+      if (announce) addSystemBubble('**Login required for AI fallback**: The local model is unavailable on this browser. Sign in from the Canvascope popup to use cloud fallback.');
     }
-
-    updateUIStatus('error', 'Auth Required');
-    updatePrivacyRoute('auth-required');
-    aiMode = null;
-    aiSessionReady = false;
     refreshSendState();
-    addSystemBubble('**Login required for AI fallback**: The local model is unavailable on this browser. Sign in from the Canvascope popup to use cloud fallback.');
-    return false;
   }
 
   /**
-   * Bootstraps the local Prompt API model capability check and session loading.
+   * Bootstraps the shared AI route (capability check + session/cloud pick).
    */
-  async function bootstrapLocalAI() {
+  async function bootstrapAIRoute() {
     updateUIStatus('checking', 'Initializing...');
     updatePrivacyRoute('checking');
 
-    const availability = await aiController.checkCapabilities();
-
-    if (availability === 'unavailable') {
-      await activateCloudFallback();
-      return;
-    }
-
-    if (availability === 'downloadable' || availability === 'downloading') {
-      aiMode = 'local-download';
-      aiSessionReady = false;
-      updateUIStatus('checking', availability === 'downloading' ? 'Model Downloading' : 'Model Ready to Download');
-      updatePrivacyRoute('downloadable');
-      refreshSendState();
-      detectActiveCourseContext();
-      addSystemBubble('**Local model setup required**: Send your first question to start Chrome\'s on-device model download and session setup. If setup fails, Canvascope can use cloud fallback after sign-in.');
-      return;
-    }
-
-    // Load session immediately if ready
-    await loadSession();
-  }
-
-  async function loadSession({ onDownloadProgress = null } = {}) {
-    updateUIStatus('checking', 'Starting session...');
-    
-    const success = await aiController.initSession(SYSTEM_INSTRUCTION, onDownloadProgress);
-
-    if (success) {
-      updateUIStatus('ready', 'Ready');
-      updatePrivacyRoute('local');
-      aiSessionReady = true;
-      aiMode = 'local';
-      refreshSendState();
-      detectActiveCourseContext();
-      return true;
-    } else {
-      updateUIStatus('error', 'Session Failed');
-      addSystemBubble('**Failed to start AI session**: The browser failed to initialize the model container. Try restarting Chrome or clearing the extensions tab.');
-      refreshSendState();
-      return false;
-    }
+    const state = await AIRouter.init(SYSTEM_INSTRUCTION);
+    reflectRouteState(state, { announce: true });
+    detectActiveCourseContext();
+    consumeSidepanelIntent();
   }
 
   /**
@@ -317,12 +357,12 @@ Style: concise (2-4 sentences or a short list). Use bold text, inline code backt
       const cleanUrl = url.toLowerCase().split('?')[0].split('#')[0];
       const isDirectPdf = cleanUrl.endsWith('.pdf') || url.toLowerCase().includes('application/pdf');
 
-      const isLms = url.includes('instructure.com') || 
-                    url.includes('brightspace.com') || 
+      const isLms = url.includes('instructure.com') ||
+                    url.includes('brightspace.com') ||
                     url.includes('d2l.com') ||
-                    url.includes('berkeley.edu') || 
-                    url.includes('ucla.edu') || 
-                    url.includes('ucsd.edu') || 
+                    url.includes('berkeley.edu') ||
+                    url.includes('ucla.edu') ||
+                    url.includes('ucsd.edu') ||
                     url.includes('mit.edu') ||
                     url.includes('asu.edu') ||
                     isDirectPdf;
@@ -423,14 +463,15 @@ Style: concise (2-4 sentences or a short list). Use bold text, inline code backt
   }
 
   async function ensureSessionForSubmit() {
-    if (aiSessionReady) return true;
-    if (aiMode !== 'local-download') return false;
+    const state = routeState();
+    if (state.ready) return true;
+    if (state.mode !== 'local-download') return false;
 
     updateUIStatus('checking', 'Starting Local AI');
     const setupBubble = addSystemBubble('**Starting local AI setup...** Chrome may need to download the on-device model before answering.');
     const setupContent = setupBubble.querySelector('.bubble-content');
 
-    const success = await loadSession({
+    const result = await AIRouter.ensureReady({
       onDownloadProgress: (pct) => {
         updateUIStatus('checking', pct > 0 ? `Downloading ${pct}%` : 'Downloading Model');
         if (setupContent) {
@@ -439,18 +480,28 @@ Style: concise (2-4 sentences or a short list). Use bold text, inline code backt
       }
     });
 
-    if (success) {
+    if (result.ok && result.mode === 'local') {
       if (setupContent) {
         setupContent.innerHTML = parseSimpleMarkdown('**Local AI ready**: Canvascope will answer using Chrome\'s on-device model.');
       }
+      reflectRouteState(result);
       return true;
     }
 
-    return activateCloudFallback('**Cloud fallback active**: Local AI setup failed, so Canvascope is routing AI requests through your authenticated Supabase AI endpoint.');
+    if (result.ok && result.mode === 'cloud') {
+      if (setupContent) {
+        setupContent.innerHTML = parseSimpleMarkdown('**Cloud fallback active**: Local AI setup failed, so Canvascope is routing AI requests through your authenticated Supabase AI endpoint.');
+      }
+      reflectRouteState(result);
+      return true;
+    }
+
+    reflectRouteState(result, { announce: true });
+    return false;
   }
 
   /**
-   * Main submit orchestrator. Grabs prompt, executes scrape, sends context, and streams text.
+   * Main submit orchestrator. Routes to the active view's flow.
    */
   async function handleSubmit() {
     const prompt = userPrompt.value.trim();
@@ -467,13 +518,23 @@ Style: concise (2-4 sentences or a short list). Use bold text, inline code backt
     userPrompt.style.height = 'auto';
     sendBtn.disabled = true;
 
+    // Brain view: course-wide cited answer, handled by its module.
+    if (activeView === 'brain' && window.CourseBrain) {
+      try {
+        await window.CourseBrain.ask(prompt);
+      } finally {
+        refreshSendState();
+      }
+      return;
+    }
+
     // 2. Append User Bubble
     appendBubble('student', '', prompt);
 
     // 3. Create Assistant Stream Bubble
     const aiBubble = appendBubble('assistant', '', '');
     const bubbleContent = aiBubble.querySelector('.bubble-content');
-    
+
     // Add streaming loader
     const loader = document.createElement('div');
     loader.className = 'stream-loader';
@@ -493,26 +554,15 @@ Style: concise (2-4 sentences or a short list). Use bold text, inline code backt
       console.warn('[Canvascope AI] RAG Context compilation failed, falling back to raw prompt:', e);
     }
 
-    // 6. Execute Streaming
+    // 6. Execute Streaming (AIRouter normalizes chunks to deltas)
     let fullResponse = '';
     try {
-      const stream = aiMode === 'cloud'
-        ? aiController.streamSupabaseProxy(fullPrompt, SYSTEM_INSTRUCTION)
-        : aiController.promptStream(fullPrompt);
-
-      for await (const chunk of stream) {
+      for await (const delta of AIRouter.stream(fullPrompt, { system: SYSTEM_INSTRUCTION })) {
         // Clear loader on first token
         if (bubbleContent.querySelector('.stream-loader')) {
           bubbleContent.innerHTML = '';
         }
-        
-        // Handle both delta and accumulated streaming chunk types gracefully
-        if (fullResponse && chunk.startsWith(fullResponse)) {
-          fullResponse = chunk; // Accumulated chunk
-        } else {
-          fullResponse += chunk; // Delta chunk
-        }
-        
+        fullResponse += delta;
         bubbleContent.innerHTML = parseSimpleMarkdown(fullResponse);
         scrollViewport();
       }
@@ -523,7 +573,7 @@ Style: concise (2-4 sentences or a short list). Use bold text, inline code backt
       }
       if (fullResponse) {
         // Append error warning instead of wiping the entire generated response
-        bubbleContent.innerHTML = parseSimpleMarkdown(fullResponse) + 
+        bubbleContent.innerHTML = parseSimpleMarkdown(fullResponse) +
           `<p style="color: var(--status-error); margin-top: 8px; font-style: italic;">Streaming interrupted: ${err.message || err}</p>`;
       } else {
         bubbleContent.innerHTML = `<span style="color: var(--status-error)">Error: Failed to complete streaming prompt. ${err.message || err}</span>`;
