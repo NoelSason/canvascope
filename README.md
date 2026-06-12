@@ -1,4 +1,4 @@
-# <img src="docs/assets/icon-128.png" height="40" valign="bottom"> Canvascope
+# <img src="assets/icons/logo.png" height="40" valign="bottom"> Canvascope
 
 **Search your LMS content fast and hand off PDFs to Lectra for Apple Pencil annotation.**
 
