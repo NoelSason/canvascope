@@ -5,7 +5,7 @@ const vm = require('vm');
 // Keep this legacy popup regression deterministic in CI, which runs in UTC.
 process.env.TZ = 'America/Los_Angeles';
 
-const Fuse = require('./lib/fuse.min.js');
+const Fuse = require('./src/lib/fuse.min.js');
 
 function makeElement() {
   return {
@@ -117,7 +117,7 @@ async function createHarness() {
   context.Date.now = () => FIXED_NOW;
 
   vm.createContext(context);
-  vm.runInContext(fs.readFileSync(path.join(__dirname, 'popup.js'), 'utf8'), context);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, 'src/popup/popup.js'), 'utf8'), context);
 
   vm.runInContext(`
     const stub = () => ({

@@ -6,16 +6,16 @@
   "default_locale": "en",
   "description": "Instantly search across your Canvas courses, files, and PDFs, customize your LMS theme, and run academic tasks via slash menu.",
   "icons": {
-    "16": "icons/icon16.png",
-    "32": "icons/icon32.png",
-    "48": "icons/icon48.png",
-    "128": "icons/icon128.png"
+    "16": "assets/icons/icon16.png",
+    "32": "assets/icons/icon32.png",
+    "48": "assets/icons/icon48.png",
+    "128": "assets/icons/icon128.png"
   },
   "action": {
-    "default_popup": "popup.html",
+    "default_popup": "src/popup/popup.html",
     "default_icon": {
-      "16": "icons/icon16.png",
-      "32": "icons/icon32.png"
+      "16": "assets/icons/icon16.png",
+      "32": "assets/icons/icon32.png"
     },
     "default_title": "Canvascope"
   },
@@ -67,14 +67,14 @@
         "*://canvas.mit.edu/*"
       ],
       "js": [
-        "lib/supabase.js",
-        "lib/skin-themes.js",
-        "content.js",
-        "canvas-skin.js",
-        "academic-tools.js",
-        "v8/semantic-matcher.js",
-        "slash-overlay.js",
-        "slash-commands-pack.js"
+        "src/lib/supabase.js",
+        "src/lib/skin-themes.js",
+        "src/content/content.js",
+        "src/content/canvas-skin.js",
+        "src/content/academic-tools.js",
+        "src/core/semantic-matcher.js",
+        "src/content/slash-overlay.js",
+        "src/content/slash-commands-pack.js"
       ],
       "run_at": "document_idle"
     },
@@ -90,18 +90,18 @@
         "*://canvas.mit.edu/*"
       ],
       "js": [
-        "lib/skin-themes.js",
-        "docviewer-skin.js"
+        "src/lib/skin-themes.js",
+        "src/content/docviewer-skin.js"
       ],
       "all_frames": true,
       "run_at": "document_idle"
     }
   ],
   "background": {
-    "service_worker": "background-wrapper.js"
+    "service_worker": "src/background/background-wrapper.js"
   },
   "side_panel": {
-    "default_path": "v8/sidepanel.html"
+    "default_path": "src/sidepanel/sidepanel.html"
   },
   "content_security_policy": {
     "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'none'; base-uri 'none';"
@@ -109,9 +109,9 @@
   "web_accessible_resources": [
     {
       "resources": [
-        "lib/pdf.worker.min.js",
-        "popup.html",
-        "icons/*"
+        "src/lib/pdf.worker.min.js",
+        "src/popup/popup.html",
+        "assets/icons/*"
       ],
       "matches": [
         "*://*.instructure.com/*",

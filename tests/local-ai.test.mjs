@@ -5,7 +5,7 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const localAiPath = path.resolve(__dirname, '..', 'v8', 'local-ai.js');
+const localAiPath = path.resolve(__dirname, '..', 'src', 'core', 'local-ai.js');
 const localAiCode = fs.readFileSync(localAiPath, 'utf8');
 
 new Function(localAiCode + '\nglobalThis.LocalAIController = LocalAIController;')();

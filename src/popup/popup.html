@@ -5,11 +5,11 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Canvascope</title>
-  <link rel="icon" href="icons/icon32.png">
-  <link rel="stylesheet" href="tokens.css">
-  <link rel="stylesheet" href="styles.css">
-  <link rel="stylesheet" href="components/radar.css">
-  <script src="theme-boot.js"></script>
+  <link rel="icon" href="../../assets/icons/icon32.png">
+  <link rel="stylesheet" href="../styles/tokens.css">
+  <link rel="stylesheet" href="../styles/styles.css">
+  <link rel="stylesheet" href="../components/radar/radar.css">
+  <script src="../content/theme-boot.js"></script>
   <!-- Detect overlay mode BEFORE body renders to prevent flash of popup UI -->
   <script>
     if (window.self !== window.top || new URLSearchParams(window.location.search).get('mode') === 'overlay') {
@@ -26,7 +26,7 @@
     <header class="cs-topbar" role="banner">
       <div class="cs-brand">
         <span class="cs-mark" aria-hidden="true">
-          <img src="icons/logo.png" alt="" />
+          <img src="../../assets/icons/logo.png" alt="" />
         </span>
         <span class="cs-wordmark">Canvascope</span>
       </div>
@@ -547,8 +547,8 @@
 
   </div>
 
-  <script src="lib/fuse.min.js"></script>
-  <script src="components/radar.js"></script>
+  <script src="../lib/fuse.min.js"></script>
+  <script src="../components/radar/radar.js"></script>
   <script src="popup.js"></script>
 </body>
 

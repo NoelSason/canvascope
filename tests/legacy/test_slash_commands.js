@@ -2,7 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 
-const POPUP_PATH = path.join(__dirname, 'popup.js');
+const POPUP_PATH = path.join(__dirname, 'src/popup/popup.js');
 const popupSource = fs.readFileSync(POPUP_PATH, 'utf8');
 
 function extractFunctionSource(source, functionName) {

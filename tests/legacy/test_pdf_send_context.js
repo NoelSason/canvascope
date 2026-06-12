@@ -2,7 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 
-const BACKGROUND_PATH = path.join(__dirname, 'background.js');
+const BACKGROUND_PATH = path.join(__dirname, 'src/background/background.js');
 const backgroundSource = fs.readFileSync(BACKGROUND_PATH, 'utf8');
 
 function extractFunctionSource(source, functionName) {

@@ -4,10 +4,10 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Canvascope AI Assistant</title>
-  <link rel="stylesheet" href="../tokens.css">
+  <link rel="stylesheet" href="../styles/tokens.css">
   <link rel="stylesheet" href="sidepanel.css">
-  <link rel="stylesheet" href="../components/radar.css">
-  <script src="../theme-boot.js"></script>
+  <link rel="stylesheet" href="../components/radar/radar.css">
+  <script src="../content/theme-boot.js"></script>
 </head>
 <body class="cs-theme-dark">
   <div class="sidepanel-container view-chat-active" id="sidepanel-container">
@@ -16,13 +16,16 @@
     <header class="sidepanel-header">
       <div class="brand-row">
         <div class="logo-wrapper">
-          <span class="brand-icon" aria-hidden="true"><img src="../icons/logo.png" alt="" /></span>
+          <span class="brand-icon" aria-hidden="true"><img src="../../assets/icons/logo.png" alt="" /></span>
           <span class="brand-title">Canvascope <span class="brand-sub">AI</span></span>
         </div>
         <div id="ai-status" class="ai-status-badge status-checking">
           <span class="status-dot"></span>
           <span class="status-text">Checking Local AI</span>
         </div>
+        <button id="btn-profile" class="profile-open-btn" aria-label="Student profile" title="Student profile">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+        </button>
       </div>
 
       <!-- View tabs -->
@@ -156,23 +159,51 @@
       </div>
     </footer>
 
+    <!-- ── STUDENT PROFILE OVERLAY ──────────────── -->
+    <div id="profile-overlay" class="profile-overlay" hidden>
+      <div class="profile-card" role="dialog" aria-modal="true" aria-labelledby="profile-title">
+        <div class="profile-head">
+          <span id="profile-title" class="profile-title">Student profile</span>
+          <button id="profile-close" class="profile-close" aria-label="Close profile">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+          </button>
+        </div>
+        <p class="profile-copy">Tell Canvascope about your studies so answers are tailored to you. Stored privately in your account and used only to personalize AI answers.</p>
+        <label class="profile-field"><span>Name</span><input id="pf-name" type="text" placeholder="e.g. Noel"></label>
+        <label class="profile-field"><span>School</span><input id="pf-school" type="text" placeholder="e.g. UC Berkeley"></label>
+        <label class="profile-field"><span>Major(s)</span><input id="pf-majors" type="text" placeholder="e.g. Biology, Data Science"></label>
+        <label class="profile-field"><span>Year</span><input id="pf-year" type="text" placeholder="e.g. Junior"></label>
+        <label class="profile-field"><span>Goals</span><input id="pf-goals" type="text" placeholder="e.g. med school, physician-scientist"></label>
+        <label class="profile-field"><span>How should answers be tailored?</span><input id="pf-style" type="text" placeholder="e.g. concise, connect concepts to medicine"></label>
+        <div class="profile-auto" id="profile-auto-section" hidden>
+          <span class="profile-auto-title">Auto-detected</span>
+          <div id="profile-auto-list" class="profile-auto-list"></div>
+        </div>
+        <div class="profile-actions">
+          <button id="profile-clear" class="profile-btn-ghost">Clear profile</button>
+          <button id="profile-save" class="profile-btn-primary">Save</button>
+        </div>
+      </div>
+    </div>
+
   </div>
 
   <!-- Scripts -->
   <script src="../lib/supabase.js"></script>
   <script src="../lib/skin-themes.js"></script>
   <script src="../lib/pdf.min.js"></script>
-  <script src="document-parser.js"></script>
-  <script src="semantic-matcher.js"></script>
-  <script src="../v9/local-embeddings.js"></script>
+  <script src="../core/document-parser.js"></script>
+  <script src="../core/semantic-matcher.js"></script>
+  <script src="../core/local-embeddings.js"></script>
   <script src="../lib/tesseract/tesseract.min.js"></script>
-  <script src="../v9/ocr-worker.js"></script>
-  <script src="local-ai.js"></script>
-  <script src="rag-core.js"></script>
-  <script src="ai-router.js"></script>
-  <script src="../components/radar.js"></script>
-  <script src="course-brain.js"></script>
-  <script src="smart-planner.js"></script>
+  <script src="../core/ocr-worker.js"></script>
+  <script src="../core/local-ai.js"></script>
+  <script src="../core/rag-core.js"></script>
+  <script src="../core/ai-router.js"></script>
+  <script src="../core/student-profile.js"></script>
+  <script src="../components/radar/radar.js"></script>
+  <script src="../core/course-brain.js"></script>
+  <script src="../core/smart-planner.js"></script>
   <script src="sidepanel.js"></script>
 </body>
 </html>

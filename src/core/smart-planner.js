@@ -147,7 +147,11 @@
         `Propose 4-8 study blocks between now and the last deadline. Split large items (essays, projects, exams) into multiple blocks (e.g. outline, draft, review). Schedule blocks before their deadline, between 09:00 and 21:00 local time, 60-120 minutes each.\n` +
         `Return ONLY a valid JSON array, no prose, each element: {"title": string, "startAt": ISO datetime string, "minutes": number, "course": string}.`;
 
-      const raw = await AIRouter.complete(prompt);
+      // Profile rides in system only; the prompt stays strict-JSON-focused.
+      const profileBlock = (window.StudentProfile && StudentProfile.compileContextBlock()) || '';
+      const raw = await AIRouter.complete(prompt, profileBlock
+        ? { system: AIRouter.getState().systemInstruction + profileBlock }
+        : {});
       const blocks = extractJsonArray(raw)
         .filter(b => b && b.title && b.startAt && Number.isFinite(new Date(b.startAt).getTime()))
         .slice(0, 10);

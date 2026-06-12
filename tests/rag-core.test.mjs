@@ -5,7 +5,7 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const ragCorePath = path.resolve(__dirname, '..', 'v8', 'rag-core.js');
+const ragCorePath = path.resolve(__dirname, '..', 'src', 'core', 'rag-core.js');
 const ragCoreCode = fs.readFileSync(ragCorePath, 'utf8');
 
 // Set up Chrome API mocks
@@ -40,7 +40,7 @@ globalThis.chrome = {
 };
 
 // Evaluate the SemanticMatcher first to enable hybrid retrieval testing
-const matcherPath = path.resolve(__dirname, '..', 'v8', 'semantic-matcher.js');
+const matcherPath = path.resolve(__dirname, '..', 'src', 'core', 'semantic-matcher.js');
 const matcherCode = fs.readFileSync(matcherPath, 'utf8');
 new Function(matcherCode + '\nglobalThis.SemanticMatcher = SemanticMatcher;')();
 

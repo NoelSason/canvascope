@@ -4,14 +4,14 @@
 
 Canvascope is a local-first Chrome extension for Canvas and Brightspace. It indexes course content for fast search, supports course-scoped queries and planner workflows, and can optionally push selected PDFs to Lectra (iPad) through Supabase.
 
-![Version](https://img.shields.io/badge/version-7.0.0-orange)
-![Chrome](https://img.shields.io/badge/Chrome-88%2B-green)
+![Version](https://img.shields.io/badge/version-10.0.0-orange)
+![Chrome](https://img.shields.io/badge/Chrome-116%2B-green)
 ![License](https://img.shields.io/badge/license-MIT-purple)
 
 > [!IMPORTANT]
-> **v7.0.0 is now available.**
+> **v10.0.0 is now available.**
 >
-> This release brings a modernized student assistant experience, refined theme styling support, faster local indexing performance, and robust local search capabilities.
+> This major release brings a highly organized source layout, a local AI-powered RAG chat assistant (offline Gemini Nano + Supabase fallback), offline PDF text extraction and image OCR search (Tesseract.js), and DropBridge v3 with realtime receipts.
 
 ---
 
@@ -25,13 +25,22 @@ Canvascope is a local-first Chrome extension for Canvas and Brightspace. It inde
 - Keyboard overlay (Cmd/Ctrl + K) on Canvas pages
 - Optional Google sign-in for account-linked sync features
 
-### Lectra PDF Handoff (v7.0.0)
-- `Send to Lectra` button appears on supported Canvas PDF pages
-- Popup fallback button: `Send PDF to Lectra`
-- Validates PDF signatures and enforces 25 MB size limit
-- Uploads selected PDF to Supabase Storage bucket `lectra_documents`
-- Registers `pdf_document` rows in `synced_items` for Lectra pickup
-- Receives Lectra-origin files through DropBridge v2 with an offscreen realtime receiver plus alarm fallback
+### Local AI & Hybrid RAG Assistant
+- In-browser chat companion (offline Gemini Nano or online Supabase fallback)
+- Scrapes active LMS page content to dynamically supplement context
+- Local lexical keyword frequency scorer that retrieves stored assignments, custom tasks, and user notes
+- Auto-surfaces upcoming schedule tasks on calendar queries with fallback heuristics
+
+### Offline PDF & Image OCR Search
+- Extracts and indexes PDF text content locally for instant searching
+- Offline OCR (via Tesseract.js) scans text inside scanned PDFs and images
+- Caches parsed pages to `chrome.storage.local` for fast future hits
+
+### Lectra PDF Handoff & DropBridge v3
+- `Send to Lectra` floating action button appears on Canvas syllabus and assignment PDF pages
+- Validates PDF signatures and enforces a 25 MB file size limit
+- Uploads documents to Supabase Storage bucket `lectra_documents` and creates sync rows
+- Realtime DropBridge v3 receiver via an offscreen document, featuring immediate delivery, receipt logging, and alarm-based polling fallbacks
 
 ### Privacy Model
 - Local-first indexing: search corpus stays in `chrome.storage.local`
@@ -61,7 +70,7 @@ Canvascope is a local-first Chrome extension for Canvas and Brightspace. It inde
 3. Confirm the send action.
 4. The extension uploads the file and writes a `pdf_document` row for Lectra.
 
-> Direction split: Canvascope -> Lectra uses `lectra_documents` + `synced_items`. Lectra -> Canvascope uses DropBridge v2 queue delivery and automatic browser downloads.
+> Direction split: Canvascope -> Lectra uses `lectra_documents` + `synced_items`. Lectra -> Canvascope uses DropBridge v3 queue delivery, realtime receipts, and automatic browser downloads.
 
 > Detailed setup docs: [docs/INSTALL.md](docs/INSTALL.md)
 
@@ -71,37 +80,29 @@ Canvascope is a local-first Chrome extension for Canvas and Brightspace. It inde
 
 ```text
 Canvascope/
-├── manifest.json
-├── popup.html
-├── popup.js
-├── content.js
-├── background.js
-├── background-wrapper.js
-├── offscreen.html
-├── offscreen.js
-├── styles.css
-├── oauth-callback.html
-├── oauth-callback.js
-├── lib/
-│   ├── fuse.min.js
-│   └── supabase.js
-├── icons/
-├── scripts/
-│   ├── add-school.sh
-│   ├── add_school.py
-│   ├── benchmark_indexing.js
-│   └── sync_google_form_responses.py
-├── supabase/
-│   ├── config.toml
-│   └── migrations/
-│       └── 20260304211400_add_lectra_documents_storage.sql
-└── docs/
-    ├── INSTALL.md
-    ├── ROADMAP.md
-    ├── PRIVACY.md
-    ├── SECURITY.md
-    ├── TROUBLESHOOTING.md
-    └── BUG_FORM_SYNC_SETUP.md
+├── manifest.json                  # Root configurations
+├── package.json
+├── package-lock.json
+├── README.md
+├── CHROMEWEBSTORE.md
+├── .gitignore
+├── .mcp.json
+├── _locales/                      # Localization (LMS page inject matching)
+├── assets/                        # Extension assets & icons
+│   └── icons/
+├── docs/                          # Guides and architecture docs
+├── supabase/                      # Database local configurations & migrations
+├── tests/                         # Verification suites
+└── src/                           # All organized source code
+    ├── background/                # Service workers
+    ├── content/                   # Content scripts injected into Canvas/Brightspace
+    ├── popup/                     # Toolbar browser action popup
+    ├── sidepanel/                 # Chat assistant & planner sidepanel
+    ├── offscreen/                 # Realtime receiver helper
+    ├── oauth/                     # Google/Supabase OAuth handlers
+    ├── core/                      # Core business logic, planners & RAG controllers
+    ├── lib/                       # Consolidated third-party dependencies (Fuse, PDF.js, Tesseract)
+    └── components/                # Modular client components (Targeting grid)
 ```
 
 ---
@@ -136,12 +137,13 @@ This contract aligns with the Lectra workspace specs in `../..` (`lectra [IN PRO
 - Search quality, relevance, and styling skin support (v2.0 - v7.0.0)
 - Planner + overlay UX
 - Optional Google auth
-- Lectra PDF push bridge (v2.2 - v7.0.0)
+- Lectra PDF push bridge & DropBridge v3 (v10.0.0)
+- Local AI chat assistant with active-tab hybrid RAG pipeline (v8.0.0)
+- Offline PDF text parsing & image OCR search (v9.0.0)
 
 ### Next
-- PDF text extraction for in-extension full text search
-- Expanded content extraction (slides/transcripts/module text)
-- Optional semantic search layer
+- Expanded content extraction (LMS slides, video transcripts, module text)
+- Multi-device calendar/planner synchronization
 
 See [docs/ROADMAP.md](docs/ROADMAP.md) for full status.
 

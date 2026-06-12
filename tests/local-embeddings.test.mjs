@@ -5,7 +5,7 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const embeddingsPath = path.resolve(__dirname, '..', 'v9', 'local-embeddings.js');
+const embeddingsPath = path.resolve(__dirname, '..', 'src', 'core', 'local-embeddings.js');
 const embeddingsCode = fs.readFileSync(embeddingsPath, 'utf8');
 
 // Evaluate in Node mock environment

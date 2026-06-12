@@ -32,7 +32,7 @@ const FUSE_OPTIONS = {
     ]
 };
 
-const Fuse = require('./lib/fuse.min.js');
+const Fuse = require('../lib/fuse.min.js');
 
 // Helper functions (extracted & adapted from popup.js for isolated testing)
 const ABBREV_MAP = {

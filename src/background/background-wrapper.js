@@ -1,4 +1,4 @@
-importScripts('lib/supabase.js');
+importScripts('../lib/supabase.js');
 
 // Add to self for background.js to find it seamlessly
 if (typeof self !== 'undefined' && self.supabase) {
@@ -10,5 +10,5 @@ importScripts('background.js');
 // Canvascope add-ons: reminders + skin/tools sync glue. These live in
 // separate files so the existing background.js stays untouched. They
 // register their own message + alarm listeners.
-importScripts('reminders.js');
+importScripts('../core/reminders.js');
 importScripts('background-cs-extras.js');

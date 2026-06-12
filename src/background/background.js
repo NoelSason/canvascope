@@ -186,7 +186,7 @@ const DROPBRIDGE_V2_HEARTBEAT_ALARM_MINUTES = 4;
 const DROPBRIDGE_V2_FALLBACK_ALARM_MINUTES_MODERN = 2;
 const DROPBRIDGE_V2_FALLBACK_ALARM_MINUTES_LEGACY = 2;
 const DROPBRIDGE_V2_FALLBACK_ALARM_MIN_CHROME_MAJOR = 120;
-const DROPBRIDGE_V2_OFFSCREEN_DOCUMENT_PATH = 'offscreen.html';
+const DROPBRIDGE_V2_OFFSCREEN_DOCUMENT_PATH = 'src/offscreen/offscreen.html';
 const DROPBRIDGE_V2_OFFSCREEN_DOCUMENT_URL = chrome.runtime.getURL(DROPBRIDGE_V2_OFFSCREEN_DOCUMENT_PATH);
 const DROPBRIDGE_V2_OFFSCREEN_JUSTIFICATION = 'Keep a hidden worker-backed receiver alive for the optional Lectra to Canvascope file delivery flow so queued files can trigger a browser download without opening a visible tab.';
 const DROPBRIDGE_V2_DIAGNOSTICS_STORAGE_KEY = 'dropBridgeV2Diagnostics';
@@ -6131,6 +6131,61 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             }
         })();
         return true;
+    } else if (message.type === 'getStudentProfile') {
+        (async () => {
+            try {
+                const { data: { session }, error: sessionError } = await supabaseClient.auth.getSession();
+                if (sessionError) throw sessionError;
+                if (!session) { sendResponse({ success: false, signedIn: false, facts: null }); return; }
+
+                const { data, error } = await supabaseClient
+                    .from('student_profile')
+                    .select('facts, updated_at')
+                    .eq('user_id', session.user.id)
+                    .maybeSingle();
+                if (error) throw error;
+                sendResponse({ success: true, signedIn: true, facts: data?.facts || null, updatedAt: data?.updated_at || null });
+            } catch (err) {
+                console.error('[Canvascope Profile] Error fetching student profile:', err);
+                sendResponse({ success: false, error: err.message });
+            }
+        })();
+        return true;
+    } else if (message.type === 'saveStudentProfile') {
+        (async () => {
+            try {
+                const { data: { session }, error: sessionError } = await supabaseClient.auth.getSession();
+                if (sessionError) throw sessionError;
+                // Signed out: profile lives only in the local cache; report it so the
+                // caller knows the remote copy was not written (it syncs on next sign-in).
+                if (!session) { sendResponse({ success: false, signedIn: false }); return; }
+
+                if (message.clear) {
+                    const { error } = await supabaseClient
+                        .from('student_profile')
+                        .delete()
+                        .eq('user_id', session.user.id);
+                    if (error) throw error;
+                    sendResponse({ success: true, signedIn: true, cleared: true });
+                    return;
+                }
+
+                const facts = (message.facts && typeof message.facts === 'object') ? message.facts : {};
+                const { error } = await supabaseClient
+                    .from('student_profile')
+                    .upsert({
+                        user_id: session.user.id,
+                        facts,
+                        updated_at: new Date().toISOString()
+                    }, { onConflict: 'user_id' });
+                if (error) throw error;
+                sendResponse({ success: true, signedIn: true });
+            } catch (err) {
+                console.error('[Canvascope Profile] Error saving student profile:', err);
+                sendResponse({ success: false, error: err.message });
+            }
+        })();
+        return true;
     } else if (message.type === 'csReloadExtension') {
         // Dev convenience: let any extension context (side panel, popup, content
         // script) trigger a full extension reload so disk changes take effect.
@@ -6786,7 +6841,7 @@ async function handleAutoIndexPdf(message, sender) {
         // Load pdf.js + the parser into the tab's isolated content-script world.
         await chrome.scripting.executeScript({
             target: { tabId },
-            files: ['lib/pdf.min.js', 'v8/document-parser.js']
+            files: ['src/lib/pdf.min.js', 'src/core/document-parser.js']
         });
 
         const [{ result } = {}] = await chrome.scripting.executeScript({
@@ -6824,7 +6879,7 @@ async function handleParsePdfText(message, sender) {
     try {
         await chrome.scripting.executeScript({
             target: { tabId },
-            files: ['lib/pdf.min.js', 'v8/document-parser.js']
+            files: ['src/lib/pdf.min.js', 'src/core/document-parser.js']
         });
 
         const [{ result } = {}] = await chrome.scripting.executeScript({

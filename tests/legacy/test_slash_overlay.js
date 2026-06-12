@@ -2,7 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 
-const OVERLAY_PATH = path.join(__dirname, 'slash-overlay.js');
+const OVERLAY_PATH = path.join(__dirname, 'src/content/slash-overlay.js');
 const overlaySource = fs.readFileSync(OVERLAY_PATH, 'utf8');
 
 function extractFunctionSource(source, functionName) {

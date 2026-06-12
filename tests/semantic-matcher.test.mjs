@@ -5,7 +5,7 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const matcherPath = path.resolve(__dirname, '..', 'v8', 'semantic-matcher.js');
+const matcherPath = path.resolve(__dirname, '..', 'src', 'core', 'semantic-matcher.js');
 const matcherCode = fs.readFileSync(matcherPath, 'utf8');
 
 // Evaluate the SemanticMatcher code and bind it to globalThis

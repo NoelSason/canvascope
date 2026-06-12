@@ -1,152 +1,17 @@
 <!DOCTYPE html>
 <html>
-
 <head>
-    <title>Authenticating Canvascope…</title>
-    <link rel="icon" href="icons/icon32.png">
-    <style>
-        :root {
-            --surface-0: #07090f;
-            --surface-1: #0b0e15;
-            --surface-2: #11141d;
-            --hairline: #232837;
-            --hairline-strong: #32384a;
-            --brand-400: #b297ff;
-            --brand-500: #c7b7ff;
-            --text-primary: #edf0f8;
-            --text-muted: #8f97a8;
-            --font-display: 'Geist', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
-            --font-mono: 'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
-        }
-
-        html, body {
-            background: var(--surface-0);
-            color: var(--text-primary);
-            font-family: var(--font-display);
-            margin: 0;
-            min-height: 100vh;
-        }
-
-        body {
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            position: relative;
-            overflow: hidden;
-        }
-
-        .container {
-            position: relative;
-            z-index: 1;
-            text-align: center;
-            padding: 32px 28px;
-            background: var(--surface-1);
-            border: 1px solid var(--hairline);
-            border-radius: 8px;
-            min-width: 320px;
-            max-width: 420px;
-            box-shadow: 0 30px 80px rgba(0, 0, 0, 0.56), inset 0 1px 0 rgba(255, 255, 255, 0.03);
-        }
-
-        .container::after {
-            content: '';
-            position: absolute;
-            inset: 5px;
-            pointer-events: none;
-            border: 1px solid rgba(178, 151, 255, 0.28);
-            border-radius: 5px;
-            opacity: 0.7;
-        }
-
-        .scope {
-            width: 56px;
-            height: 56px;
-            margin: 0 auto 20px;
-            color: var(--brand-500);
-            position: relative;
-        }
-        .scope svg { width: 100%; height: 100%; }
-        .scope::before {
-            content: '';
-            position: absolute;
-            inset: -6px;
-            border: 1px solid rgba(178, 151, 255, 0.26);
-            border-radius: 8px;
-            animation: scope-pulse 1.6s ease-out infinite;
-        }
-        @keyframes scope-pulse {
-            0%   { transform: scale(0.92); opacity: 0.9; }
-            100% { transform: scale(1.5);  opacity: 0; }
-        }
-        .scope-rotor {
-            animation: rotate 4s linear infinite;
-            transform-origin: 50% 50%;
-        }
-        @keyframes rotate {
-            to { transform: rotate(360deg); }
-        }
-
-        h2 {
-            font-size: 18px;
-            font-weight: 600;
-            letter-spacing: 0;
-            margin: 0 0 8px;
-        }
-
-        p {
-            font-family: var(--font-mono);
-            font-size: 11px;
-            letter-spacing: 0;
-            text-transform: uppercase;
-            color: var(--text-muted);
-            margin: 0;
-        }
-
-        .status {
-            margin-top: 18px;
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            padding: 5px 10px;
-            border: 1px solid rgba(178, 151, 255, 0.28);
-            border-radius: 6px;
-            background: var(--surface-2);
-            color: var(--brand-400);
-            font-family: var(--font-mono);
-            font-size: 10px;
-            letter-spacing: 0;
-            text-transform: uppercase;
-        }
-        .status::before {
-            content: '';
-            width: 5px; height: 5px;
-            border-radius: 50%;
-            background: var(--brand-400);
-            box-shadow: 0 0 6px var(--brand-400);
-            animation: blip 1.4s ease-in-out infinite;
-        }
-        @keyframes blip {
-            0%, 60%, 100% { opacity: 1; }
-            70%, 90%      { opacity: 0.25; }
-        }
-    </style>
+    <meta charset="utf-8">
+    <title>Redirecting to Canvascope Auth…</title>
+    <link rel="icon" href="assets/icons/icon32.png">
+    <script>
+        // Forward URL hash fragment and search query params to the real OAuth callback handler
+        window.location.href = "src/oauth/oauth-callback.html" + window.location.hash + window.location.search;
+    </script>
 </head>
-
 <body>
-    <div class="container">
-        <div class="scope" aria-hidden="true">
-            <svg viewBox="0 0 128 128" fill="none">
-                <path d="M20 16h76v96H20z" stroke="currentColor" stroke-width="9" stroke-linejoin="round"/>
-                <path d="M20 88h76" stroke="currentColor" stroke-width="9" stroke-linecap="round"/>
-                <circle cx="60" cy="52" r="22" stroke="currentColor" stroke-width="9"/>
-                <line x1="76" y1="68" x2="100" y2="92" stroke="currentColor" stroke-width="9" stroke-linecap="round"/>
-            </svg>
-        </div>
-        <h2>Securing your scope…</h2>
-        <p>You can close this tab if it doesn't close automatically.</p>
-        <div class="status">Locking on</div>
-    </div>
-    <script src="oauth-callback.js"></script>
+    <p style="font-family: sans-serif; text-align: center; margin-top: 40px; color: #8f97a8;">
+        Redirecting to authorization handler...
+    </p>
 </body>
-
 </html>

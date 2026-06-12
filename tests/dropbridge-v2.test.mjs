@@ -2,8 +2,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 
-const backgroundSource = readFileSync(new URL('../background.js', import.meta.url), 'utf8');
-const offscreenSource = readFileSync(new URL('../offscreen.js', import.meta.url), 'utf8');
+const backgroundSource = readFileSync(new URL('../src/background/background.js', import.meta.url), 'utf8');
+const offscreenSource = readFileSync(new URL('../src/offscreen/offscreen.js', import.meta.url), 'utf8');
 const migrationSource = readFileSync(
   new URL('../supabase/migrations/20260610120000_dropbridge_v3_realtime_receipts.sql', import.meta.url),
   'utf8',

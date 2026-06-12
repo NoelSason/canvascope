@@ -1770,7 +1770,7 @@ function createOverlay() {
     // (chrome.runtime.getURL throws once the runtime context is invalidated).
     let popupUrl;
     try {
-        popupUrl = chrome.runtime.getURL('popup.html?mode=overlay');
+        popupUrl = chrome.runtime.getURL('src/popup/popup.html?mode=overlay');
     } catch (err) {
         notifyExtensionContextInvalidated();
         return;

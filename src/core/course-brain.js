@@ -111,8 +111,13 @@
 
       const { prompt, sources } = await RAGCore.compileBrainPrompt(question, { courseName: courseScope });
 
+      // Personalize via the system block only — the corpus/prompt stays
+      // untouched so claude-proxy's prompt cache keeps hitting.
+      const profileBlock = (window.StudentProfile && StudentProfile.compileContextBlock()) || '';
+      const system = profileBlock ? AIRouter.getState().systemInstruction + profileBlock : undefined;
+
       let full = '';
-      for await (const delta of AIRouter.stream(prompt)) {
+      for await (const delta of AIRouter.stream(prompt, { system })) {
         if (body.querySelector('.stream-loader')) body.innerHTML = '';
         full += delta;
         body.innerHTML = decorateCitations(deps.markdown(full), sources);

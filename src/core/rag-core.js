@@ -357,7 +357,7 @@ class RAGCore {
     // the student's own records (tasks/deadlines, PDF pages) rather than the
     // broad active-page course list, which otherwise causes over-cautious
     // "I can't find that" refusals when a task's course code differs from the page.
-    compiledPrompt += `=== QUESTION ===\nAnswer the student's request using the sections above as authoritative context. Prefer the tasks/deadlines and document sections over the general active-page text, and match tasks by topic even if the course code differs from the page. Request: ${promptText}`;
+    compiledPrompt += `=== QUESTION ===\nAnswer the student's request. Use the sections above as authoritative context for their personal specifics (tasks/deadlines, document pages) — prefer those over the general active-page text, and match tasks by topic even if the course code differs from the page. For conceptual or "explain/teach me" questions, answer fully from your general knowledge even when the sections don't cover the topic, and tie the explanation to the student's profile and course materials where relevant. Do not refuse a concept question for lack of a matching section. Request: ${promptText}`;
 
     return compiledPrompt;
   }
@@ -521,10 +521,10 @@ class RAGCore {
         prompt += `[${i + 1}] ${chunk.title} (${chunk.courseName}${loc}${due})\n${chunk.text}\n\n`;
       });
     } else {
-      prompt += `=== COURSE SOURCES ===\n(No indexed content matched this question${courseName ? ` in ${courseName}` : ''}. Tell the student nothing relevant is indexed yet and to open the course files once so Canvascope can index them.)\n\n`;
+      prompt += `=== COURSE SOURCES ===\n(No indexed course content matched this question${courseName ? ` in ${courseName}` : ''}. Answer from your general knowledge, and mention that nothing in their indexed course materials covered it — opening the course files once lets Canvascope index them.)\n\n`;
     }
 
-    prompt += `=== QUESTION ===\nAnswer using ONLY the numbered sources above. After each claim, cite its source inline like [1] or [2]. Be concise (2-5 sentences or a short list). If the sources do not contain the answer, say so plainly — do not invent. Question: ${question}`;
+    prompt += `=== QUESTION ===\nAnswer the student's question. Ground claims in the numbered sources when they cover it, citing inline like [1] or [2]. When the sources only partially cover the topic (or are merely related, e.g. labs on the concept), fill the gaps from your general knowledge — clearly grounded teaching is better than refusing — and connect the explanation back to the course materials where helpful. Only attach [n] citations to claims actually drawn from the sources; never fabricate a citation. For facts specific to this course (due dates, grading, instructions), rely strictly on the sources and say so if they're missing. Be concise (2-5 sentences or a short list). Question: ${question}`;
 
     return { prompt, sources };
   }

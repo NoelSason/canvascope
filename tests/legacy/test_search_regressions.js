@@ -2,7 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 
-const Fuse = require('./lib/fuse.min.js');
+const Fuse = require('./src/lib/fuse.min.js');
 
 function resolveFixturePath(filename) {
   const candidates = [
@@ -96,7 +96,7 @@ function createSearchHarness(indexedContent) {
   context.self = context;
 
   vm.createContext(context);
-  vm.runInContext(fs.readFileSync(path.join(__dirname, 'popup.js'), 'utf8'), context);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, 'src/popup/popup.js'), 'utf8'), context);
 
   vm.runInContext(`
     const stub = () => ({

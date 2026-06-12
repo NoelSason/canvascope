@@ -35,7 +35,7 @@
   const ONESHOT_PREFIX = 'cs.reminders.oneshot.';
   const ITEM_ALARM_PREFIX = 'cs.reminders.item.';
   const TICK_PERIOD_MIN = 30; // re-evaluate item-based reminders every 30 min
-  const NOTIFICATION_ICON = 'icons/icon128.png';
+  const NOTIFICATION_ICON = 'assets/icons/icon128.png';
 
   // Threshold milliseconds before due date — mirrors Radar's 24h + 3d windows.
   const ITEM_THRESHOLDS = [

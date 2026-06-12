@@ -29,7 +29,7 @@ class OCRController {
         throw new Error('Tesseract library not loaded — expected lib/tesseract/tesseract.min.js');
       }
 
-      const base = chrome.runtime.getURL('lib/tesseract/');
+      const base = chrome.runtime.getURL('src/lib/tesseract/');
       this.worker = await Tesseract.createWorker('eng', 1, {
         workerPath: `${base}worker.min.js`,
         corePath: `${base}tesseract-core-simd-lstm.wasm.js`,

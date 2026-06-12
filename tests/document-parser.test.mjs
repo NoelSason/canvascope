@@ -5,7 +5,7 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const docParserPath = path.resolve(__dirname, '..', 'v8', 'document-parser.js');
+const docParserPath = path.resolve(__dirname, '..', 'src', 'core', 'document-parser.js');
 const docParserCode = fs.readFileSync(docParserPath, 'utf8');
 
 // Define chrome mocks
@@ -58,7 +58,7 @@ globalThis.pdfjsLib = {
 };
 
 // Evaluate the SemanticMatcher first to enable hybrid retrieval testing
-const matcherPath = path.resolve(__dirname, '..', 'v8', 'semantic-matcher.js');
+const matcherPath = path.resolve(__dirname, '..', 'src', 'core', 'semantic-matcher.js');
 const matcherCode = fs.readFileSync(matcherPath, 'utf8');
 new Function(matcherCode + '\nglobalThis.SemanticMatcher = SemanticMatcher;')();
 

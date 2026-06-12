@@ -13,7 +13,7 @@ import path from 'node:path';
 import vm from 'node:vm';
 
 function loadAcademicTools() {
-  const src = fs.readFileSync(path.resolve('academic-tools.js'), 'utf8');
+  const src = fs.readFileSync(path.resolve('src/content/academic-tools.js'), 'utf8');
 
   // Minimal Web/Chrome stub. The module references `chrome.storage.local`
   // and DOM APIs but only inside lazy code paths we do not call here.

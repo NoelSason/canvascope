@@ -9,7 +9,7 @@ import { createRequire } from 'node:module';
 import path from 'node:path';
 
 const require = createRequire(import.meta.url);
-const themes = require(path.resolve('lib/skin-themes.js'));
+const themes = require(path.resolve('src/lib/skin-themes.js'));
 
 test('exports the expected public surface', () => {
   for (const k of ['DEFAULT_TOKENS', 'BUILTIN_THEMES', 'BUILTIN_FONTS',

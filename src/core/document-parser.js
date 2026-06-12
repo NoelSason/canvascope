@@ -16,7 +16,7 @@ class DocumentParser {
     }
 
     // Set worker source to our local extension bundle
-    pdfjsLib.GlobalWorkerOptions.workerSrc = chrome.runtime.getURL('lib/pdf.worker.min.js');
+    pdfjsLib.GlobalWorkerOptions.workerSrc = chrome.runtime.getURL('src/lib/pdf.worker.min.js');
 
     const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
     const pagesText = [];

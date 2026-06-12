@@ -48,16 +48,27 @@ document.addEventListener('DOMContentLoaded', () => {
     '--cs-on-accent'
   ];
 
-  const SYSTEM_INSTRUCTION = `You are the Canvascope study assistant running inside a Chrome extension. Below each question you receive context drawn from the student's own saved data and the page they are viewing.
+  const SYSTEM_INSTRUCTION = `You are the Canvascope study assistant running inside a Chrome extension. You are a knowledgeable tutor first and a personal-records lookup second. Below each question you receive context drawn from the student's own saved data and the page they are viewing, and (when known) an "ABOUT THE STUDENT" profile.
 
 How to use the context:
 - The sections "THE STUDENT'S TASKS & DEADLINES", "RELEVANT COURSE DETAILS", and "ACTIVE PDF DOCUMENT PAGES" are the student's authoritative personal records. Answer directly and confidently from them.
 - For questions about tasks, readings, assignments, exams, or deadlines, answer from the tasks/deadlines list. Match items by topic and keywords — e.g. "cs reading" or "next reading" matches a task titled "Finish reading RAG paper". Do NOT require the course code to match the page being viewed, and never refuse just because a course number (e.g. CS 101 vs CS 61B) differs from the active page.
 - If one listed item plausibly matches the question, give its title, course, and due date. If several match, briefly list them.
-- Only say the information isn't available when the relevant section is genuinely empty or contains nothing related to the question.
+- For conceptual, academic, or "explain/teach me X" questions, ANSWER from your own general knowledge — the course sections are supporting context, not a limit on what you can teach. Never refuse a concept question just because it isn't in the provided sections. Only the student's private specifics (their due dates, grades, instructions) are limited to what the sections contain; say so if those are missing.
+- When an "ABOUT THE STUDENT" profile is present, tailor the explanation to it — use their major, goals, and preferred style, and connect concepts to their goals when they ask.
 - When answering from an ACTIVE PDF DOCUMENT, ground your answer in the page text provided and cite page numbers when useful.
 
 Style: concise (2-4 sentences or a short list). Use bold text, inline code backticks, and lists where appropriate.`;
+
+  /**
+   * Chat system prompt + the student's profile block. The profile rides ONLY
+   * in the system argument (never the corpus block) so claude-proxy's cached
+   * corpus stays byte-identical across questions.
+   */
+  function systemWithProfile() {
+    const block = (window.StudentProfile && StudentProfile.compileContextBlock()) || '';
+    return SYSTEM_INSTRUCTION + block;
+  }
 
   // 1. Keep the sidepanel pinned to its own theme tokens (theme-boot owns
   //    [data-theme]; this only clears stale inline overrides).
@@ -92,6 +103,101 @@ Style: concise (2-4 sentences or a short list). Use bold text, inline code backt
   }
   if (window.SmartPlanner) {
     window.SmartPlanner.init({ markdown: parseSimpleMarkdown });
+  }
+
+  // 2.35 Student profile panel (personalizes Chat/Brain/Planner answers).
+  initProfilePanel();
+
+  function initProfilePanel() {
+    const overlay = document.getElementById('profile-overlay');
+    const openBtn = document.getElementById('btn-profile');
+    if (!overlay || !openBtn || !window.StudentProfile) return;
+
+    const fields = {
+      name: document.getElementById('pf-name'),
+      school: document.getElementById('pf-school'),
+      majors: document.getElementById('pf-majors'),
+      year: document.getElementById('pf-year'),
+      goals: document.getElementById('pf-goals'),
+      style: document.getElementById('pf-style')
+    };
+    const autoSection = document.getElementById('profile-auto-section');
+    const autoList = document.getElementById('profile-auto-list');
+    const splitList = (s) => s.split(',').map(x => x.trim()).filter(Boolean);
+
+    function populate() {
+      const { facts } = StudentProfile.get();
+      fields.name.value = facts.who.fullName || '';
+      fields.school.value = facts.who.school || '';
+      fields.majors.value = (facts.who.majors || []).join(', ');
+      fields.year.value = facts.who.year || '';
+      fields.goals.value = (facts.who.goals || []).join(', ');
+      fields.style.value = facts.how.studyStyle || '';
+      renderAuto(facts._auto);
+    }
+
+    const AUTO_LABELS = { courses: 'Courses', pendingTodos: 'Open to-dos', fullName: 'Name' };
+    function renderAuto(auto) {
+      const keys = Object.keys(auto || {});
+      autoSection.hidden = keys.length === 0;
+      autoList.innerHTML = '';
+      keys.forEach(key => {
+        const entry = auto[key];
+        const value = Array.isArray(entry.value) ? entry.value.join(', ') : String(entry.value);
+        const row = document.createElement('div');
+        row.className = 'profile-auto-row';
+        row.innerHTML = `
+          <span class="profile-auto-key"></span>
+          <span class="profile-auto-val"></span>
+          <button class="profile-auto-dismiss" aria-label="Remove this detected fact" title="Remove">&times;</button>
+        `;
+        row.querySelector('.profile-auto-key').textContent = AUTO_LABELS[key] || key;
+        row.querySelector('.profile-auto-val').textContent = value;
+        row.querySelector('.profile-auto-dismiss').addEventListener('click', async () => {
+          await StudentProfile.dismissAuto(key);
+          renderAuto(StudentProfile.get().facts._auto);
+        });
+        autoList.appendChild(row);
+      });
+    }
+
+    const openPanel = () => { populate(); overlay.hidden = false; };
+    const closePanel = () => { overlay.hidden = true; };
+
+    openBtn.addEventListener('click', openPanel);
+    document.getElementById('profile-close').addEventListener('click', closePanel);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) closePanel(); });
+
+    document.getElementById('profile-save').addEventListener('click', async () => {
+      await StudentProfile.save({
+        who: {
+          fullName: fields.name.value.trim(),
+          school: fields.school.value.trim(),
+          majors: splitList(fields.majors.value),
+          year: fields.year.value.trim(),
+          goals: splitList(fields.goals.value)
+        },
+        how: { studyStyle: fields.style.value.trim() }
+      });
+      closePanel();
+    });
+
+    document.getElementById('profile-clear').addEventListener('click', async () => {
+      await StudentProfile.clear();
+      populate();
+    });
+
+    // First-run onboarding: surface the panel once when the user has never
+    // entered anything themselves (auto-captured facts don't count — they
+    // arrive in the background and must not suppress onboarding). Delayed so
+    // a synced profile arriving from Supabase doesn't flash it.
+    (async () => {
+      const { profileOnboardingShown } = await chrome.storage.local.get('profileOnboardingShown');
+      if (profileOnboardingShown) return;
+      await new Promise(r => setTimeout(r, 1500));
+      if (StudentProfile.get().manualEmpty) openPanel();
+      await chrome.storage.local.set({ profileOnboardingShown: true });
+    })();
   }
 
   // 2.4 View tab switching.
@@ -326,10 +432,19 @@ Style: concise (2-4 sentences or a short list). Use bold text, inline code backt
     updateUIStatus('checking', 'Initializing...');
     updatePrivacyRoute('checking');
 
-    const state = await AIRouter.init(SYSTEM_INSTRUCTION);
+    // Load the student profile first so the local route's fixed system prompt
+    // includes it; remote reconcile happens in the background.
+    if (window.StudentProfile) {
+      try { await StudentProfile.load(); } catch (_) { /* profile is optional */ }
+    }
+
+    const state = await AIRouter.init(systemWithProfile());
     reflectRouteState(state, { announce: true });
     detectActiveCourseContext();
     consumeSidepanelIntent();
+
+    // Refresh auto-captured facts (course load, workload) without blocking.
+    if (window.StudentProfile) StudentProfile.autoCapture().catch(() => {});
   }
 
   /**
@@ -557,7 +672,7 @@ Style: concise (2-4 sentences or a short list). Use bold text, inline code backt
     // 6. Execute Streaming (AIRouter normalizes chunks to deltas)
     let fullResponse = '';
     try {
-      for await (const delta of AIRouter.stream(fullPrompt, { system: SYSTEM_INSTRUCTION })) {
+      for await (const delta of AIRouter.stream(fullPrompt, { system: systemWithProfile() })) {
         // Clear loader on first token
         if (bubbleContent.querySelector('.stream-loader')) {
           bubbleContent.innerHTML = '';
