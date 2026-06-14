@@ -456,12 +456,22 @@ class RAGCore {
       .sort((a, b) => b.score - a.score)
       .map(x => x.chunk);
 
+    // Relevance floor: the on-device "semantic" layer is a coarse 24-bucket
+    // keyword projection (LocalEmbeddings) with no notion of specific topics
+    // like "enzyme kinetics". Left unchecked it injects whatever bulky indexed
+    // content happens to share a broad academic category (e.g. unrelated course
+    // PDFs), which then gets cited as a source. So we let it only REORDER chunks
+    // that already have lexical overlap with the query — never inject chunks the
+    // query never lexically touched. This keeps citations on-topic and matches
+    // the cleaner title-driven behavior of the Cmd+K search.
+    const lexicallyRelevant = new Set(strongMatches);
+
     let semanticMatches = [];
-    if (typeof SemanticMatcher !== 'undefined') {
+    if (typeof SemanticMatcher !== 'undefined' && lexicallyRelevant.size > 0) {
       const queryVector = SemanticMatcher.vectorize(question);
       const hasConcepts = Object.values(queryVector).some(val => val > 0);
       if (hasConcepts) {
-        semanticMatches = chunks
+        semanticMatches = strongMatches
           .map(chunk => ({
             chunk,
             similarity: SemanticMatcher.cosineSimilarity(
@@ -475,6 +485,8 @@ class RAGCore {
       }
     }
 
+    // RRF now reranks within the lexically-relevant set; with semanticMatches
+    // drawn only from strongMatches, no off-topic chunk can enter the result.
     const merged = (typeof SemanticMatcher !== 'undefined')
       ? SemanticMatcher.rrfMerge(strongMatches, semanticMatches)
       : strongMatches;
@@ -525,6 +537,57 @@ class RAGCore {
     }
 
     prompt += `=== QUESTION ===\nAnswer the student's question. Ground claims in the numbered sources when they cover it, citing inline like [1] or [2]. When the sources only partially cover the topic (or are merely related, e.g. labs on the concept), fill the gaps from your general knowledge — clearly grounded teaching is better than refusing — and connect the explanation back to the course materials where helpful. Only attach [n] citations to claims actually drawn from the sources; never fabricate a citation. For facts specific to this course (due dates, grading, instructions), rely strictly on the sources and say so if they're missing. Be concise (2-5 sentences or a short list). Question: ${question}`;
+
+    return { prompt, sources };
+  }
+
+  /**
+   * Unified "Ask" retrieval: merges the page the student is viewing with
+   * citation-grounded chunks from their WHOLE indexed corpus. The active page
+   * (when present) is source [1]; ranked corpus chunks follow as [2..N]. This
+   * is what powers the merged Ask surface — tab-aware AND course-wide, cited,
+   * and willing to teach from general knowledge when the sources fall short.
+   * @param {string} question
+   * @param {{courseName?: string}} opts - Optional course scope filter
+   * @returns {Promise<{prompt: string, sources: Array}>} sources are 1-indexed
+   *   {n, title, courseName, type, url, page} matching the [n] cite markers.
+   */
+  static async compileUnifiedPrompt(question, { courseName = '' } = {}) {
+    // Active-page scrape and whole-corpus chunk retrieval run concurrently.
+    const [pageContext, chunks, tab] = await Promise.all([
+      this.scrapeActiveTab(question),
+      this.retrieveBrainChunks(question, { courseName, limit: 10, charBudget: 9000 }),
+      chrome.tabs.query({ active: true, currentWindow: true }).then(r => r[0]).catch(() => null)
+    ]);
+
+    const sources = [];
+    let body = '';
+
+    // The page the student is looking at becomes the first, top-priority source.
+    if (pageContext) {
+      const n = sources.length + 1;
+      const title = (tab && tab.title) ? (tab.title.split(':').pop().trim() || tab.title) : 'Active page';
+      sources.push({ n, title, courseName: 'This page', type: 'page', url: (tab && tab.url) || '', page: null });
+      body += `[${n}] ${title} (the page the student is viewing right now)\n${pageContext}\n\n`;
+    }
+
+    // Ranked chunks from across the indexed corpus carry their own provenance.
+    chunks.forEach((chunk) => {
+      const n = sources.length + 1;
+      const loc = chunk.page ? ` — page ${chunk.page}` : '';
+      const due = chunk.dueAt ? ` — due ${new Date(chunk.dueAt).toLocaleDateString()}` : '';
+      body += `[${n}] ${chunk.title} (${chunk.courseName}${loc}${due})\n${chunk.text}\n\n`;
+      sources.push({ n, title: chunk.title, courseName: chunk.courseName, type: chunk.type, url: chunk.url, page: chunk.page });
+    });
+
+    let prompt = '';
+    if (sources.length > 0) {
+      prompt += `=== SOURCES (cite as [n]) ===\n${body}`;
+    } else {
+      prompt += `=== SOURCES ===\n(Nothing in the student's indexed course materials or active page matched this question. Answer from your general knowledge and mention that nothing in their indexed materials covered it — opening the relevant course files once lets Canvascope index them.)\n\n`;
+    }
+
+    prompt += `=== QUESTION ===\nAnswer the student's question. Ground claims in the numbered sources when they cover it, citing inline like [1] or [2] (source [1] is the page they are viewing, when present). When the sources only partially cover the topic — or are merely related — fill the gaps from your general knowledge (clear teaching beats refusing) and connect the explanation back to the sources and the student's goals where helpful. Only attach an [n] citation to a claim actually drawn from that source; never fabricate a citation. For facts specific to this course (due dates, grading, instructions) rely strictly on the sources and say so plainly if they are missing. Be concise (2-5 sentences or a short list). Question: ${question}`;
 
     return { prompt, sources };
   }

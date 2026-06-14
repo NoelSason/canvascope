@@ -29,6 +29,8 @@ Canvascope is a local-first Chrome extension for Canvas and Brightspace. It inde
 - In-browser chat companion (offline Gemini Nano or online Supabase fallback)
 - Scrapes active LMS page content to dynamically supplement context
 - Local lexical keyword frequency scorer that retrieves stored assignments, custom tasks, and user notes
+- Lexically-gated semantic reranking: the on-device concept matcher only **reorders** lexically-relevant chunks, never injects off-topic material, so cited sources stay on-topic
+- Silent personalization: the student profile tailors tone and examples but is never restated back in answers
 - Auto-surfaces upcoming schedule tasks on calendar queries with fallback heuristics
 
 ### Offline PDF & Image OCR Search
@@ -140,6 +142,7 @@ This contract aligns with the Lectra workspace specs in `../..` (`lectra [IN PRO
 - Lectra PDF push bridge & DropBridge v3 (v10.0.0)
 - Local AI chat assistant with active-tab hybrid RAG pipeline (v8.0.0)
 - Offline PDF text parsing & image OCR search (v9.0.0)
+- RAG retrieval relevance floor (semantic layer reorders only, no off-topic citations), silent profile personalization, and Ask sidepanel UI cleanup (inline header, locked horizontal scroll)
 
 ### Next
 - Expanded content extraction (LMS slides, video transcripts, module text)

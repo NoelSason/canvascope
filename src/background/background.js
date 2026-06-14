@@ -14,7 +14,7 @@
 
 // ============================================
 
-importScripts('lib/fuse.min.js');
+importScripts('../lib/fuse.min.js');
 
 // --- SUPABASE INITIALIZATION ---
 // Create a single supabase client for the extension
@@ -2011,7 +2011,7 @@ async function injectPdfViewerOverlayIntoOpenTabs(reason = 'manual', matches = [
                 });
                 await chrome.scripting.executeScript({
                     target: { tabId: tab.id },
-                    files: ['pdf-viewer-content.js']
+                    files: ['src/content/pdf-viewer-content.js']
                 });
                 pdfViewerDebug('Overlay injection succeeded', {
                     tabId: tab.id,
@@ -2069,7 +2069,7 @@ async function syncPdfViewerOverlayRegistration(reason = 'manual') {
     await unregisterPdfViewerOverlayContentScript();
     await chrome.scripting.registerContentScripts([{
         id: PDF_VIEWER_OVERLAY_CONTENT_SCRIPT_ID,
-        js: ['pdf-viewer-content.js'],
+        js: ['src/content/pdf-viewer-content.js'],
         matches,
         excludeMatches: STATIC_LMS_CONTENT_SCRIPT_MATCHES,
         runAt: 'document_idle',
@@ -2286,7 +2286,7 @@ async function runPdfViewerActiveTabDiagnostics() {
     try {
         await chrome.scripting.executeScript({
             target: { tabId: tab.id },
-            files: ['pdf-viewer-content.js']
+            files: ['src/content/pdf-viewer-content.js']
         });
         diagnostics.directOverlayInjection = {
             success: true

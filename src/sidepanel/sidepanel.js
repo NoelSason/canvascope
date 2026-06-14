@@ -1,8 +1,9 @@
 /**
  * Canvascope AI Sidepanel Controller (v10)
- * Multi-view shell (Chat · Brain · Plan) over the shared AIRouter.
- * Chat keeps the v8 active-page RAG flow; Brain answers course-wide with
- * citations (course-brain.js); Plan drafts study blocks (smart-planner.js).
+ * Single Ask surface over the shared AIRouter: tab-aware + whole-corpus
+ * retrieval (RAGCore.compileUnifiedPrompt), profile-personalized, with
+ * clickable [n] citations — it merges what used to be separate Chat and
+ * Course Brain views.
  */
 document.addEventListener('DOMContentLoaded', () => {
   // Initialize v9 neural and OCR components
@@ -13,12 +14,8 @@ document.addEventListener('DOMContentLoaded', () => {
     window.CanvascopeOCR.initWorker();
   }
 
-  const statusDot = document.querySelector('.status-dot');
-  const statusText = document.querySelector('.status-text');
-  const aiStatusBadge = document.getElementById('ai-status');
   const contextLabel = document.getElementById('active-context-label');
   const introPrivacyCopy = document.getElementById('intro-privacy-copy');
-  const privacyRouteLabel = document.getElementById('privacy-route-label');
   const chatHistory = document.getElementById('chat-history');
   const chatViewport = document.getElementById('view-chat');
   const userPrompt = document.getElementById('user-prompt');
@@ -26,8 +23,9 @@ document.addEventListener('DOMContentLoaded', () => {
   const suggestButtons = document.querySelectorAll('.btn-suggest');
   const container = document.getElementById('sidepanel-container');
   const viewTabs = document.querySelectorAll('.view-tab');
-  const views = { chat: document.getElementById('view-chat'), brain: document.getElementById('view-brain'), plan: document.getElementById('view-plan') };
+  const views = { chat: document.getElementById('view-chat') };
   let activeView = 'chat';
+  let askCourseScope = ''; // '' = all courses; set by the Ask course picker
   const SIDE_PANEL_THEME_VARS = [
     '--cs-bg',
     '--cs-bg-1',
@@ -55,10 +53,10 @@ How to use the context:
 - For questions about tasks, readings, assignments, exams, or deadlines, answer from the tasks/deadlines list. Match items by topic and keywords — e.g. "cs reading" or "next reading" matches a task titled "Finish reading RAG paper". Do NOT require the course code to match the page being viewed, and never refuse just because a course number (e.g. CS 101 vs CS 61B) differs from the active page.
 - If one listed item plausibly matches the question, give its title, course, and due date. If several match, briefly list them.
 - For conceptual, academic, or "explain/teach me X" questions, ANSWER from your own general knowledge — the course sections are supporting context, not a limit on what you can teach. Never refuse a concept question just because it isn't in the provided sections. Only the student's private specifics (their due dates, grades, instructions) are limited to what the sections contain; say so if those are missing.
-- When an "ABOUT THE STUDENT" profile is present, tailor the explanation to it — use their major, goals, and preferred style, and connect concepts to their goals when they ask.
+- When an "ABOUT THE STUDENT" profile is present, use it silently to shape tone and examples. NEVER restate, summarize, or list the student's profile back to them — no "ABOUT THE STUDENT" section, no recap of their major/goals/courses. Personalization should be invisible.
 - When answering from an ACTIVE PDF DOCUMENT, ground your answer in the page text provided and cite page numbers when useful.
 
-Style: concise (2-4 sentences or a short list). Use bold text, inline code backticks, and lists where appropriate.`;
+Style: concise (2-4 sentences or a short list). Use bold text, inline code backticks, and lists where appropriate. Answer in natural prose — do NOT reproduce the provided context as labeled sections or echo back headers like "RELEVANT COURSE DETAILS" or "ABOUT THE STUDENT"; weave the relevant facts into your answer and cite sources inline with [n].`;
 
   /**
    * Chat system prompt + the student's profile block. The profile rides ONLY
@@ -97,15 +95,35 @@ Style: concise (2-4 sentences or a short list). Use bold text, inline code backt
     chrome.runtime.sendMessage({ action: 'csTools.pull' }, () => { void chrome.runtime.lastError; });
   } catch (_) { /* ignore */ }
 
-  // 2.3 Initialize the Brain and Plan view modules.
-  if (window.CourseBrain) {
-    window.CourseBrain.init({ markdown: parseSimpleMarkdown });
-  }
-  if (window.SmartPlanner) {
-    window.SmartPlanner.init({ markdown: parseSimpleMarkdown });
+  // 2.34 Ask course-scope picker (whole-corpus retrieval scope).
+  initAskScopePicker();
+
+  function initAskScopePicker() {
+    const select = document.getElementById('ask-course-select');
+    const stat = document.getElementById('ask-corpus-stat');
+    if (!select || typeof RAGCore === 'undefined') return;
+
+    select.addEventListener('change', () => { askCourseScope = select.value; });
+
+    (async () => {
+      try {
+        const courses = await RAGCore.listCourses();
+        select.querySelectorAll('option:not(:first-child)').forEach(o => o.remove());
+        courses.forEach(({ courseName, count }) => {
+          const opt = document.createElement('option');
+          opt.value = courseName;
+          opt.textContent = `${courseName} (${count})`;
+          select.appendChild(opt);
+        });
+        const total = courses.reduce((sum, c) => sum + c.count, 0);
+        if (stat) stat.textContent = total > 0 ? `${total} indexed` : 'Nothing indexed yet';
+      } catch (e) {
+        console.warn('[Canvascope Ask] Course picker populate failed:', e);
+      }
+    })();
   }
 
-  // 2.35 Student profile panel (personalizes Chat/Brain/Planner answers).
+  // 2.35 Student profile panel (personalizes Ask + Planner answers).
   initProfilePanel();
 
   function initProfilePanel() {
@@ -221,12 +239,12 @@ Style: concise (2-4 sentences or a short list). Use bold text, inline code backt
       if (!sidepanelIntent || !sidepanelIntent.ts || Date.now() - sidepanelIntent.ts > 30000) return;
       await chrome.storage.local.remove('sidepanelIntent');
 
-      const { view, question, action } = sidepanelIntent;
-      if (view) switchView(view);
-      if (action === 'quiz' && window.CourseBrain) {
-        window.CourseBrain.quiz();
-      } else if (view === 'brain' && question && window.CourseBrain) {
-        window.CourseBrain.ask(question);
+      const { question, action } = sidepanelIntent;
+      // 'brain'/'plan' are now folded into the unified Ask (chat) surface.
+      if (action === 'quiz') {
+        askQuiz();
+      } else if (question) {
+        submitPrompt(question);
       }
     } catch (e) {
       console.warn('[Canvascope AI] Sidepanel intent consume failed:', e);
@@ -260,12 +278,7 @@ Style: concise (2-4 sentences or a short list). Use bold text, inline code backt
     container.className = container.className.replace(/view-\w+-active/g, '').trim() + ` view-${name}-active`;
 
     if (name === 'chat') {
-      userPrompt.placeholder = 'Ask local AI about this course...';
-    } else if (name === 'brain') {
       userPrompt.placeholder = 'Ask anything across your course…';
-      if (window.CourseBrain) window.CourseBrain.refresh();
-    } else if (name === 'plan') {
-      if (window.SmartPlanner) window.SmartPlanner.refresh();
     }
     refreshSendState();
   }
@@ -369,39 +382,33 @@ Style: concise (2-4 sentences or a short list). Use bold text, inline code backt
   }
 
   function refreshSendState() {
-    const needsInput = activeView !== 'plan';
-    sendBtn.disabled = !needsInput || !userPrompt.value.trim() || !canSubmitPrompt();
+    sendBtn.disabled = !userPrompt.value.trim() || !canSubmitPrompt();
   }
 
   function updatePrivacyRoute(route) {
-    if (!introPrivacyCopy || !privacyRouteLabel) return;
+    if (!introPrivacyCopy) return;
 
     if (route === 'local') {
       introPrivacyCopy.textContent = 'I am using Chrome\'s on-device model for answers. Ask me to summarize syllabus policies, analyze assignment guidelines, or extract the tasks on this page.';
-      privacyRouteLabel.textContent = 'On-device - Chrome Prompt API';
       return;
     }
 
     if (route === 'cloud') {
       introPrivacyCopy.textContent = 'Cloud fallback is active. Canvascope sends the retrieved prompt context to your authenticated Supabase AI endpoint for answers.';
-      privacyRouteLabel.textContent = 'Cloud fallback - Supabase Gemini';
       return;
     }
 
     if (route === 'downloadable') {
       introPrivacyCopy.textContent = 'Chrome can set up the on-device model. Send your first question to start local AI setup, then Canvascope will answer from page and course context.';
-      privacyRouteLabel.textContent = 'Local model setup required';
       return;
     }
 
     if (route === 'auth-required') {
       introPrivacyCopy.textContent = 'Local AI is unavailable in this browser. Sign in from the Canvascope popup to use cloud fallback.';
-      privacyRouteLabel.textContent = 'AI unavailable until sign-in';
       return;
     }
 
     introPrivacyCopy.textContent = 'I use on-device AI when Chrome\'s local model is available. If cloud fallback is active, Canvascope will say so before sending prompt context.';
-    privacyRouteLabel.textContent = 'Checking AI route';
   }
 
   /** Map an AIRouter state onto the status badge + privacy strip + bubbles. */
@@ -448,12 +455,11 @@ Style: concise (2-4 sentences or a short list). Use bold text, inline code backt
   }
 
   /**
-   * Updates the top-right AI Model status indicator.
+   * Status indicator badge was removed from the header; route changes are now
+   * surfaced through the intro copy + system bubbles only. Kept as a no-op so
+   * the route/download flow can keep reporting state without a UI target.
    */
-  function updateUIStatus(state, labelText) {
-    aiStatusBadge.className = `ai-status-badge status-${state}`;
-    statusText.textContent = labelText;
-  }
+  function updateUIStatus() { /* status badge removed */ }
 
   /**
    * Scrapes metadata details from the active tab.
@@ -616,11 +622,31 @@ Style: concise (2-4 sentences or a short list). Use bold text, inline code backt
   }
 
   /**
-   * Main submit orchestrator. Routes to the active view's flow.
+   * Read the input box and submit it through the unified Ask flow.
    */
   async function handleSubmit() {
     const prompt = userPrompt.value.trim();
     if (!prompt) return;
+    userPrompt.value = '';
+    userPrompt.style.height = 'auto';
+    sendBtn.disabled = true;
+    await submitPrompt(prompt);
+  }
+
+  /** Grounded practice quiz over the current Ask scope. */
+  function askQuiz() {
+    const scopeLabel = askCourseScope || 'my courses';
+    return submitPrompt(`Create a 4-question practice quiz on the most important concepts in ${scopeLabel}. For each question give the answer on the next line in bold. Base every question on the sources.`);
+  }
+
+  /**
+   * The single Ask flow: tab-aware + whole-corpus retrieval, profile-
+   * personalized, with clickable [n] citations. Replaces the old split
+   * Chat / Course Brain paths.
+   * @param {string} prompt
+   */
+  async function submitPrompt(prompt) {
+    if (!prompt || !prompt.trim()) return;
 
     const ready = await ensureSessionForSubmit();
     if (!ready) {
@@ -628,67 +654,46 @@ Style: concise (2-4 sentences or a short list). Use bold text, inline code backt
       return;
     }
 
-    // 1. Reset text area
-    userPrompt.value = '';
-    userPrompt.style.height = 'auto';
-    sendBtn.disabled = true;
-
-    // Brain view: course-wide cited answer, handled by its module.
-    if (activeView === 'brain' && window.CourseBrain) {
-      try {
-        await window.CourseBrain.ask(prompt);
-      } finally {
-        refreshSendState();
-      }
-      return;
-    }
-
-    // 2. Append User Bubble
+    // 1. User + assistant bubbles with a streaming loader.
     appendBubble('student', '', prompt);
-
-    // 3. Create Assistant Stream Bubble
     const aiBubble = appendBubble('assistant', '', '');
     const bubbleContent = aiBubble.querySelector('.bubble-content');
-
-    // Add streaming loader
     const loader = document.createElement('div');
     loader.className = 'stream-loader';
-    loader.innerHTML = `
-      <div class="stream-dot"></div>
-      <div class="stream-dot"></div>
-      <div class="stream-dot"></div>
-    `;
+    loader.innerHTML = `<div class="stream-dot"></div><div class="stream-dot"></div><div class="stream-dot"></div>`;
     bubbleContent.appendChild(loader);
     scrollViewport();
 
-    // 4 & 5. Compile Prompt with Context (Dual-Source RAG Pipeline)
+    // 2. Unified retrieval: active page (source [1]) + ranked corpus chunks.
     let fullPrompt = prompt;
+    let sources = [];
     try {
-      fullPrompt = await RAGCore.compileRAGPrompt(prompt);
+      const compiled = await RAGCore.compileUnifiedPrompt(prompt, { courseName: askCourseScope });
+      fullPrompt = compiled.prompt;
+      sources = compiled.sources || [];
     } catch (e) {
-      console.warn('[Canvascope AI] RAG Context compilation failed, falling back to raw prompt:', e);
+      console.warn('[Canvascope Ask] Unified retrieval failed, falling back to raw prompt:', e);
     }
 
-    // 6. Execute Streaming (AIRouter normalizes chunks to deltas)
+    // 3. Stream the answer (AIRouter normalizes chunks to deltas).
     let fullResponse = '';
     try {
       for await (const delta of AIRouter.stream(fullPrompt, { system: systemWithProfile() })) {
-        // Clear loader on first token
-        if (bubbleContent.querySelector('.stream-loader')) {
-          bubbleContent.innerHTML = '';
-        }
+        if (bubbleContent.querySelector('.stream-loader')) bubbleContent.innerHTML = '';
         fullResponse += delta;
-        bubbleContent.innerHTML = parseSimpleMarkdown(fullResponse);
+        bubbleContent.innerHTML = decorateCitations(parseSimpleMarkdown(fullResponse), sources);
         scrollViewport();
       }
-    } catch (err) {
-      console.error('[Canvascope AI] Streaming execution error:', err);
-      if (bubbleContent.querySelector('.stream-loader')) {
-        bubbleContent.innerHTML = '';
+      if (fullResponse.trim()) {
+        renderSourceChips(aiBubble, sources, bubbleContent);
+      } else {
+        bubbleContent.innerHTML = parseSimpleMarkdown('*No answer was generated. Try rephrasing the question.*');
       }
+    } catch (err) {
+      console.error('[Canvascope Ask] Streaming execution error:', err);
+      if (bubbleContent.querySelector('.stream-loader')) bubbleContent.innerHTML = '';
       if (fullResponse) {
-        // Append error warning instead of wiping the entire generated response
-        bubbleContent.innerHTML = parseSimpleMarkdown(fullResponse) +
+        bubbleContent.innerHTML = decorateCitations(parseSimpleMarkdown(fullResponse), sources) +
           `<p style="color: var(--status-error); margin-top: 8px; font-style: italic;">Streaming interrupted: ${err.message || err}</p>`;
       } else {
         bubbleContent.innerHTML = `<span style="color: var(--status-error)">Error: Failed to complete streaming prompt. ${err.message || err}</span>`;
@@ -697,6 +702,55 @@ Style: concise (2-4 sentences or a short list). Use bold text, inline code backt
     } finally {
       refreshSendState();
     }
+  }
+
+  /** Turn [n] markers in rendered markdown into clickable cite pills. */
+  function decorateCitations(html, sources) {
+    if (!sources || !sources.length) return html;
+    return html.replace(/\[(\d{1,2})\]/g, (match, num) => {
+      const n = Number(num);
+      const source = sources.find(s => s.n === n);
+      if (!source) return match;
+      const title = String(source.title || '').replace(/"/g, '&quot;');
+      return `<button class="brain-cite" data-cite="${n}" title="${title}">${n}</button>`;
+    });
+  }
+
+  /** Append a clickable source rail under an answer bubble. */
+  function renderSourceChips(bubble, sources, bubbleContent) {
+    if (!sources || !sources.length) return;
+    const rail = document.createElement('div');
+    rail.className = 'brain-source-rail';
+    sources.forEach(source => {
+      const chip = document.createElement(source.url ? 'button' : 'span');
+      chip.className = 'brain-source-chip' + (source.url ? ' is-link' : '');
+      chip.dataset.n = String(source.n);
+      const loc = source.page ? ` · p.${source.page}` : '';
+      const titleText = document.createElement('span');
+      titleText.textContent = source.title || '';
+      chip.innerHTML = `<span class="chip-n">${source.n}</span>`;
+      chip.appendChild(titleText);
+      if (loc) chip.appendChild(document.createTextNode(loc));
+      if (source.url) {
+        chip.title = source.url;
+        chip.addEventListener('click', () => chrome.tabs.create({ url: source.url }));
+      }
+      rail.appendChild(chip);
+    });
+    bubble.appendChild(rail);
+
+    // Cite pills flash their matching chip into view.
+    (bubbleContent || bubble).querySelectorAll('.brain-cite').forEach(pill => {
+      pill.addEventListener('click', () => {
+        const chip = rail.querySelector(`.brain-source-chip[data-n="${pill.dataset.cite}"]`);
+        if (!chip) return;
+        chip.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        chip.classList.remove('is-flash');
+        void chip.offsetWidth;
+        chip.classList.add('is-flash');
+      });
+    });
+    scrollViewport();
   }
 
   /**

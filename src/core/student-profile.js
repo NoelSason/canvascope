@@ -232,7 +232,7 @@
 
     if (!lines.length) return '';
 
-    return `\n\n=== ABOUT THE STUDENT ===\n${lines.join('\n')}\n(Use this to tailor tone and examples; do not state it back unless relevant.)`;
+    return `\n\n=== ABOUT THE STUDENT ===\n${lines.join('\n')}\n(Silently use this to tailor tone and examples. Never restate, list, or mention the student's profile back to them — not as a section, a header, or an aside.)`;
   }
 
   /** Wipe the profile locally and remotely. */

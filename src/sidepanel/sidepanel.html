@@ -6,7 +6,6 @@
   <title>Canvascope AI Assistant</title>
   <link rel="stylesheet" href="../styles/tokens.css">
   <link rel="stylesheet" href="sidepanel.css">
-  <link rel="stylesheet" href="../components/radar/radar.css">
   <script src="../content/theme-boot.js"></script>
 </head>
 <body class="cs-theme-dark">
@@ -19,33 +18,28 @@
           <span class="brand-icon" aria-hidden="true"><img src="../../assets/icons/logo.png" alt="" /></span>
           <span class="brand-title">Canvascope <span class="brand-sub">AI</span></span>
         </div>
-        <div id="ai-status" class="ai-status-badge status-checking">
-          <span class="status-dot"></span>
-          <span class="status-text">Checking Local AI</span>
-        </div>
+
+        <!-- View tabs (inline with brand) -->
+        <nav class="view-tabs" role="tablist" aria-label="Assistant views">
+          <button class="view-tab is-active" id="tab-chat" data-view="chat" role="tab" aria-selected="true" aria-controls="view-chat">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+            Ask
+          </button>
+        </nav>
+
         <button id="btn-profile" class="profile-open-btn" aria-label="Student profile" title="Student profile">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
         </button>
       </div>
 
-      <!-- View tabs -->
-      <nav class="view-tabs" role="tablist" aria-label="Assistant views">
-        <button class="view-tab is-active" id="tab-chat" data-view="chat" role="tab" aria-selected="true" aria-controls="view-chat">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-          Chat
-        </button>
-        <button class="view-tab" id="tab-brain" data-view="brain" role="tab" aria-selected="false" aria-controls="view-brain">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/></svg>
-          Brain
-        </button>
-        <button class="view-tab" id="tab-plan" data-view="plan" role="tab" aria-selected="false" aria-controls="view-plan">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
-          Plan
-        </button>
-      </nav>
-
-      <!-- Context Selector Banner (chat view) -->
+      <!-- Ask toolbar (chat view): course scope + corpus stat + active page -->
       <div class="context-banner" id="context-banner">
+        <select id="ask-course-select" class="ask-course-select" aria-label="Course scope">
+          <option value="">All courses</option>
+        </select>
+        <span id="ask-corpus-stat" class="ask-corpus-stat"></span>
+      </div>
+      <div class="ask-page-banner" id="context-page-banner">
         <div class="context-info">
           <svg class="icon-context" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"></path>
@@ -63,55 +57,11 @@
           <div class="turn-label">Canvascope</div>
           <div class="bubble-avatar"></div>
           <div class="bubble-content">
-            <p class="greeting-head">Your local course assistant.</p>
-            <p id="intro-privacy-copy">I use on-device AI when Chrome's local model is available. If cloud fallback is active, Canvascope will say so before sending prompt context.</p>
+            <p class="greeting-head">Ask anything across your course.</p>
+            <p id="intro-privacy-copy">I answer from your whole indexed library and the page you're viewing — with sources you can click. On-device AI is used when available; if cloud fallback is active, Canvascope says so before sending context.</p>
           </div>
         </div>
       </div>
-    </main>
-
-    <!-- ── BRAIN VIEW ───────────────────────────── -->
-    <main class="brain-viewport sp-view" id="view-brain" role="tabpanel" aria-labelledby="tab-brain" hidden>
-      <div class="brain-toolbar">
-        <select id="brain-course-select" class="brain-course-select" aria-label="Course scope">
-          <option value="">All courses</option>
-        </select>
-        <span id="brain-corpus-stat" class="brain-corpus-stat"></span>
-      </div>
-      <div id="brain-thread" class="brain-thread">
-        <div class="brain-empty" id="brain-empty">
-          <div class="brain-empty-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/></svg>
-          </div>
-          <p class="brain-empty-title">Ask your whole course.</p>
-          <p class="brain-empty-copy">Answers come from your indexed files, PDFs, and notes — with sources you can click.</p>
-        </div>
-      </div>
-    </main>
-
-    <!-- ── PLAN VIEW ────────────────────────────── -->
-    <main class="plan-viewport sp-view" id="view-plan" role="tabpanel" aria-labelledby="tab-plan" hidden>
-      <section class="plan-radar-card">
-        <div class="plan-section-head">
-          <span class="plan-section-title">Pressure radar</span>
-        </div>
-        <div id="plan-radar-mount" class="plan-radar-mount"></div>
-      </section>
-      <section class="plan-actions">
-        <button id="btn-draft-week" class="btn-plan-primary">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
-          Draft my week
-        </button>
-        <span class="plan-actions-hint">AI splits your deadlines into study blocks you can edit, save, and sync.</span>
-      </section>
-      <section id="plan-output" class="plan-output"></section>
-      <section class="plan-deadlines">
-        <div class="plan-section-head">
-          <span class="plan-section-title">Upcoming</span>
-          <span id="plan-deadline-count" class="plan-section-meta"></span>
-        </div>
-        <div id="plan-deadline-list" class="plan-deadline-list"></div>
-      </section>
     </main>
 
     <!-- Suggestions Container (chat view) -->
@@ -141,7 +91,7 @@
       <div class="input-container">
         <textarea
           id="user-prompt"
-          placeholder="Ask local AI about this course..."
+          placeholder="Ask anything across your course…"
           rows="1"
         ></textarea>
         <button id="send-btn" class="btn-send" disabled aria-label="Send prompt">
@@ -149,13 +99,6 @@
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M14 5l7 7m0 0l-7 7m7-7H3"></path>
           </svg>
         </button>
-      </div>
-      <div class="footer-privacy-badge">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <rect x="4" y="11" width="16" height="9" rx="2"/>
-          <path d="M8 11V7a4 4 0 0 1 8 0v4"/>
-        </svg>
-        <span id="privacy-route-label">Checking AI route</span>
       </div>
     </footer>
 
@@ -201,9 +144,7 @@
   <script src="../core/rag-core.js"></script>
   <script src="../core/ai-router.js"></script>
   <script src="../core/student-profile.js"></script>
-  <script src="../components/radar/radar.js"></script>
   <script src="../core/course-brain.js"></script>
-  <script src="../core/smart-planner.js"></script>
   <script src="sidepanel.js"></script>
 </body>
 </html>
