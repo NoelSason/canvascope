@@ -77,8 +77,30 @@ users sign in with a different/additional client, set the
 
 Events are deduped on the token's `jti` (`risc_events` primary key).
 
-## Follow-up (not yet built)
-`risc_account_flags.signin_blocked` is recorded but **not yet enforced** at
-sign-in. To actually block a flagged user, add a Supabase auth hook
-(`before_user_created` / `custom_access_token`) that rejects when the flag is
-set, and disable account-recovery email for that user.
+## Sign-in enforcement (Custom Access Token hook)
+`account-disabled` events set `risc_account_flags.signin_blocked = true`. That
+flag is enforced by the Postgres function `public.risc_enforce_signin_block`
+(migration `20260613120000_risc_signin_block_hook.sql`), wired as Supabase's
+**Custom Access Token** auth hook. Supabase runs it on every token issuance
+(sign-in and refresh); for a blocked user it returns an HTTP 403 error that
+aborts token issuance, so the account can't sign back in or refresh until an
+`account-enabled` event clears the flag. The hook **fails open**: any internal
+error returns the token unchanged, so a bug can never lock out all users.
+
+**Enable it (one-time, per project)** — the function is deployed but the hook
+must be turned on in the project's auth config:
+- Dashboard → Authentication → Hooks → **Customize Access Token (JWT) Claims**
+  → enable → select `public.risc_enforce_signin_block`, **or**
+- run `supabase config push` (config.toml already sets
+  `[auth.hook.custom_access_token]`).
+
+Verify with:
+```sql
+-- 403 for a flagged user, claims passthrough for everyone else
+select public.risc_enforce_signin_block(
+  jsonb_build_object('user_id', '<some-user-uuid>', 'claims', '{}'::jsonb));
+```
+
+## Follow-up (optional)
+Disable Google account-recovery email for a blocked user (RISC "suggested"
+action) — not automated; handle case-by-case if needed.

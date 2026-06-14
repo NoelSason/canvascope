@@ -260,9 +260,11 @@ max_frequency = "5s"
 # uri = "pg-functions://postgres/auth/before-user-created-hook"
 
 # This hook runs before a token is issued and allows you to add additional claims based on the authentication method used.
-# [auth.hook.custom_access_token]
-# enabled = true
-# uri = "pg-functions://<database>/<schema>/<hook_name>"
+# RISC sign-in enforcement: rejects token issuance for accounts flagged
+# signin_blocked by an account-disabled RISC event (fails open on error).
+[auth.hook.custom_access_token]
+enabled = true
+uri = "pg-functions://postgres/public/risc_enforce_signin_block"
 
 # Configure one of the supported SMS providers: `twilio`, `twilio_verify`, `messagebird`, `textlocal`, `vonage`.
 [auth.sms.twilio]
