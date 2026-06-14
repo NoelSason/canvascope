@@ -15,6 +15,11 @@ coverage/
 .env
 .env.*
 
+# Secrets — service-account keys, never commit
+.secrets/
+*-service-account*.json
+canvascope-*.json
+
 # AI / assistant tooling (local dev only)
 .claude/
 .antigravity/

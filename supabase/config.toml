@@ -394,3 +394,9 @@ verify_jwt = false
 
 [functions.heartbeat-device-v2]
 verify_jwt = false
+
+# RISC (Cross-Account Protection) receiver. Google authenticates by signing the
+# Security Event Token in the body, not with a Supabase JWT, so JWT verification
+# must be off — the function validates the token signature itself.
+[functions.risc-receiver]
+verify_jwt = false
