@@ -550,6 +550,84 @@ async function hydrateDropBridgeV2SessionFromStorage() {
     return session;
 }
 
+// --- AUTH SESSION KEEPALIVE (MV3) ---
+// MV3 service workers are suspended after ~30s idle, which stops supabase-js's
+// internal autoRefreshToken timer (and a worker has no window/visibility events
+// to restart it). Without an external wake source the access token silently goes
+// stale and the user appears signed out even though their refresh token is still
+// valid server-side. A chrome.alarms tick wakes the worker on a fixed cadence so
+// we can refresh well before expiry.
+const AUTH_REFRESH_ALARM_NAME = 'authTokenRefresh';
+const AUTH_REFRESH_PERIOD_MINUTES = 30;
+// Refresh when the access token expires within this window. Kept larger than the
+// alarm period so a single missed tick still refreshes with margin to spare.
+const AUTH_REFRESH_SKEW_SECONDS = 20 * 60;
+
+function ensureAuthRefreshAlarm() {
+    try {
+        // create() is idempotent by name, so it's safe to call on every wake.
+        chrome.alarms.create(AUTH_REFRESH_ALARM_NAME, { periodInMinutes: AUTH_REFRESH_PERIOD_MINUTES });
+    } catch (error) {
+        console.warn('[Canvascope Auth] Failed to create auth refresh alarm:', parseErrorMessage(error));
+    }
+}
+
+async function ensureFreshAuthSession(reason = 'unknown') {
+    if (!supabaseClient) return null;
+    try {
+        const { data: { session }, error } = await supabaseClient.auth.getSession();
+        if (error) {
+            console.warn('[Canvascope Auth] getSession failed during keepalive:', parseErrorMessage(error));
+            return null;
+        }
+        if (!session) {
+            dropBridgeDebug('auth keepalive: no session', { reason });
+            return null;
+        }
+
+        if (!isSupabaseSessionExpired(session, AUTH_REFRESH_SKEW_SECONDS)) {
+            dropBridgeDebug('auth keepalive: session still fresh', {
+                reason,
+                expiresAtEpoch: session?.expires_at || null
+            });
+            await persistAuthStatusSnapshot(session);
+            return session;
+        }
+
+        if (!session.refresh_token) {
+            dropBridgeDebug('auth keepalive: refresh needed but no refresh token', { reason });
+            return session;
+        }
+
+        dropBridgeDebug('auth keepalive: refreshing session', {
+            reason,
+            expiresAtEpoch: session?.expires_at || null
+        });
+        const { data, error: refreshError } = await supabaseClient.auth.refreshSession({
+            refresh_token: session.refresh_token
+        });
+        if (refreshError) {
+            // Best-effort: keep the existing stored session. A transient failure
+            // (offline, worker torn down mid-request) must not strand the user;
+            // the next alarm tick or getSession() will retry.
+            console.warn('[Canvascope Auth] Token refresh failed during keepalive:', parseErrorMessage(refreshError));
+            return session;
+        }
+
+        const refreshed = data?.session || null;
+        dropBridgeDebug('auth keepalive: refresh succeeded', {
+            reason,
+            expiresAtEpoch: refreshed?.expires_at || null
+        });
+        rememberDropBridgeV2Session(refreshed);
+        await persistAuthStatusSnapshot(refreshed);
+        return refreshed;
+    } catch (error) {
+        console.warn('[Canvascope Auth] Keepalive error:', parseErrorMessage(error));
+        return null;
+    }
+}
+
 async function getDropBridgeV2AccessToken() {
     if (!supabaseClient) return null;
     const cached = getDropBridgeV2CachedAccessToken();
@@ -2380,6 +2458,9 @@ chrome.runtime.onInstalled.addListener((details) => {
     // Set up deadline reminder alarm (every 60 min)
     chrome.alarms.create('deadlineReminder', { periodInMinutes: 60 });
 
+    // Keep the Supabase auth token fresh across service-worker suspensions.
+    ensureAuthRefreshAlarm();
+
     syncPdfViewerOverlayRegistration(`runtime-installed-${details.reason}`).catch((error) => {
         console.warn('[Canvascope PDF Viewer] Failed to sync overlay registration on install:', parseErrorMessage(error));
     });
@@ -2455,6 +2536,11 @@ chrome.alarms.onAlarm.addListener((alarm) => {
     }
     if (alarm.name === 'deadlineReminder') {
         checkDeadlineReminders();
+    }
+    if (alarm.name === AUTH_REFRESH_ALARM_NAME) {
+        ensureFreshAuthSession('alarm').catch((error) => {
+            console.warn('[Canvascope Auth] Alarm-triggered refresh failed:', parseErrorMessage(error));
+        });
     }
     if (alarm.name === DROPBRIDGE_V2_FALLBACK_ALARM_NAME) {
         requestDropBridgeV2Poll('alarm').catch((error) => {
@@ -7550,6 +7636,10 @@ chrome.tabs.query({}).then(tabs => {
 
 chrome.runtime.onStartup.addListener(() => {
     dropBridgeDebug('runtime.onStartup fired');
+    ensureAuthRefreshAlarm();
+    ensureFreshAuthSession('runtime-startup').catch((error) => {
+        console.warn('[Canvascope Auth] Runtime startup refresh failed:', parseErrorMessage(error));
+    });
     bootstrapDropBridgeV2FromWorkerStart('runtime-startup').catch((error) => {
         console.error('[DropBridge v2] Runtime startup failure:', parseErrorMessage(error));
     });
@@ -7559,6 +7649,10 @@ chrome.runtime.onStartup.addListener(() => {
 });
 
 dropBridgeDebug('service worker immediate bootstrap call');
+ensureAuthRefreshAlarm();
+ensureFreshAuthSession('service-worker-start').catch((error) => {
+    console.warn('[Canvascope Auth] Service worker start refresh failed:', parseErrorMessage(error));
+});
 bootstrapDropBridgeV2FromWorkerStart('service-worker-start').catch((error) => {
     console.error('[DropBridge v2] Service worker bootstrap failure:', parseErrorMessage(error));
 });
