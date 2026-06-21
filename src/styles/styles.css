@@ -2531,3 +2531,50 @@ body.in-overlay .results-container {
   background: var(--accent-bg-hi);
   color: var(--accent-sat);
 }
+
+/* Import course to Lectra modal */
+.import-lectra-tree {
+  max-height: 320px;
+  overflow-y: auto;
+  margin-top: 8px;
+  border: 1px solid var(--border, #2a2f3d);
+  border-radius: 8px;
+  padding: 6px;
+}
+.import-lectra-state {
+  color: var(--text-muted, #9aa3b2);
+  font-size: 13px;
+  padding: 14px 8px;
+  text-align: center;
+  margin: 0;
+}
+.import-lectra-state.error { color: #ef6b6b; }
+.import-lectra-folder {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--text, #edf0f8);
+}
+.import-lectra-folder:hover { background: var(--accent-bg-hi, rgba(255,255,255,0.04)); }
+.import-lectra-folder input { margin: 0; cursor: pointer; }
+.import-lectra-folder .ilt-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.import-lectra-folder .ilt-count {
+  font-size: 11px;
+  color: var(--text-muted, #9aa3b2);
+  background: var(--accent-bg-hi, rgba(255,255,255,0.06));
+  border-radius: 10px;
+  padding: 1px 8px;
+}
+.import-lectra-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  justify-content: flex-end;
+  margin-top: 14px;
+}
+.import-lectra-status { font-size: 12px; color: var(--text-muted, #9aa3b2); flex: 1; }
+.import-lectra-status.error { color: #ef6b6b; }
+.import-lectra-status.success { color: #4cc38a; }

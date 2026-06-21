@@ -1,10 +1,10 @@
 {
   "manifest_version": 3,
   "name": "Canvascope",
-  "version": "10.0.0",
+  "version": "10.1.0",
   "minimum_chrome_version": "116",
   "default_locale": "en",
-  "description": "Instantly search across your Canvas courses, files, and PDFs, customize your LMS theme, and run academic tasks via slash menu.",
+  "description": "Turn Canvas into an AI study hub: cited course answers, instant PDF search, deadline insights, and smarter planning for every class.",
   "icons": {
     "16": "assets/icons/icon16.png",
     "32": "assets/icons/icon32.png",
@@ -67,6 +67,22 @@
         "*://canvas.mit.edu/*"
       ],
       "js": [
+        "src/content/skin-early.js"
+      ],
+      "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "*://*.instructure.com/*",
+        "*://*.brightspace.com/*",
+        "*://*.d2l.com/*",
+        "*://bcourses.berkeley.edu/*",
+        "*://bruinlearn.ucla.edu/*",
+        "*://canvas.ucsd.edu/*",
+        "*://canvas.asu.edu/*",
+        "*://canvas.mit.edu/*"
+      ],
+      "js": [
         "src/lib/supabase.js",
         "src/lib/skin-themes.js",
         "src/content/content.js",
@@ -95,6 +111,17 @@
       ],
       "all_frames": true,
       "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "*://*.gradescope.com/*"
+      ],
+      "js": [
+        "src/lib/pdf.min.js",
+        "src/content/attach-from-lectra.js",
+        "src/content/gradescope.js"
+      ],
+      "run_at": "document_idle"
     }
   ],
   "background": {
@@ -122,6 +149,15 @@
         "*://canvas.ucsd.edu/*",
         "*://canvas.asu.edu/*",
         "*://canvas.mit.edu/*"
+      ]
+    },
+    {
+      "resources": [
+        "src/lib/pdf.worker.min.js",
+        "assets/icons/*"
+      ],
+      "matches": [
+        "*://*.gradescope.com/*"
       ]
     }
   ]

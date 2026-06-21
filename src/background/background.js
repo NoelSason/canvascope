@@ -5992,6 +5992,397 @@ async function sendPdfToLectraFromMessage({ trigger, candidateUrl, sourcePageUrl
     }
 }
 
+// ============================================
+// LECTRA LIBRARY (read) + COURSE IMPORT (write)
+// Shared by: Gradescope "Select from Lectra" picker and the popup
+// "Import to Lectra" course importer. All access routes through this worker,
+// which holds the Supabase auth session.
+// ============================================
+
+async function getSignedInUserId() {
+    if (!supabaseClient) return null;
+    const { data: { session } } = await supabaseClient.auth.getSession();
+    return session?.user?.id || null;
+}
+
+/** List the user's Lectra PDF documents for the Attach-from-Lectra picker. */
+async function listLectraDocumentsForPicker() {
+    if (!supabaseClient) {
+        return { success: false, message: 'Sync unavailable right now.' };
+    }
+    const userId = await getSignedInUserId();
+    if (!userId) {
+        return { success: false, message: 'Sign in to Canvascope to use your Lectra library.' };
+    }
+
+    const { data, error } = await supabaseClient
+        .from('synced_items')
+        .select('id,item_data,updated_at,created_at')
+        .eq('user_id', userId)
+        .eq('item_type', 'pdf_document')
+        .order('updated_at', { ascending: false })
+        .limit(300);
+
+    if (error) {
+        return { success: false, message: error.message || 'Failed to load documents.' };
+    }
+
+    const documents = (data || []).map((row) => {
+        const d = row.item_data || {};
+        return {
+            id: row.id,
+            title: d.title || 'Untitled PDF',
+            course: d.courseName || (d.courseId != null ? `Course ${d.courseId}` : ''),
+            folderPath: d.folderPath || '',
+            hasAnnotated: Boolean(d.annotatedStoragePath),
+            updatedAt: row.updated_at || row.created_at || ''
+        };
+    });
+
+    // iPad live-presence shortcut (phased). When the Lectra iPad app broadcasts
+    // its currently-open document, the relay stores it here; until then null.
+    let currentIpadDocId = null;
+    try {
+        const stored = await chrome.storage.local.get(['lectraIpadPresence']);
+        const presence = stored?.lectraIpadPresence;
+        if (presence && presence.currentDocId && documents.some((doc) => doc.id === presence.currentDocId)) {
+            currentIpadDocId = presence.currentDocId;
+        }
+    } catch (_) { /* ignore */ }
+
+    return { success: true, documents, currentIpadDocId };
+}
+
+/** Resolve a short-lived signed URL for a Lectra doc (annotated-else-original). */
+async function resolveLectraDocumentSignedUrl(documentId) {
+    if (!supabaseClient) {
+        return { success: false, message: 'Sync unavailable right now.' };
+    }
+    const userId = await getSignedInUserId();
+    if (!userId) {
+        return { success: false, message: 'Sign in to Canvascope to open documents.' };
+    }
+
+    const { data: row, error } = await supabaseClient
+        .from('synced_items')
+        .select('id,item_data')
+        .eq('user_id', userId)
+        .eq('id', documentId)
+        .single();
+
+    if (error || !row) {
+        return { success: false, message: error?.message || 'Document not found.' };
+    }
+
+    const d = row.item_data || {};
+    const path = d.annotatedStoragePath || d.storagePath;
+    if (!path) {
+        return { success: false, message: 'This document has no stored file.' };
+    }
+
+    const { data: signed, error: signError } = await supabaseClient.storage
+        .from(LECTRA_DOCUMENTS_BUCKET)
+        .createSignedUrl(path, 60);
+
+    if (signError || !signed?.signedUrl) {
+        return { success: false, message: signError?.message || 'Could not generate a download link.' };
+    }
+
+    const filename = sanitizeFilename(d.title || 'lectra-document');
+    return {
+        success: true,
+        signedUrl: signed.signedUrl,
+        filename: /\.pdf$/i.test(filename) ? filename : `${filename}.pdf`
+    };
+}
+
+/**
+ * Enumerate a Canvas course's PDF files with their folder paths.
+ * Reuses the same folder/file logic as the background scan.
+ */
+async function fetchCourseFilesForImport(baseUrl, courseId) {
+    const folderMap = new Map();
+    try {
+        const folders = await fetchAllPages(`${baseUrl}/api/v1/courses/${courseId}/folders?per_page=100`);
+        for (const f of folders) {
+            const isRoot = /^course files?$/i.test(String(f.name || '').trim());
+            const fullName = String(f.full_name || '').replace(/^course files\/?/i, '').trim();
+            const pathMeta = buildIndexedPathMetadata(fullName, isRoot ? '' : (f.name || ''));
+            folderMap.set(f.id, {
+                folderPath: pathMeta.folderPath,
+                pathSegments: pathMeta.pathSegments.slice(),
+                depth: pathMeta.pathDepth,
+                name: isRoot ? 'Files' : (f.name || pathMeta.pathSegments[pathMeta.pathSegments.length - 1] || 'Files')
+            });
+        }
+    } catch (_) { /* folders are best-effort */ }
+
+    const files = [];
+    try {
+        const items = await fetchAllPages(`${baseUrl}/api/v1/courses/${courseId}/files?per_page=100`);
+        for (const item of items) {
+            const name = item.display_name || item.filename || '';
+            const ext = name.split('.').pop()?.toLowerCase();
+            const ct = String(item['content-type'] || item.content_type || '').toLowerCase();
+            const isPdf = ext === 'pdf' || ct.includes('pdf');
+            if (!isPdf) continue;
+
+            const folder = folderMap.get(item.folder_id) || { folderPath: '', pathSegments: [], depth: 0, name: 'Files' };
+            files.push({
+                fileId: item.id,
+                title: name.replace(/\.pdf$/i, '').trim() || name,
+                apiUrl: item.url || null,
+                downloadUrl: `${baseUrl}/files/${item.id}/download?download_frd=1`,
+                folderPath: folder.folderPath || '',
+                pathSegments: folder.pathSegments.slice(),
+                updatedAt: item.updated_at || item.modified_at || null
+            });
+        }
+    } catch (_) { /* ignore */ }
+
+    return { folderMap, files };
+}
+
+/** Build the folder tree (folders that contain PDFs) for the popup picker. */
+async function buildCourseFolderTreeForImport(baseUrl, courseId) {
+    const { files } = await fetchCourseFilesForImport(baseUrl, courseId);
+    const byPath = new Map();
+    for (const file of files) {
+        const key = file.folderPath || '';
+        if (!byPath.has(key)) {
+            byPath.set(key, {
+                folderPath: key,
+                pathSegments: file.pathSegments.slice(),
+                depth: key ? file.pathSegments.length : 0,
+                pdfCount: 0
+            });
+        }
+        byPath.get(key).pdfCount += 1;
+    }
+    const folders = Array.from(byPath.values()).sort((a, b) =>
+        a.folderPath.localeCompare(b.folderPath));
+    return { folders, totalPdfs: files.length };
+}
+
+function isPathExcluded(folderPath, excludedSet) {
+    if (!excludedSet || excludedSet.size === 0) return false;
+    const path = folderPath || '';
+    if (excludedSet.has(path)) return true;
+    // Exclude descendants of an excluded folder too.
+    for (const excluded of excludedSet) {
+        if (excluded && path.startsWith(`${excluded}/`)) return true;
+    }
+    return false;
+}
+
+/** Download a single course PDF, trying the usual Canvas URL variants. */
+async function downloadCourseFileBytes(file) {
+    const attempts = [];
+    const seen = new Set();
+    const queue = (url) => {
+        const normalized = normalizePdfCandidateUrl(url, file.downloadUrl || file.apiUrl || undefined);
+        if (normalized && !seen.has(normalized)) { seen.add(normalized); attempts.push(normalized); }
+    };
+    queue(file.downloadUrl);
+    queue(file.apiUrl);
+    for (const variant of deriveCanvasDownloadCandidates(file.downloadUrl || file.apiUrl || '')) {
+        queue(variant);
+    }
+
+    let last = null;
+    for (const url of attempts) {
+        const attempt = await downloadAndVerifyPdf(url);
+        if (attempt.ok) return attempt;
+        last = attempt;
+    }
+    return last || { ok: false, code: 'pdf_download_failed', message: 'Failed to download PDF.' };
+}
+
+/**
+ * Upsert one course PDF into the user's Lectra library by stable Canvas file id.
+ * Update-in-place overwrites the ORIGINAL variant and preserves any annotated
+ * variant + annotation status.
+ */
+async function upsertLectraDocumentForFile({ userId, accessToken, baseUrl, courseId, courseName, file }) {
+    const canvasFileId = `${(() => { try { return new URL(baseUrl).host; } catch { return 'canvas'; } })()}:${file.fileId}`;
+    // Lectra's model decodes courseId as a number — never store it as a string,
+    // or strict decoding fails the whole list. Coerce to number or null.
+    const numericCourseId = Number(courseId);
+    const courseIdValue = Number.isFinite(numericCourseId) ? numericCourseId : null;
+
+    const downloaded = await downloadCourseFileBytes(file);
+    if (!downloaded.ok) {
+        return { status: 'failed', title: file.title, message: downloaded.message };
+    }
+    const uploadData = downloaded.bytes.buffer.slice(
+        downloaded.bytes.byteOffset,
+        downloaded.bytes.byteOffset + downloaded.bytes.byteLength
+    );
+
+    // Look for an existing row for this Canvas file.
+    const { data: existingRows } = await supabaseClient
+        .from('synced_items')
+        .select('id,item_data')
+        .eq('user_id', userId)
+        .eq('item_type', 'pdf_document')
+        .eq('item_data->>canvasFileId', canvasFileId)
+        .limit(1);
+
+    const existing = Array.isArray(existingRows) && existingRows[0] ? existingRows[0] : null;
+    const rowId = existing?.id || generateUuidV4();
+    const prior = existing?.item_data || {};
+    const storagePath = prior.storagePath || buildPdfStoragePath(userId, rowId);
+
+    const { error: uploadError } = await supabaseClient.storage
+        .from(LECTRA_DOCUMENTS_BUCKET)
+        .upload(storagePath, uploadData, {
+            contentType: 'application/pdf',
+            upsert: true // update-in-place overwrites the original variant
+        });
+    if (uploadError) {
+        const bucketMissing = /bucket\s+not\s+found/i.test(String(uploadError.message || ''));
+        return {
+            status: 'failed',
+            title: file.title,
+            message: bucketMissing
+                ? `Storage bucket "${LECTRA_DOCUMENTS_BUCKET}" is missing.`
+                : (uploadError.message || 'Upload failed.')
+        };
+    }
+
+    const itemData = {
+        ...prior,
+        title: file.title || prior.title || 'Imported PDF',
+        courseId: courseIdValue ?? prior.courseId ?? null,
+        courseName: courseName || prior.courseName || null,
+        sourceUrl: file.apiUrl || prior.sourceUrl || null,
+        storagePath,
+        annotatedStoragePath: prior.annotatedStoragePath || null, // preserved
+        status: prior.status || 'pending_annotation',
+        sourcePlatform: 'canvascope_extension',
+        sourceKind: 'canvas_pdf_import',
+        canvasFileId,
+        folderPath: file.folderPath || '',
+        pathSegments: file.pathSegments || []
+    };
+
+    if (existing) {
+        const { error: updateError } = await supabaseClient
+            .from('synced_items')
+            .update({ item_data: itemData, sync_status: 'synced', updated_at: new Date().toISOString() })
+            .eq('id', rowId)
+            .eq('user_id', userId);
+        if (updateError) {
+            return { status: 'failed', title: file.title, message: updateError.message || 'Update failed.' };
+        }
+        return { status: 'updated', title: file.title, rowId };
+    }
+
+    const { error: insertError } = await supabaseClient
+        .from('synced_items')
+        .insert({
+            id: rowId,
+            user_id: userId,
+            item_type: 'pdf_document',
+            item_data: itemData,
+            sync_status: 'synced'
+        });
+    if (insertError) {
+        await supabaseClient.storage.from(LECTRA_DOCUMENTS_BUCKET).remove([storagePath]).catch(() => {});
+        return { status: 'failed', title: file.title, message: insertError.message || 'Insert failed.' };
+    }
+
+    // No per-row wake during bulk import — the caller wakes Lectra once at the end.
+    return { status: 'imported', title: file.title, rowId };
+}
+
+/** Resolve the human course name from Canvas (falls back to a generic label). */
+async function fetchCanvasCourseName(baseUrl, courseId) {
+    try {
+        const resp = await fetchWithRetry(`${baseUrl}/api/v1/courses/${courseId}`, { credentials: 'include' });
+        if (resp.ok) {
+            const course = await resp.json();
+            const name = (course?.name || '').trim();
+            if (name) return name;
+        }
+    } catch (_) { /* ignore */ }
+    return '';
+}
+
+/** Import a whole course's PDFs (minus excluded subfolders) into Lectra. */
+async function importCourseToLectra({ baseUrl, courseId, courseName, excludedFolderPaths }) {
+    const settings = await getExtensionSettings();
+    if (!settings.enableSendToLectra) {
+        return { success: false, code: 'feature_disabled', message: 'Enable Send to Lectra in Canvascope settings first.' };
+    }
+    if (!supabaseClient) {
+        return { success: false, code: 'supabase_unavailable', message: 'Sync unavailable right now.' };
+    }
+    if (!baseUrl || !courseId) {
+        return { success: false, code: 'bad_request', message: 'Open a Canvas course files page first.' };
+    }
+
+    const { data: { session } } = await supabaseClient.auth.getSession();
+    if (!session?.user?.id) {
+        return { success: false, code: 'not_signed_in', message: 'Sign in to Canvascope to import to Lectra.' };
+    }
+    const userId = session.user.id;
+    const accessToken = session.access_token || null;
+
+    // The popup derives a course label from the tab title ("Files"); prefer the
+    // authoritative Canvas course name so picker rows show a real course.
+    const generic = !courseName || /^files$/i.test(courseName.trim());
+    const resolvedCourseName = (generic ? await fetchCanvasCourseName(baseUrl, courseId) : courseName) || courseName || '';
+
+    const { files } = await fetchCourseFilesForImport(baseUrl, courseId);
+    const excludedSet = new Set(Array.isArray(excludedFolderPaths) ? excludedFolderPaths : []);
+    const selected = files.filter((f) => !isPathExcluded(f.folderPath, excludedSet));
+
+    if (selected.length === 0) {
+        return { success: true, code: 'empty', message: 'No PDFs to import.', total: 0, imported: 0, updated: 0, failed: 0 };
+    }
+
+    const counts = { imported: 0, updated: 0, failed: 0 };
+    const failures = [];
+    let done = 0;
+    let lastRowId = null;
+    const total = selected.length;
+    broadcastMessage({ type: 'importLectraProgress', done: 0, total });
+    const tasks = selected.map((file) => async () => {
+        try {
+            const result = await upsertLectraDocumentForFile({
+                userId, accessToken, baseUrl, courseId, courseName: resolvedCourseName, file
+            });
+            if (result.status === 'imported') { counts.imported += 1; lastRowId = result.rowId; }
+            else if (result.status === 'updated') { counts.updated += 1; lastRowId = result.rowId; }
+            else { counts.failed += 1; failures.push(`${file.title}: ${result.message || 'failed'}`); }
+        } catch (e) {
+            counts.failed += 1;
+            failures.push(`${file.title}: ${parseErrorMessage(e)}`);
+        } finally {
+            done += 1;
+            broadcastMessage({ type: 'importLectraProgress', done, total });
+        }
+    });
+    await processPool(tasks, 3);
+
+    // Wake Lectra once so the iPad pulls the whole batch (avoids 1 wake per file).
+    if (lastRowId) {
+        void wakeLectraForSyncedItem({ syncedItemId: lastRowId, accessToken }).catch(() => {});
+    }
+
+    return {
+        success: true,
+        code: 'ok',
+        total: selected.length,
+        imported: counts.imported,
+        updated: counts.updated,
+        failed: counts.failed,
+        failures: failures.slice(0, 8),
+        message: `Imported ${counts.imported}, updated ${counts.updated}${counts.failed ? `, ${counts.failed} failed` : ''}.`
+    };
+}
+
 function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -7437,6 +7828,39 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             sendResponse({ error: err.message });
         });
 
+        return true;
+    }
+
+    if (message.action === 'listLectraDocuments') {
+        listLectraDocumentsForPicker()
+            .then(sendResponse)
+            .catch((error) => sendResponse({ success: false, message: parseErrorMessage(error) }));
+        return true;
+    }
+
+    if (message.action === 'fetchLectraDocumentBytes') {
+        resolveLectraDocumentSignedUrl(message.documentId)
+            .then(sendResponse)
+            .catch((error) => sendResponse({ success: false, message: parseErrorMessage(error) }));
+        return true;
+    }
+
+    if (message.action === 'getCourseFolderTree') {
+        buildCourseFolderTreeForImport(message.baseUrl, message.courseId)
+            .then((tree) => sendResponse({ success: true, ...tree }))
+            .catch((error) => sendResponse({ success: false, message: parseErrorMessage(error) }));
+        return true;
+    }
+
+    if (message.action === 'importCourseToLectra') {
+        importCourseToLectra({
+            baseUrl: message.baseUrl,
+            courseId: message.courseId,
+            courseName: message.courseName,
+            excludedFolderPaths: message.excludedFolderPaths
+        })
+            .then(sendResponse)
+            .catch((error) => sendResponse({ success: false, code: 'unexpected_error', message: parseErrorMessage(error) }));
         return true;
     }
 });

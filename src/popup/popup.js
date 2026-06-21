@@ -3368,6 +3368,7 @@ let state = {
   popupUi: { ...DEFAULT_POPUP_UI },
   settingsModalOpen: false,
   helpModalOpen: false,
+  importLectraOpen: false,
   lastModalTrigger: null,
   slashMode: createDefaultSlashModeState(),
   _courseCandidatesCache: null,
@@ -4924,6 +4925,183 @@ function closePopupModal(stateKey, modalElement) {
   }
 }
 
+// ---- Import course to Lectra ------------------------------------------------
+
+const importLectra = {
+  baseUrl: null,
+  courseId: null,
+  courseName: '',
+  folders: [],
+  busy: false
+};
+
+/**
+ * Parse the active tab into { baseUrl, courseId } when it's a Canvas course
+ * files page. Returns null otherwise. Mirrors content.js course detection but
+ * stays popup-local (we only have the tab URL here).
+ */
+async function detectActiveCourseFilesContext() {
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab?.url) return null;
+    const url = new URL(tab.url);
+    const path = url.pathname.toLowerCase();
+    const courseMatch = path.match(/\/courses\/(\d+)/);
+    if (!courseMatch) return null;
+    // Only surface on a Files surface to keep the action contextual.
+    if (!path.includes('/files')) return null;
+    return {
+      baseUrl: url.origin,
+      courseId: courseMatch[1],
+      courseName: decodeURIComponent((tab.title || '').replace(/\s*[-|].*$/, '').trim()) || `Course ${courseMatch[1]}`
+    };
+  } catch (_) {
+    return null;
+  }
+}
+
+function bindImportToLectra() {
+  const overflowItem = document.getElementById('cs-overflow-import-course');
+  const modal = document.getElementById('import-lectra-modal');
+  const closeBtn = document.getElementById('close-import-lectra');
+  const confirmBtn = document.getElementById('import-lectra-confirm');
+  if (!overflowItem || !modal) return;
+
+  // Show the action only on a Canvas course files page.
+  detectActiveCourseFilesContext().then((ctx) => {
+    if (ctx) {
+      overflowItem.hidden = false;
+      importLectra.baseUrl = ctx.baseUrl;
+      importLectra.courseId = ctx.courseId;
+      importLectra.courseName = ctx.courseName;
+    } else {
+      overflowItem.hidden = true;
+    }
+  });
+
+  overflowItem.addEventListener('click', () => {
+    const menu = document.getElementById('cs-overflow-menu');
+    if (menu) menu.classList.add('hidden');
+    openImportLectraModal(overflowItem);
+  });
+  if (closeBtn) {
+    closeBtn.addEventListener('click', () => closePopupModal('importLectraOpen', modal));
+  }
+  if (confirmBtn) {
+    confirmBtn.addEventListener('click', runImportToLectra);
+  }
+}
+
+async function openImportLectraModal(trigger) {
+  const modal = document.getElementById('import-lectra-modal');
+  const treeEl = document.getElementById('import-lectra-tree');
+  const courseEl = document.getElementById('import-lectra-course');
+  const confirmBtn = document.getElementById('import-lectra-confirm');
+  const statusEl = document.getElementById('import-lectra-status');
+  if (!modal || !treeEl) return;
+
+  if (statusEl) { statusEl.textContent = ''; statusEl.className = 'import-lectra-status'; }
+  if (confirmBtn) confirmBtn.disabled = true;
+  if (courseEl) courseEl.textContent = importLectra.courseName || 'Course';
+  treeEl.innerHTML = '<p class="import-lectra-state">Scanning course files…</p>';
+  openPopupModal('importLectraOpen', modal, trigger, null);
+
+  try {
+    const res = await chrome.runtime.sendMessage({
+      action: 'getCourseFolderTree',
+      baseUrl: importLectra.baseUrl,
+      courseId: importLectra.courseId
+    });
+    if (!res?.success) {
+      treeEl.innerHTML = `<p class="import-lectra-state error">${escapeHtmlSafe(res?.message || 'Could not scan this course.')}</p>`;
+      return;
+    }
+    importLectra.folders = Array.isArray(res.folders) ? res.folders : [];
+    renderImportLectraTree(res.folders, res.totalPdfs || 0);
+    if (confirmBtn) confirmBtn.disabled = (res.totalPdfs || 0) === 0;
+  } catch (e) {
+    treeEl.innerHTML = `<p class="import-lectra-state error">${escapeHtmlSafe(e?.message || 'Could not scan this course.')}</p>`;
+  }
+}
+
+function escapeHtmlSafe(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function renderImportLectraTree(folders, totalPdfs) {
+  const treeEl = document.getElementById('import-lectra-tree');
+  if (!treeEl) return;
+  if (!folders.length) {
+    treeEl.innerHTML = '<p class="import-lectra-state">No PDFs found in this course.</p>';
+    return;
+  }
+  treeEl.innerHTML = '';
+  for (const folder of folders) {
+    const row = document.createElement('label');
+    row.className = 'import-lectra-folder';
+    const depth = folder.depth || 0;
+    row.style.paddingLeft = `${8 + depth * 16}px`;
+
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = true;
+    cb.dataset.folderPath = folder.folderPath || '';
+
+    const name = document.createElement('span');
+    name.className = 'ilt-name';
+    name.textContent = folder.folderPath
+      ? (folder.pathSegments[folder.pathSegments.length - 1] || folder.folderPath)
+      : 'Course root';
+
+    const count = document.createElement('span');
+    count.className = 'ilt-count';
+    count.textContent = `${folder.pdfCount} PDF${folder.pdfCount === 1 ? '' : 's'}`;
+
+    row.appendChild(cb);
+    row.appendChild(name);
+    row.appendChild(count);
+    treeEl.appendChild(row);
+  }
+}
+
+async function runImportToLectra() {
+  if (importLectra.busy) return;
+  const treeEl = document.getElementById('import-lectra-tree');
+  const confirmBtn = document.getElementById('import-lectra-confirm');
+  const statusEl = document.getElementById('import-lectra-status');
+  if (!treeEl) return;
+
+  const excludedFolderPaths = Array.from(
+    treeEl.querySelectorAll('input[type="checkbox"]:not(:checked)')
+  ).map((cb) => cb.dataset.folderPath || '');
+
+  importLectra.busy = true;
+  if (confirmBtn) { confirmBtn.disabled = true; confirmBtn.querySelector('.btn-text').textContent = 'Importing…'; }
+  if (statusEl) { statusEl.textContent = 'Importing PDFs to Lectra…'; statusEl.className = 'import-lectra-status'; }
+
+  try {
+    const res = await chrome.runtime.sendMessage({
+      action: 'importCourseToLectra',
+      baseUrl: importLectra.baseUrl,
+      courseId: importLectra.courseId,
+      courseName: importLectra.courseName,
+      excludedFolderPaths
+    });
+    if (res?.success) {
+      if (statusEl) { statusEl.textContent = res.message || 'Imported to Lectra.'; statusEl.className = 'import-lectra-status success'; }
+    } else {
+      if (statusEl) { statusEl.textContent = res?.message || 'Import failed.'; statusEl.className = 'import-lectra-status error'; }
+    }
+  } catch (e) {
+    if (statusEl) { statusEl.textContent = e?.message || 'Import failed.'; statusEl.className = 'import-lectra-status error'; }
+  } finally {
+    importLectra.busy = false;
+    if (confirmBtn) { confirmBtn.disabled = false; confirmBtn.querySelector('.btn-text').textContent = 'Import to Lectra'; }
+  }
+}
+
 async function maybeShowWalkthrough() {
   if (state.isOverlayMode || state.popupUi.walkthroughSeen) return;
   await updatePopupUiState({ walkthroughSeen: true });
@@ -4971,6 +5149,11 @@ function showSettingsModal(trigger = null) {
 }
 
 function closeTopModal() {
+  if (state.importLectraOpen) {
+    closePopupModal('importLectraOpen', document.getElementById('import-lectra-modal'));
+    return true;
+  }
+
   if (state.helpModalOpen) {
     closePopupModal('helpModalOpen', elements.helpModal);
     return true;
@@ -5938,6 +6121,7 @@ function beginGoogleSignIn() {
 }
 
 function setupEventListeners() {
+  bindImportToLectra();
   elements.searchInput.addEventListener('input', handleSearchInput);
   elements.searchInput.addEventListener('focus', () => {
     showSearchHistory();
@@ -6669,6 +6853,15 @@ function handleBackgroundMessage(message) {
   console.log('[Canvascope] Background message:', message.type);
 
   switch (message.type) {
+    case 'importLectraProgress': {
+      const statusEl = document.getElementById('import-lectra-status');
+      if (statusEl && importLectra.busy) {
+        statusEl.textContent = `Importing ${message.done} of ${message.total} PDFs to Lectra…`;
+        statusEl.className = 'import-lectra-status';
+      }
+      break;
+    }
+
     case 'scanStarted':
       state.isScanning = true;
       showScanningStatus();

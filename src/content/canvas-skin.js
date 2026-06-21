@@ -43,6 +43,11 @@
   const STYLE_WIDGETS_ID = 'cs-skin-widgets';
   const BODY_ROOT_CLASS = 'cs-skin-root';
   const BODY_MODE_CLASS_PREFIX = 'cs-skin-mode-';
+  // Mirror of the last rendered CSS, replayed at document_start by
+  // skin-early.js to avoid a flash of stock Canvas before this idle-time
+  // script runs. Key/classes must match skin-early.js.
+  const SKIN_CSS_CACHE_KEY = 'cs-skin-css-cache-v1';
+  const EARLY_STYLE_ID = 'cs-skin-early';
   const PAGE_TITLE_ROW_CLASS = 'cs-skin-page-title-row';
   const PAGE_TITLE_SHELL_CLASS = 'cs-skin-page-title-shell';
   const PAGE_TITLE_TEXT_CLASS = 'cs-skin-page-title-text';
@@ -154,6 +159,29 @@
     if (el && el.parentNode) el.parentNode.removeChild(el);
   }
 
+  // Persist the currently-rendered skin CSS to the page-origin localStorage so
+  // skin-early.js can replay it before first paint on the next load. Concatenes
+  // every style block we emit; the early script injects it verbatim.
+  function persistSkinCssCache(mode) {
+    try {
+      const ids = [STYLE_VARS_ID, STYLE_RULES_ID, STYLE_CARDS_ID,
+                   STYLE_SIDEBAR_ID, STYLE_WIDGETS_ID];
+      let css = '';
+      for (const id of ids) {
+        const el = document.getElementById(id);
+        if (el && el.textContent) css += el.textContent + '\n';
+      }
+      localStorage.setItem(SKIN_CSS_CACHE_KEY,
+        JSON.stringify({ active: true, mode, css }));
+    } catch (_) { /* sandboxed / quota — skip caching */ }
+  }
+
+  function clearSkinCssCache() {
+    try {
+      localStorage.setItem(SKIN_CSS_CACHE_KEY, JSON.stringify({ active: false }));
+    } catch (_) { /* ignore */ }
+  }
+
   function hasOwnEntries(obj) {
     return !!obj && typeof obj === 'object' && Object.keys(obj).length > 0;
   }
@@ -225,6 +253,8 @@
     document.documentElement.classList.remove(BODY_ROOT_CLASS);
     document.documentElement.classList.remove(BODY_MODE_CLASS_PREFIX + 'light',
                                               BODY_MODE_CLASS_PREFIX + 'dark');
+    removeStyle(EARLY_STYLE_ID);
+    clearSkinCssCache();
     stopDarkFixer();
     stopContentContrastEnhancer();
     removeGradePills();
@@ -309,6 +339,11 @@
     // (computed-style heavy) enhancer has nothing to do without one.
     if (hasThemePaint(mode)) startContentContrastEnhancer();
     else stopContentContrastEnhancer();
+
+    // Authoritative styles are now in place: drop the pre-paint replay and
+    // refresh the cache so the next load paints themed before first frame.
+    removeStyle(EARLY_STYLE_ID);
+    persistSkinCssCache(mode);
   }
 
   // -------------------------------------------------------------------------
@@ -936,6 +971,17 @@ ${themesApi.buildCssVariables(merged)}
   background-color: transparent !important;
   color: var(--cs-skin-text) !important;
   border-bottom: 1px solid var(--cs-skin-border) !important;
+}
+/* New InstUI tables (e.g. the redesigned Files page) render an emotion-hashed
+   <thead class="css-XXX-head"> with a hard white background. Strip it so the
+   header row shows the themed page surface instead of a white band. */
+.${BODY_ROOT_CLASS} .ic-app-main-content thead[class*="css-"],
+.${BODY_ROOT_CLASS} .ic-app-main-content thead[class*="css-"] th {
+  background-color: transparent !important;
+  color: var(--cs-skin-text) !important;
+}
+.${BODY_ROOT_CLASS} .ic-app-main-content thead[class*="css-"] {
+  border-bottom: 1px solid var(--cs-skin-border-hi) !important;
 }
 .${BODY_ROOT_CLASS} .ic-Layout-contentMain .user_content img,
 .${BODY_ROOT_CLASS} .ic-Layout-contentMain .user_content svg,
@@ -2067,7 +2113,7 @@ ${themesApi.buildCssVariables(merged)}
       the main content area picks up a lighter cream bg from Canvas's default
       "surface" tokens. Force them transparent so the page bg shows through
       cleanly with no visible panels. -- */
-.${BODY_ROOT_CLASS} .ic-Layout-contentMain [class*="-view-"],
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain [class*="-view-"]:not([class*="avatar"]):not([class*="Avatar"]),
 .${BODY_ROOT_CLASS} .ic-Layout-contentMain [class*="-textInput__facade"],
 .${BODY_ROOT_CLASS} .ic-Layout-contentMain [class*="-baseButton__content"],
 .${BODY_ROOT_CLASS} .ic-Layout-contentMain .announcements-v2__wrapper,
@@ -2083,6 +2129,37 @@ ${themesApi.buildCssVariables(merged)}
 .${BODY_ROOT_CLASS} .ic-Layout-contentMain .grade-summary-content {
   background: transparent !important;
   background-color: transparent !important;
+}
+
+/* The redesigned discussions/announcements view (#discussion-redesign-layout)
+   renders OUTSIDE .ic-Layout-contentMain, so the resets above never reach it
+   and its InstUI <View> surfaces (the "View Split Screen / Collapse Threads"
+   toolbar, entry panels) stay hard white. Re-apply the same flatten here.
+   Note: InstUI uses both "-view-" (modifier) and a terminal "-view" base
+   class; catch both. Avatars keep their background-image. */
+.${BODY_ROOT_CLASS} .discussion-redesign-layout [class*="-view-"]:not([class*="avatar"]):not([class*="Avatar"]),
+.${BODY_ROOT_CLASS} .discussion-redesign-layout [class$="-view"] {
+  background: transparent !important;
+  background-color: transparent !important;
+}
+/* The redesign's InstUI buttons (View Split Screen / Collapse Threads) and
+   Select facades (All / Oldest First) keep InstUI's stock white/grey fills and
+   black borders here. Repaint them to the Paper surface + themed border so the
+   toolbar controls match the rest of the theme. */
+.${BODY_ROOT_CLASS} .discussion-redesign-layout [class*="-baseButton__content"] {
+  background: color-mix(in srgb, var(--cs-skin-surface), var(--cs-skin-text) 5%) !important;
+  border-color: var(--cs-skin-border-hi) !important;
+  color: var(--cs-skin-text) !important;
+}
+.${BODY_ROOT_CLASS} .discussion-redesign-layout [class*="-baseButton"] {
+  border-color: var(--cs-skin-border-hi) !important;
+}
+.${BODY_ROOT_CLASS} .discussion-redesign-layout [class*="-textInput__facade"] {
+  background: var(--cs-skin-surface) !important;
+  border-color: var(--cs-skin-border-hi) !important;
+}
+.${BODY_ROOT_CLASS} .discussion-redesign-layout [class*="-textInput"] {
+  color: var(--cs-skin-text) !important;
 }
 
 /* Score/grade highlight pills (the "5/5 pts" / "76/76 pts" highlighted

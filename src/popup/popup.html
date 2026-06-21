@@ -81,6 +81,14 @@
               </svg>
               <span>Send PDF to Lectra</span>
             </button>
+            <button id="cs-overflow-import-course" class="cs-overflow-item" role="menuitem" type="button" hidden>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+                <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+                <line x1="12" y1="11" x2="12" y2="17"></line>
+                <polyline points="9 14 12 17 15 14"></polyline>
+              </svg>
+              <span>Import course to Lectra</span>
+            </button>
             <div class="cs-overflow-divider" role="separator"></div>
             <button id="cs-overflow-signin" class="cs-overflow-item" role="menuitem" type="button">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
@@ -536,6 +544,32 @@
             <button class="help-chip" type="button" data-example-query="lab this week">lab this week</button>
             <button class="help-chip" type="button" data-example-query="assignment due today">assignment due today</button>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Import course to Lectra Modal -->
+    <div id="import-lectra-modal" class="browse-modal settings-modal hidden" role="dialog" aria-modal="true"
+      aria-labelledby="import-lectra-title">
+      <div class="browse-header">
+        <h2 id="import-lectra-title" class="browse-title">Import to Lectra</h2>
+        <button id="close-import-lectra" class="close-btn" type="button" aria-label="Close">×</button>
+      </div>
+      <div class="browse-content settings-modal-content">
+        <div class="settings-card">
+          <div class="settings-card-header">
+            <h3 id="import-lectra-course" class="settings-card-title">Course</h3>
+            <p class="settings-card-subtitle">Uncheck any subfolders you don't want to import. All PDFs in the rest of the course will be sent to your Lectra library.</p>
+          </div>
+          <div id="import-lectra-tree" class="import-lectra-tree" aria-live="polite">
+            <p class="import-lectra-state">Scanning course files…</p>
+          </div>
+        </div>
+        <div class="import-lectra-actions">
+          <span id="import-lectra-status" class="import-lectra-status" aria-live="polite"></span>
+          <button id="import-lectra-confirm" class="action-btn" type="button" disabled>
+            <span class="btn-text">Import to Lectra</span>
+          </button>
         </div>
       </div>
     </div>
