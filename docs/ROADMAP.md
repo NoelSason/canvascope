@@ -6,7 +6,7 @@
 - Hybrid local search (Fuse + lexical fusion)
 - Course-scoped queries + abbreviation expansion
 - Due planner + keyboard overlay
-- Optional Google sign-in
+- Optional Google sign-in with persistent Supabase sessions and no RISC event-driven forced sign-out
 - Lectra PDF handoff (`Send to Lectra`)
 - DropBridge v2 PDF transport for iPad pickup
 - Canvas `courseCatalog` + `courseSnapshots` sync for Lectra Course Brain

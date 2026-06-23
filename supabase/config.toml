@@ -149,7 +149,10 @@ enabled = true
 # in emails.
 site_url = "http://127.0.0.1:3000"
 # A list of *exact* URLs that auth providers are permitted to redirect to post authentication.
-additional_redirect_urls = ["https://127.0.0.1:3000", "chrome-extension://*/*"]
+# The extension signs in via chrome.identity.launchWebAuthFlow, whose redirect target is
+# https://<extension-id>.chromiumapp.org/ — that MUST be allow-listed or sign-in fails with
+# "Authorization page could not be loaded". The wildcard covers dev and prod extension IDs.
+additional_redirect_urls = ["https://127.0.0.1:3000", "chrome-extension://*/*", "https://*.chromiumapp.org/*", "https://mckinoonejeahldfmbehdbggoialdlnh.chromiumapp.org/*"]
 # How long tokens are valid for, in seconds. Defaults to 3600 (1 hour), maximum 604,800 (1 week).
 jwt_expiry = 3600
 # JWT issuer URL. If not set, defaults to the local API URL (http://127.0.0.1:<port>/auth/v1).
@@ -202,13 +205,13 @@ enable_signup = true
 # addresses. If disabled, only the new email is required to confirm.
 double_confirm_changes = true
 # If enabled, users need to confirm their email address before signing in.
-enable_confirmations = false
+enable_confirmations = true
 # If enabled, users will need to reauthenticate or have logged in recently to change their password.
 secure_password_change = false
 # Controls the minimum amount of time that must pass before sending another signup confirmation or password reset email.
-max_frequency = "1s"
+max_frequency = "1m0s"
 # Number of characters used in the email OTP.
-otp_length = 6
+otp_length = 8
 # Number of seconds before the email OTP expires (defaults to 1 hour).
 otp_expiry = 3600
 
@@ -260,11 +263,8 @@ max_frequency = "5s"
 # uri = "pg-functions://postgres/auth/before-user-created-hook"
 
 # This hook runs before a token is issued and allows you to add additional claims based on the authentication method used.
-# RISC sign-in enforcement: rejects token issuance for accounts flagged
-# signin_blocked by an account-disabled RISC event (fails open on error).
 [auth.hook.custom_access_token]
-enabled = true
-uri = "pg-functions://postgres/public/risc_enforce_signin_block"
+enabled = false
 
 # Configure one of the supported SMS providers: `twilio`, `twilio_verify`, `messagebird`, `textlocal`, `vonage`.
 [auth.sms.twilio]
@@ -301,14 +301,22 @@ max_frequency = "5s"
 # `discord`, `facebook`, `github`, `gitlab`, `google`, `keycloak`, `linkedin_oidc`, `notion`, `twitch`,
 # `twitter`, `x`, `slack`, `spotify`, `workos`, `zoom`.
 [auth.external.apple]
-enabled = false
-client_id = ""
-# DO NOT commit your OAuth provider secret to git. Use environment variable substitution instead:
+enabled = true
+# Apple Services ID. Hardcoded (it is public, not a secret) so `supabase config push`
+# stops re-disabling Apple sign-in by re-asserting the old enabled=false default.
+client_id = "com.canvascope.Lectra"
+# DO NOT commit your OAuth provider secret to git. Use environment variable substitution instead.
+# Left as an unset env ref on purpose: the CLI preserves the dashboard-managed secret on push.
 secret = "env(SUPABASE_AUTH_EXTERNAL_APPLE_SECRET)"
 
 [auth.external.google]
 enabled = true
-client_id = "env(SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID)"
+# Google OAuth client_id is public (also shipped in manifest.json). Hardcoded so that
+# `supabase config push` can never blank it out when SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID
+# is unset in the shell (that previously wrote a literal "env(...)" string and broke sign-in).
+client_id = "961806200943-6deqch1r87uthbarmr7te483u4h7fn9m.apps.googleusercontent.com"
+# Secret stays an env ref and is NEVER committed. The CLI leaves the remote secret untouched
+# when this var is unset, so the dashboard-managed secret is preserved across pushes.
 secret = "env(SUPABASE_AUTH_EXTERNAL_GOOGLE_SECRET)"
 # Overrides the default auth provider URL. Used to support self-hosted gitlab, single-tenant Azure,
 # or any other third-party OIDC providers.
@@ -395,10 +403,4 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.heartbeat-device-v2]
-verify_jwt = false
-
-# RISC (Cross-Account Protection) receiver. Google authenticates by signing the
-# Security Event Token in the body, not with a Supabase JWT, so JWT verification
-# must be off — the function validates the token signature itself.
-[functions.risc-receiver]
 verify_jwt = false

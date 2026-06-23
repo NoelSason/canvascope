@@ -23,7 +23,7 @@ Canvascope is a local-first Chrome extension for Canvas and Brightspace. It inde
 - Course-scoped search queries
 - Due date planner with dismissable tasks
 - Keyboard overlay (Cmd/Ctrl + K) on Canvas pages
-- Optional Google sign-in for account-linked sync features
+- Optional Google sign-in for account-linked sync features, using standard Supabase session persistence
 
 ### Local AI & Hybrid RAG Assistant
 - In-browser chat companion (offline Gemini Nano or online Supabase fallback)
@@ -177,6 +177,7 @@ bash scripts/add-school.sh https://yourschool.instructure.com
 - Search indexing is local-first.
 - LMS API calls are required for scanning and sync.
 - Supabase is used for account-linked features and Lectra PDF handoff.
+- Google Cross-Account Protection (RISC) is not wired into the extension; Canvascope does not consume Google RISC events or force sign-out from those events.
 - No analytics SDKs or ad trackers are included.
 
 Read the full policies:
