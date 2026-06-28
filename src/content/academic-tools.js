@@ -160,9 +160,21 @@
     }
   };
 
+  function parseNumberish(value) {
+    if (value == null || value === '') return NaN;
+    if (typeof value === 'number') return Number.isFinite(value) ? value : NaN;
+    const cleaned = String(value).trim().replace(/,/g, '').replace(/%$/, '');
+    const match = cleaned.match(/^[-+]?\d+(?:\.\d+)?/);
+    return match ? Number(match[0]) : NaN;
+  }
+
+  function normalizeLetter(letter) {
+    return String(letter || '').trim().toUpperCase().replace(/\s+/g, '');
+  }
+
   function percentToLetter(pct) {
-    if (pct == null || isNaN(pct)) return '';
-    const p = Number(pct);
+    const p = parseNumberish(pct);
+    if (!Number.isFinite(p)) return '';
     if (p >= 97) return 'A+'; if (p >= 93) return 'A';  if (p >= 90) return 'A-';
     if (p >= 87) return 'B+'; if (p >= 83) return 'B';  if (p >= 80) return 'B-';
     if (p >= 77) return 'C+'; if (p >= 73) return 'C';  if (p >= 70) return 'C-';
@@ -176,15 +188,17 @@
     let pts = 0, units = 0;
     for (const c of courses) {
       if (!c || c.excluded) continue;
-      const credits = Number(c.credits || 1);
+      const rawCredits = c.credits == null || c.credits === '' ? 1 : c.credits;
+      const credits = parseNumberish(rawCredits);
       if (!isFinite(credits) || credits <= 0) continue;
-      const letter = c.letter || percentToLetter(c.percent);
+      const letter = normalizeLetter(c.letter) || percentToLetter(c.percent);
       const base = table[letter];
       if (base == null) continue;
       let earned = base;
       if (weightedMode && c.weight) {
         // Honors +0.5, AP/IB +1.0. Convention varies; expose as numeric.
-        earned = Math.min(5.0, base + Number(c.weight));
+        const weight = parseNumberish(c.weight);
+        earned = Number.isFinite(weight) ? Math.min(5.0, base + weight) : base;
       }
       pts += earned * credits;
       units += credits;

@@ -57,6 +57,7 @@ test('percentToLetter maps boundary values correctly', () => {
   const api = loadAcademicTools();
   assert.ok(api, 'tools api attached to window');
   assert.equal(api.percentToLetter(100), 'A+');
+  assert.equal(api.percentToLetter('93%'), 'A');
   assert.equal(api.percentToLetter(97),  'A+');
   assert.equal(api.percentToLetter(96),  'A');
   assert.equal(api.percentToLetter(90),  'A-');
@@ -111,4 +112,18 @@ test('percent fallback derives the letter when none is provided', () => {
   const courses = [{ percent: 92, credits: 3 }]; // 92 → A- (3.7)
   const res = api.computeGpa(courses, 'college-4.0');
   assert.equal(res.gpa, 3.7);
+});
+
+test('computeGpa accepts student-entered string grades, credits, and weights', () => {
+  const api = loadAcademicTools();
+  const courses = [
+    { letter: ' a - ', credits: '3 units' },
+    { percent: '88%', credits: '1.5', weight: 'not a number' }
+  ];
+  const college = api.computeGpa(courses, 'college-4.0');
+  assert.equal(college.units, 4.5);
+  assert.equal(college.gpa, 3.567);
+
+  const weighted = api.computeGpa([{ letter: 'b+', credits: '2', weight: '0.5 honors' }], 'hs-5.0-weighted');
+  assert.equal(weighted.gpa, 3.8);
 });
