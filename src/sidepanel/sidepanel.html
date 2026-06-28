@@ -57,8 +57,8 @@
           <div class="turn-label">Canvascope</div>
           <div class="bubble-avatar"></div>
           <div class="bubble-content">
-            <p class="greeting-head">Ask anything across your course.</p>
-            <p id="intro-privacy-copy">I answer from your whole indexed library and the page you're viewing — with sources you can click. On-device AI is used when available; if cloud fallback is active, Canvascope says so before sending context.</p>
+            <p class="greeting-head">Ask anything across your course and code.</p>
+            <p id="intro-privacy-copy">I answer from your indexed library, active page, PDFs, and assignment context — with sources you can click. Use me to turn course material into study questions, runnable examples, and Lectra notes. On-device AI is used when available; if cloud fallback is active, Canvascope says so before sending context.</p>
           </div>
         </div>
       </div>
@@ -78,6 +78,10 @@
         <button class="btn-suggest" id="btn-suggest-quiz" data-prompt="Generate a 3-question conceptual quiz from this page context">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3"/><path d="M12 17h.01"/><circle cx="12" cy="12" r="10"/></svg>
           Quick Practice Quiz
+        </button>
+        <button class="btn-suggest" data-prompt="Explain this assignment like a CS study note: key concept, likely edge cases, and one small Python example if relevant">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 9 5 12l3 3"/><path d="m16 9 3 3-3 3"/><path d="m14 4-4 16"/></svg>
+          CS Study Note
         </button>
         <button id="btn-lectra-send" class="btn-suggest">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
