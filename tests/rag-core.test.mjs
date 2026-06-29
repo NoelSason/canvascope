@@ -96,6 +96,44 @@ test('RAGCore.hasScheduleIntent recognizes task/schedule questions', () => {
   assert.equal(RAGCore.hasScheduleIntent('explain the quadratic formula'), false);
 });
 
+test('RAGCore.hasProgrammingStudyIntent recognizes CS workflow questions cheaply', () => {
+  assert.equal(RAGCore.hasProgrammingStudyIntent('trace this algorithm and give edge cases'), true);
+  assert.equal(RAGCore.hasProgrammingStudyIntent('what pytest should I run from terminal?'), true);
+  assert.equal(RAGCore.hasProgrammingStudyIntent('summarize the reading due tomorrow'), false);
+});
+
+test('RAGCore.compileUnifiedPrompt adds runnable CS-answer guidance for programming questions', async () => {
+  const prevIndexed = mockStorage.indexedContent;
+  const prevUrl = mockTabUrl;
+  const prevScraped = mockScrapedResult;
+  mockTabUrl = 'https://google.com';
+  mockScrapedResult = '';
+  mockStorage.indexedContent = [
+    {
+      title: 'Sorting Notes',
+      courseName: 'CS 101',
+      type: 'file',
+      content: 'Merge sort splits arrays recursively and merges sorted halves in linear time.'
+    }
+  ];
+
+  try {
+    const { prompt } = await RAGCore.compileUnifiedPrompt('Explain merge sort Big-O with edge cases');
+    assert.ok(prompt.includes('tiny runnable example or pseudocode'));
+    assert.ok(prompt.includes('edge case/test'));
+    assert.ok(prompt.includes('Big-O or performance'));
+  } finally {
+    mockStorage.indexedContent = prevIndexed;
+    mockTabUrl = prevUrl;
+    mockScrapedResult = prevScraped;
+  }
+});
+
+test('RAGCore.compileUnifiedPrompt keeps non-code answers compact', async () => {
+  const { prompt } = await RAGCore.compileUnifiedPrompt('summarize the reading due tomorrow');
+  assert.ok(!prompt.includes('tiny runnable example or pseudocode'));
+});
+
 test('RAGCore.retrieveLocalContext surfaces tasks for schedule queries with no keyword match', async () => {
   // "what do I need to do?" does not lexically match any stored title/course,
   // but the context-aware fallback should still surface the pending to-do.
