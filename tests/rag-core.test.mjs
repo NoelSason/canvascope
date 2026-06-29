@@ -157,6 +157,36 @@ test('RAGCore.queryTokens drops duplicate filler words for faster local scoring'
   assert.deepEqual(RAGCore.queryTokens('Please explain explain the cache, cache locality with examples'), ['cache', 'locality', 'examples']);
 });
 
+test('RAGCore.buildChunkIndex reuses cached chunks until indexed metadata changes', async () => {
+  const prevIndexed = mockStorage.indexedContent;
+  mockStorage.indexedContent = [
+    {
+      title: 'Lecture 1 Notes',
+      courseName: 'CS 101',
+      type: 'file',
+      url: 'https://mit.instructure.com/files/lecture1.pdf',
+      content: 'Big-O notation and loop invariants.'
+    }
+  ];
+  RAGCore.chunkIndexCache.clear();
+
+  try {
+    const first = await RAGCore.buildChunkIndex('CS 101');
+    const second = await RAGCore.buildChunkIndex('CS 101');
+    assert.equal(second, first, 'unchanged corpus should hit the worker-local chunk cache');
+
+    mockStorage.indexedContent = [
+      { ...mockStorage.indexedContent[0], content: `${mockStorage.indexedContent[0].content} Extra theorem.` }
+    ];
+    const third = await RAGCore.buildChunkIndex('CS 101');
+    assert.notEqual(third, first, 'content length change should invalidate cached chunks');
+    assert.ok(third[0].text.includes('Extra theorem'));
+  } finally {
+    mockStorage.indexedContent = prevIndexed;
+    RAGCore.chunkIndexCache.clear();
+  }
+});
+
 test('RAGCore.compileStudyPackPrompt emits cited actionable Markdown sections', async () => {
   const prevIndexed = mockStorage.indexedContent;
   mockStorage.indexedContent = [

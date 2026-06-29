@@ -3,6 +3,8 @@
  * Scrapes page content and retrieves relevant local schedule/task context.
  */
 class RAGCore {
+  static chunkIndexCache = new Map();
+
   /**
    * Scrapes raw text from the active LMS browser tab, handling both HTML DOM and PDF documents natively.
    * @param {string} promptText - Optional user question for relevance-based page chunking
@@ -411,6 +413,10 @@ class RAGCore {
    */
   static async buildChunkIndex(courseName = '') {
     const corpus = await this.buildCorpus();
+    const cacheKey = this.chunkIndexCacheKey(corpus, courseName);
+    const cached = this.chunkIndexCache.get(cacheKey);
+    if (cached) return cached;
+
     const scope = courseName
       ? corpus.filter(i => (i.courseName || '').toLowerCase() === courseName.toLowerCase())
       : corpus;
@@ -435,7 +441,38 @@ class RAGCore {
         chunks.push({ ...base, page: null, text });
       }
     });
+    // Keep the cache tiny: it only spans repeated Ask/Brain calls within this
+    // extension worker lifetime, but avoids rebuilding thousands of PDF/page
+    // chunks while a student asks follow-up questions on the same course.
+    if (this.chunkIndexCache.size > 4) this.chunkIndexCache.clear();
+    this.chunkIndexCache.set(cacheKey, chunks);
     return chunks;
+  }
+
+  /**
+   * Lightweight signature for chunk-cache invalidation. It intentionally uses
+   * stable metadata plus text lengths/page counts instead of full PDF bodies, so
+   * a cache check is O(items) rather than O(total indexed characters).
+   * @param {Array} corpus
+   * @param {string} courseName
+   * @returns {string}
+   */
+  static chunkIndexCacheKey(corpus, courseName = '') {
+    const scope = String(courseName || '').toLowerCase();
+    const parts = corpus.map(item => {
+      const pages = Array.isArray(item.pages) ? item.pages.length : 0;
+      const contentLength = item.content ? String(item.content).length : 0;
+      return [
+        item.type || '',
+        item.courseName || '',
+        item.title || '',
+        item.url || '',
+        item.dueAt || '',
+        pages,
+        contentLength
+      ].join('\u001f');
+    }).join('\u001e');
+    return `${scope}\u001d${corpus.length}\u001d${parts}`;
   }
 
   /**
