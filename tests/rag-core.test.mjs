@@ -380,6 +380,30 @@ test('RAGCore.compileStudyPackPrompt emits cited actionable Markdown sections', 
   }
 });
 
+test('RAGCore.retrieveBrainChunks tolerates sparse chunk metadata without blocking Ask', async () => {
+  const prevIndexed = mockStorage.indexedContent;
+  mockStorage.indexedContent = [
+    {
+      title: 'Sparse PDF page',
+      type: 'file',
+      pages: [
+        { pageNum: 2, text: 'cache locality benchmark edge case notes' }
+      ]
+    }
+  ];
+  RAGCore.chunkIndexCache.clear();
+
+  try {
+    const chunks = await RAGCore.retrieveBrainChunks('cache benchmark edge case');
+    assert.equal(chunks.length, 1);
+    assert.equal(chunks[0].title, 'Sparse PDF page');
+    assert.equal(chunks[0].courseName, 'General');
+  } finally {
+    mockStorage.indexedContent = prevIndexed;
+    RAGCore.chunkIndexCache.clear();
+  }
+});
+
 test('RAGCore.compileUnifiedPrompt de-duplicates active page already present in indexed corpus', async () => {
   const prevIndexed = mockStorage.indexedContent;
   const prevUrl = mockTabUrl;

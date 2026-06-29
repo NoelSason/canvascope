@@ -594,17 +594,21 @@ class RAGCore {
 
     const tokens = this.queryTokens(question);
 
-    const lexical = chunks.map(chunk => {
+    const preparedChunks = chunks.map(chunk => ({
+      chunk,
+      titleLower: String(chunk.title || '').toLowerCase(),
+      courseLower: String(chunk.courseName || '').toLowerCase(),
+      textLower: String(chunk.text || '').toLowerCase()
+    }));
+
+    const lexical = preparedChunks.map(prepared => {
       let score = 0;
-      const titleLower = chunk.title.toLowerCase();
-      const courseLower = chunk.courseName.toLowerCase();
-      const textLower = chunk.text.toLowerCase();
       for (const token of tokens) {
-        if (titleLower.includes(token)) score += 10;
-        if (courseLower.includes(token)) score += 4;
-        if (textLower.includes(token)) score += 2;
+        if (prepared.titleLower.includes(token)) score += 10;
+        if (prepared.courseLower.includes(token)) score += 4;
+        if (prepared.textLower.includes(token)) score += 2;
       }
-      return { chunk, score };
+      return { chunk: prepared.chunk, score };
     });
 
     const strongMatches = lexical
