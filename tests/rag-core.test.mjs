@@ -153,6 +153,39 @@ test('RAGCore.retrieveLocalContext finds a closed PDF by a word in its body only
   }
 });
 
+test('RAGCore.compileStudyPackPrompt emits cited actionable Markdown sections', async () => {
+  const prevIndexed = mockStorage.indexedContent;
+  mockStorage.indexedContent = [
+    {
+      title: 'Lecture 4 Slides',
+      courseName: 'CS 101',
+      type: 'file',
+      url: 'https://mit.instructure.com/files/lecture4.pdf',
+      pages: [
+        { pageNum: 12, text: 'Cache locality improves performance by reusing nearby memory addresses and reducing cache misses.' },
+        { pageNum: 13, text: 'LRU replacement evicts the least recently used cache line when the cache is full.' }
+      ]
+    }
+  ];
+
+  try {
+    const { prompt, sources } = await RAGCore.compileStudyPackPrompt('cache locality and LRU', { courseName: 'CS 101' });
+
+    assert.equal(sources.length, 1);
+    assert.ok([12, 13].includes(sources[0].page));
+    assert.ok(prompt.includes('=== COURSE SOURCES (cite as [n]) ==='));
+    assert.ok(prompt.includes('[1] Lecture 4 Slides (CS 101 — page'));
+    assert.ok(prompt.includes('## Key Concepts'));
+    assert.ok(prompt.includes('## Likely Quiz Questions'));
+    assert.ok(prompt.includes('## Flashcards'));
+    assert.ok(prompt.includes('## Review Checklist'));
+    assert.ok(prompt.includes('preserve citation fidelity'));
+    assert.ok(prompt.includes('cache locality and LRU'));
+  } finally {
+    mockStorage.indexedContent = prevIndexed;
+  }
+});
+
 test('RAGCore.compileUnifiedPrompt de-duplicates active page already present in indexed corpus', async () => {
   const prevIndexed = mockStorage.indexedContent;
   const prevUrl = mockTabUrl;

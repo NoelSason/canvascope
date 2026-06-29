@@ -506,6 +506,46 @@ class RAGCore {
   }
 
   /**
+   * Compiles a citation-grounded Study Pack prompt from ranked course chunks.
+   * The output is intentionally structured for copy/paste into Lectra, Obsidian,
+   * Notion, or a Markdown doc, with every study action tied back to source
+   * numbers/pages. This gives students an actionable alternative to generic PDF
+   * chat without requiring a new retrieval path.
+   * @param {string} goal
+   * @param {{courseName?: string, limit?: number, charBudget?: number}} opts
+   * @returns {Promise<{prompt: string, sources: Array}>} sources are 1-indexed
+   *   {n, title, courseName, type, url, page} matching the [n] cite markers.
+   */
+  static async compileStudyPackPrompt(goal = 'Create a cited study pack for this material.', { courseName = '', limit = 8, charBudget = 7000 } = {}) {
+    const chunks = await this.retrieveBrainChunks(goal, { courseName, limit, charBudget });
+
+    const sources = chunks.map((chunk, i) => ({
+      n: i + 1,
+      title: chunk.title,
+      courseName: chunk.courseName,
+      type: chunk.type,
+      url: chunk.url,
+      page: chunk.page
+    }));
+
+    let prompt = '';
+    if (chunks.length > 0) {
+      prompt += `=== COURSE SOURCES (cite as [n]) ===\n`;
+      chunks.forEach((chunk, i) => {
+        const loc = chunk.page ? ` — page ${chunk.page}` : '';
+        const due = chunk.dueAt ? ` — due ${new Date(chunk.dueAt).toLocaleDateString()}` : '';
+        prompt += `[${i + 1}] ${chunk.title} (${chunk.courseName}${loc}${due})\n${chunk.text}\n\n`;
+      });
+    } else {
+      prompt += `=== COURSE SOURCES ===\n(No indexed course content matched this study-pack request${courseName ? ` in ${courseName}` : ''}. Say that Canvascope needs opened/indexed course files before it can make a cited pack.)\n\n`;
+    }
+
+    prompt += `=== STUDY PACK REQUEST ===\nBuild a concise Markdown study pack for the student. Use the exact sections below:\n# Study Pack\n## Key Concepts\n- 5 bullets max; each bullet must include an inline source citation like [1].\n## Likely Quiz Questions\n- 3 question/answer pairs; cite the source used for each answer.\n## Flashcards\n- 4 compact Q/A cards; include a Source: [n] line.\n## Review Checklist\n- 3 actionable checkbox items tied to the student's course material.\n## Confusing Points to Revisit\n- 2 items the student should ask about or re-read.\nRules: preserve citation fidelity, include page/slide numbers when the source metadata has them, quote a short evidence phrase when helpful, do not fabricate citations, and keep it easy to copy into Lectra or any Markdown notes app. Student goal: ${goal}`;
+
+    return { prompt, sources };
+  }
+
+  /**
    * Compiles a citation-grounded Course Brain prompt from ranked chunks.
    * @param {string} question
    * @param {{courseName?: string}} opts
