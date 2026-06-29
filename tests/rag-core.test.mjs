@@ -153,6 +153,10 @@ test('RAGCore.retrieveLocalContext finds a closed PDF by a word in its body only
   }
 });
 
+test('RAGCore.queryTokens drops duplicate filler words for faster local scoring', () => {
+  assert.deepEqual(RAGCore.queryTokens('Please explain explain the cache, cache locality with examples'), ['cache', 'locality', 'examples']);
+});
+
 test('RAGCore.compileStudyPackPrompt emits cited actionable Markdown sections', async () => {
   const prevIndexed = mockStorage.indexedContent;
   mockStorage.indexedContent = [
@@ -176,6 +180,8 @@ test('RAGCore.compileStudyPackPrompt emits cited actionable Markdown sections', 
     assert.ok(prompt.includes('=== COURSE SOURCES (cite as [n]) ==='));
     assert.ok(prompt.includes('[1] Lecture 4 Slides (CS 101 — page'));
     assert.ok(prompt.includes('## Key Concepts'));
+    assert.ok(prompt.includes('## Worked Examples & Edge Cases'));
+    assert.ok(prompt.includes('counterexamples the student can test'));
     assert.ok(prompt.includes('## Likely Quiz Questions'));
     assert.ok(prompt.includes('## Flashcards'));
     assert.ok(prompt.includes('## Review Checklist'));

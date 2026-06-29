@@ -126,6 +126,27 @@ class RAGCore {
   }
 
   /**
+   * Tokenizes a student query once per retrieval and drops filler words. This
+   * keeps Ask responsive on large local indexes by avoiding repeated regex work
+   * and reducing broad substring checks that would otherwise scan every stored
+   * PDF/page body for words like "what" or "the".
+   * @param {string} promptText
+   * @returns {Array<string>}
+   */
+  static queryTokens(promptText) {
+    const stopWords = new Set([
+      'about', 'after', 'again', 'also', 'answer', 'because', 'before', 'could',
+      'does', 'explain', 'from', 'have', 'into', 'need', 'please', 'show',
+      'should', 'that', 'the', 'their', 'there', 'these', 'this', 'what', 'when',
+      'where', 'which', 'with', 'would', 'your'
+    ]);
+    return [...new Set(String(promptText || '').toLowerCase()
+      .replace(/[^\w\s]/g, ' ')
+      .split(/\s+/)
+      .filter(w => w.length > 2 && !stopWords.has(w)))];
+  }
+
+  /**
    * Builds the unified, normalized corpus of all local study assets
    * (synced assignments, custom to-dos, and dashboard notes).
    * @returns {Promise<Array>} Normalized corpus items
@@ -194,11 +215,7 @@ class RAGCore {
       const searchCorpus = await this.buildCorpus();
       if (searchCorpus.length === 0) return [];
 
-      // Tokenize prompt, removing standard punctuation and filtering out short helper words
-      const tokens = promptText.toLowerCase()
-        .replace(/[^\w\s]/g, '')
-        .split(/\s+/)
-        .filter(w => w.length > 2);
+      const tokens = this.queryTokens(promptText);
 
       // 1. Lexical keyword scoring (precise matches for specific questions)
       const scoredItems = searchCorpus.map(item => {
@@ -433,10 +450,7 @@ class RAGCore {
     const chunks = await this.buildChunkIndex(courseName);
     if (chunks.length === 0) return [];
 
-    const tokens = question.toLowerCase()
-      .replace(/[^\w\s]/g, '')
-      .split(/\s+/)
-      .filter(w => w.length > 2);
+    const tokens = this.queryTokens(question);
 
     const lexical = chunks.map(chunk => {
       let score = 0;
@@ -540,7 +554,7 @@ class RAGCore {
       prompt += `=== COURSE SOURCES ===\n(No indexed course content matched this study-pack request${courseName ? ` in ${courseName}` : ''}. Say that Canvascope needs opened/indexed course files before it can make a cited pack.)\n\n`;
     }
 
-    prompt += `=== STUDY PACK REQUEST ===\nBuild a concise Markdown study pack for the student. Use the exact sections below:\n# Study Pack\n## Key Concepts\n- 5 bullets max; each bullet must include an inline source citation like [1].\n## Likely Quiz Questions\n- 3 question/answer pairs; cite the source used for each answer.\n## Flashcards\n- 4 compact Q/A cards; include a Source: [n] line.\n## Review Checklist\n- 3 actionable checkbox items tied to the student's course material.\n## Confusing Points to Revisit\n- 2 items the student should ask about or re-read.\nRules: preserve citation fidelity, include page/slide numbers when the source metadata has them, quote a short evidence phrase when helpful, do not fabricate citations, and keep it easy to copy into Lectra or any Markdown notes app. Student goal: ${goal}`;
+    prompt += `=== STUDY PACK REQUEST ===\nBuild a concise Markdown study pack for the student. Use the exact sections below:\n# Study Pack\n## Key Concepts\n- 5 bullets max; each bullet must include an inline source citation like [1].\n## Worked Examples & Edge Cases\n- 2 tiny examples or counterexamples the student can test; cite the source that motivates each one.\n## Likely Quiz Questions\n- 3 question/answer pairs; cite the source used for each answer.\n## Flashcards\n- 4 compact Q/A cards; include a Source: [n] line.\n## Review Checklist\n- 3 actionable checkbox items tied to the student's course material.\n## Confusing Points to Revisit\n- 2 items the student should ask about or re-read.\nRules: preserve citation fidelity, include page/slide numbers when the source metadata has them, quote a short evidence phrase when helpful, do not fabricate citations, and keep it easy to copy into Lectra or any Markdown notes app. Student goal: ${goal}`;
 
     return { prompt, sources };
   }
