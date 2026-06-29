@@ -292,6 +292,20 @@ class RAGCore {
   }
 
   /**
+   * Compact text used for semantic matching. Full PDF/page bodies can be many
+   * thousands of characters; vectorizing all of them on every keystroke makes Ask
+   * feel laggy. A short, stable preview keeps title/course/type context plus the
+   * start of the body where LMS pages usually put the topic and learning goal.
+   * @param {object} item
+   * @param {number} maxContentChars
+   * @returns {string}
+   */
+  static semanticPreviewText(item, maxContentChars = 600) {
+    const content = item && item.content ? String(item.content).slice(0, maxContentChars) : '';
+    return `${item?.title || ''} ${item?.courseName || ''} ${item?.type || ''} ${content}`.trim();
+  }
+
+  /**
    * Tokenizes user queries and queries local database storage using frequency word scoring.
    * Falls back to surfacing the user's upcoming/pending tasks when the query is clearly
    * about their schedule but doesn't lexically match a stored item (context-aware retrieval).
@@ -332,8 +346,7 @@ class RAGCore {
         
         if (hasConcepts) {
           const scoredSemantic = searchCorpus.map(item => {
-            const itemText = `${item.title} ${item.courseName} ${item.type} ${item.content || ''}`;
-            const itemVector = SemanticMatcher.vectorize(itemText);
+            const itemVector = SemanticMatcher.vectorize(this.semanticPreviewText(item));
             const similarity = SemanticMatcher.cosineSimilarity(queryVector, itemVector);
             return { item, similarity };
           });

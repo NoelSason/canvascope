@@ -227,6 +227,38 @@ test('RAGCore.scoreCorpusItem checks large content lazily after title/course tok
   assert.equal(score, 12);
 });
 
+test('RAGCore.semanticPreviewText caps body text for responsive semantic scoring', () => {
+  const preview = RAGCore.semanticPreviewText({
+    title: 'Graph Search Notes',
+    courseName: 'CS 101',
+    type: 'file',
+    content: 'a'.repeat(900)
+  });
+
+  assert.ok(preview.startsWith('Graph Search Notes CS 101 file '));
+  assert.equal(preview.includes('a'.repeat(650)), false);
+  assert.ok(preview.length <= 'Graph Search Notes CS 101 file '.length + 600);
+});
+
+test('RAGCore.semanticPreviewText keeps semantic topics near the front retrievable', async () => {
+  const prevIndexed = mockStorage.indexedContent;
+  mockStorage.indexedContent = [
+    {
+      title: 'Lecture 7 Concept Notes',
+      courseName: 'CS 101',
+      type: 'file',
+      content: `${'algorithm '.repeat(10)} ${'padding '.repeat(1000)}`
+    }
+  ];
+
+  try {
+    const matches = await RAGCore.retrieveLocalContext('runtime complexity algorithm');
+    assert.ok(matches.some(m => m.title === 'Lecture 7 Concept Notes'));
+  } finally {
+    mockStorage.indexedContent = prevIndexed;
+  }
+});
+
 test('RAGCore.contextBudgetSection gives cheap source-ledger diagnostics', () => {
   const section = RAGCore.contextBudgetSection([{ n: 1 }, { n: 2 }], 'a'.repeat(120), { label: 'Ask source ledger', targetTokenBudget: 20 });
   assert.ok(section.includes('=== ASK SOURCE LEDGER ==='));
