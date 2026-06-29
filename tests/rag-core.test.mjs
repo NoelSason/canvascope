@@ -195,6 +195,38 @@ test('RAGCore.queryTokens drops duplicate filler words for faster local scoring'
   assert.deepEqual(RAGCore.queryTokens('Please explain explain the cache, cache locality with examples'), ['cache', 'locality', 'examples']);
 });
 
+test('RAGCore.retrieveLocalContext skips body scans for filler-only non-schedule queries', async () => {
+  const prevIndexed = mockStorage.indexedContent;
+  const slowContent = {
+    toString() {
+      throw new Error('content should not be normalized for filler-only prompts');
+    }
+  };
+  mockStorage.indexedContent = [
+    {
+      title: 'Lecture Cache Notes',
+      courseName: 'CS 101',
+      type: 'file',
+      content: slowContent
+    }
+  ];
+
+  try {
+    const matches = await RAGCore.retrieveLocalContext('please explain this for me');
+    assert.deepEqual(matches, []);
+  } finally {
+    mockStorage.indexedContent = prevIndexed;
+  }
+});
+
+test('RAGCore.scoreCorpusItem checks large content lazily after title/course tokens', () => {
+  const score = RAGCore.scoreCorpusItem(
+    { title: 'Cache Lab', courseName: 'CS 101', content: 'LRU eviction benchmark notes' },
+    ['cache', 'lru']
+  );
+  assert.equal(score, 12);
+});
+
 test('RAGCore.contextBudgetSection gives cheap source-ledger diagnostics', () => {
   const section = RAGCore.contextBudgetSection([{ n: 1 }, { n: 2 }], 'a'.repeat(120), { label: 'Ask source ledger', targetTokenBudget: 20 });
   assert.ok(section.includes('=== ASK SOURCE LEDGER ==='));

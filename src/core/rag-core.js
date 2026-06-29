@@ -150,7 +150,7 @@ class RAGCore {
   static queryTokens(promptText) {
     const stopWords = new Set([
       'about', 'after', 'again', 'also', 'answer', 'because', 'before', 'could',
-      'does', 'explain', 'from', 'have', 'into', 'need', 'please', 'show',
+      'does', 'explain', 'for', 'from', 'have', 'into', 'need', 'please', 'show',
       'should', 'that', 'the', 'their', 'there', 'these', 'this', 'what', 'when',
       'where', 'which', 'with', 'would', 'your'
     ]);
@@ -246,6 +246,38 @@ class RAGCore {
   }
 
   /**
+   * Scores one corpus item for lexical retrieval without doing unnecessary
+   * document-body work. Title/course checks are cheap and often decisive for
+   * CS workflows (assignment names, repo names, PDF titles); large PDF bodies
+   * are lower priority and scanned only once per item.
+   * @param {object} item
+   * @param {Array<string>} tokens
+   * @returns {number}
+   */
+  static scoreCorpusItem(item, tokens) {
+    let score = 0;
+    const titleLower = String(item.title || '').toLowerCase();
+    const courseLower = String(item.courseName || '').toLowerCase();
+    let contentLower = null;
+
+    for (const token of tokens) {
+      if (titleLower.includes(token)) {
+        score += 10; // Exact match in title gets major priority
+      }
+      if (courseLower.includes(token)) {
+        score += 4;  // Match in course name gets secondary priority
+      }
+      if (item.content) {
+        contentLower = contentLower || String(item.content).toLowerCase();
+        if (contentLower.includes(token)) {
+          score += 2;  // Match in document body gets moderate priority
+        }
+      }
+    }
+    return score;
+  }
+
+  /**
    * Tokenizes user queries and queries local database storage using frequency word scoring.
    * Falls back to surfacing the user's upcoming/pending tasks when the query is clearly
    * about their schedule but doesn't lexically match a stored item (context-aware retrieval).
@@ -259,26 +291,18 @@ class RAGCore {
 
       const tokens = this.queryTokens(promptText);
 
-      // 1. Lexical keyword scoring (precise matches for specific questions)
-      const scoredItems = searchCorpus.map(item => {
-        let score = 0;
-        const titleLower = item.title.toLowerCase();
-        const courseLower = item.courseName.toLowerCase();
-        const contentLower = (item.content || '').toLowerCase();
+      // Queries like "what do I do next?" intentionally tokenize to almost
+      // nothing after filler-word removal. Skip expensive lexical/semantic body
+      // scans in that case and jump directly to the agenda fallback when useful.
+      if (tokens.length === 0) {
+        return this.hasScheduleIntent(promptText) ? this.getUpcomingItems(searchCorpus) : [];
+      }
 
-        for (const token of tokens) {
-          if (titleLower.includes(token)) {
-            score += 10; // Exact match in title gets major priority
-          }
-          if (courseLower.includes(token)) {
-            score += 4;  // Match in course name gets secondary priority
-          }
-          if (contentLower.includes(token)) {
-            score += 2;  // Match in document body gets moderate priority
-          }
-        }
-        return { item, score };
-      });
+      // 1. Lexical keyword scoring (precise matches for specific questions)
+      const scoredItems = searchCorpus.map(item => ({
+        item,
+        score: this.scoreCorpusItem(item, tokens)
+      }));
 
       const strongMatches = scoredItems
         .filter(x => x.score > 0)
