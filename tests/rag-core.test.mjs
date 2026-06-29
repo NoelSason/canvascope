@@ -195,6 +195,21 @@ test('RAGCore.queryTokens drops duplicate filler words for faster local scoring'
   assert.deepEqual(RAGCore.queryTokens('Please explain explain the cache, cache locality with examples'), ['cache', 'locality', 'examples']);
 });
 
+test('RAGCore.contextBudgetSection gives cheap source-ledger diagnostics', () => {
+  const section = RAGCore.contextBudgetSection([{ n: 1 }, { n: 2 }], 'a'.repeat(120), { label: 'Ask source ledger', targetTokenBudget: 20 });
+  assert.ok(section.includes('=== ASK SOURCE LEDGER ==='));
+  assert.ok(section.includes('Sources: 2'));
+  assert.ok(section.includes('120 chars / ~30 tokens'));
+  assert.ok(section.includes('large; narrow course/source scope'));
+});
+
+test('RAGCore.compileUnifiedPrompt includes source ledger diagnostics for scoped Ask', async () => {
+  const { prompt } = await RAGCore.compileUnifiedPrompt('Explain merge sort Big-O with edge cases');
+  assert.ok(prompt.includes('=== ASK SOURCE LEDGER ==='));
+  assert.ok(prompt.includes('approx context:'));
+  assert.ok(prompt.includes('Use this as a source ledger'));
+});
+
 test('RAGCore.buildChunkIndex reuses cached chunks until indexed metadata changes', async () => {
   const prevIndexed = mockStorage.indexedContent;
   mockStorage.indexedContent = [

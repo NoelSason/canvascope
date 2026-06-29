@@ -161,6 +161,34 @@ class RAGCore {
   }
 
   /**
+   * Cheap context diagnostics for prompts. This gives students and future UI
+   * surfaces a visible sense of how broad an Ask/Study Pack request is without
+   * doing tokenizer work on the hot path. Four chars/token is intentionally
+   * approximate but stable enough for fast budget warnings and telemetry.
+   * @param {string} text
+   * @returns {number}
+   */
+  static approximateTokenCount(text) {
+    return Math.ceil(String(text || '').length / 4);
+  }
+
+  /**
+   * Builds a compact, source-ledger style prompt section so generated notes can
+   * preserve provenance and users can spot slow/over-broad retrievals quickly.
+   * @param {Array} sources
+   * @param {string} body
+   * @param {{label?: string, targetTokenBudget?: number}} opts
+   * @returns {string}
+   */
+  static contextBudgetSection(sources, body, { label = 'Context budget', targetTokenBudget = 3000 } = {}) {
+    const sourceCount = Array.isArray(sources) ? sources.length : 0;
+    const chars = String(body || '').length;
+    const approxTokens = this.approximateTokenCount(body);
+    const status = approxTokens > targetTokenBudget ? 'large; narrow course/source scope if the answer feels slow' : 'focused';
+    return `=== ${label.toUpperCase()} ===\nSources: ${sourceCount}; approx context: ${chars} chars / ~${approxTokens} tokens; status: ${status}.\nUse this as a source ledger: cite only sources listed above, and mention when the answer uses general knowledge beyond them.\n\n`;
+  }
+
+  /**
    * Builds the unified, normalized corpus of all local study assets
    * (synced assignments, custom to-dos, and dashboard notes).
    * @returns {Promise<Array>} Normalized corpus items
@@ -603,6 +631,8 @@ class RAGCore {
       prompt += `=== COURSE SOURCES ===\n(No indexed course content matched this study-pack request${courseName ? ` in ${courseName}` : ''}. Say that Canvascope needs opened/indexed course files before it can make a cited pack.)\n\n`;
     }
 
+    prompt += this.contextBudgetSection(sources, prompt, { label: 'Study pack source ledger', targetTokenBudget: 2200 });
+
     prompt += `=== STUDY PACK REQUEST ===\nBuild a concise Markdown study pack for the student. Use the exact sections below:\n# Study Pack\n## Key Concepts\n- 5 bullets max; each bullet must include an inline source citation like [1].\n## Worked Examples & Edge Cases\n- 2 tiny examples or counterexamples the student can test; cite the source that motivates each one.\n## Likely Quiz Questions\n- 3 question/answer pairs; cite the source used for each answer.\n## Flashcards\n- 4 compact Q/A cards; include a Source: [n] line.\n## Review Checklist\n- 3 actionable checkbox items tied to the student's course material.\n## Confusing Points to Revisit\n- 2 items the student should ask about or re-read.\nRules: preserve citation fidelity, include page/slide numbers when the source metadata has them, quote a short evidence phrase when helpful, do not fabricate citations, and keep it easy to copy into Lectra or any Markdown notes app. Student goal: ${goal}`;
 
     return { prompt, sources };
@@ -699,6 +729,8 @@ class RAGCore {
     } else {
       prompt += `=== SOURCES ===\n(Nothing in the student's indexed course materials or active page matched this question. Answer from your general knowledge and mention that nothing in their indexed materials covered it — opening the relevant course files once lets Canvascope index them.)\n\n`;
     }
+
+    prompt += this.contextBudgetSection(sources, body, { label: 'Ask source ledger', targetTokenBudget: 3000 });
 
     const programmingInstructions = this.hasProgrammingStudyIntent(question)
       ? ' For programming/CS questions, include a tiny runnable example or pseudocode when useful, name at least one edge case/test, and call out Big-O or performance implications without over-explaining.'
