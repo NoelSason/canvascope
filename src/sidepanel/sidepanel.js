@@ -641,6 +641,34 @@ Style: concise (2-4 sentences or a short list). Use bold text, inline code backt
     return submitPrompt(`Create a 4-question practice quiz on the most important concepts in ${scopeLabel}. For each question give the answer on the next line in bold. Base every question on the sources.`);
   }
 
+  function createThrottledAnswerRenderer(bubbleContent, sources) {
+    let pendingMarkdown = '';
+    let frame = 0;
+
+    const flush = () => {
+      frame = 0;
+      if (bubbleContent.querySelector('.stream-loader')) bubbleContent.innerHTML = '';
+      bubbleContent.innerHTML = decorateCitations(parseSimpleMarkdown(pendingMarkdown), sources);
+      scrollViewport();
+    };
+
+    return {
+      push(markdown) {
+        pendingMarkdown = markdown;
+        if (frame) return;
+        frame = requestAnimationFrame(flush);
+      },
+      finish(markdown) {
+        pendingMarkdown = markdown;
+        if (frame) {
+          cancelAnimationFrame(frame);
+          frame = 0;
+        }
+        flush();
+      }
+    };
+  }
+
   /**
    * The single Ask flow: tab-aware + whole-corpus retrieval, profile-
    * personalized, with clickable [n] citations. Replaces the old split
@@ -677,16 +705,18 @@ Style: concise (2-4 sentences or a short list). Use bold text, inline code backt
       console.warn('[Canvascope Ask] Unified retrieval failed, falling back to raw prompt:', e);
     }
 
-    // 3. Stream the answer (AIRouter normalizes chunks to deltas).
+    // 3. Stream the answer (AIRouter normalizes chunks to deltas). Coalesce DOM
+    // writes to animation frames so long PDF/course answers do not reparse
+    // Markdown and re-render citations for every tiny token delta.
     let fullResponse = '';
+    const answerRenderer = createThrottledAnswerRenderer(bubbleContent, sources);
     try {
       for await (const delta of AIRouter.stream(fullPrompt, { system: systemWithProfile() })) {
-        if (bubbleContent.querySelector('.stream-loader')) bubbleContent.innerHTML = '';
         fullResponse += delta;
-        bubbleContent.innerHTML = decorateCitations(parseSimpleMarkdown(fullResponse), sources);
-        scrollViewport();
+        answerRenderer.push(fullResponse);
       }
       if (fullResponse.trim()) {
+        answerRenderer.finish(fullResponse);
         renderSourceChips(aiBubble, sources, bubbleContent);
       } else {
         bubbleContent.innerHTML = parseSimpleMarkdown('*No answer was generated. Try rephrasing the question.*');
