@@ -240,6 +240,13 @@ test('RAGCore.semanticPreviewText caps body text for responsive semantic scoring
   assert.ok(preview.length <= 'Graph Search Notes CS 101 file '.length + 600);
 });
 
+test('RAGCore.capSourceText trims oversized active page context with a speed hint', () => {
+  const capped = RAGCore.capSourceText('x'.repeat(200), 80);
+  assert.ok(capped.length < 220);
+  assert.ok(capped.startsWith('x'.repeat(80)));
+  assert.ok(capped.includes('truncated for speed'));
+});
+
 test('RAGCore.semanticPreviewText keeps semantic topics near the front retrievable', async () => {
   const prevIndexed = mockStorage.indexedContent;
   mockStorage.indexedContent = [
@@ -256,6 +263,33 @@ test('RAGCore.semanticPreviewText keeps semantic topics near the front retrievab
     assert.ok(matches.some(m => m.title === 'Lecture 7 Concept Notes'));
   } finally {
     mockStorage.indexedContent = prevIndexed;
+  }
+});
+
+test('RAGCore.compileUnifiedPrompt caps large active page excerpts before appending chunks', async () => {
+  const prevIndexed = mockStorage.indexedContent;
+  const prevUrl = mockTabUrl;
+  const prevScraped = mockScrapedResult;
+  mockTabUrl = 'https://mit.instructure.com/courses/2';
+  mockScrapedResult = 'ACTIVE-CONTEXT '.repeat(600);
+  mockStorage.indexedContent = [
+    {
+      title: 'Runtime Lab',
+      courseName: 'CS 101',
+      type: 'file',
+      content: 'algorithm complexity runtime benchmark notes'
+    }
+  ];
+
+  try {
+    const { prompt } = await RAGCore.compileUnifiedPrompt('runtime algorithm complexity');
+    assert.ok(prompt.includes('truncated for speed'));
+    assert.ok(prompt.includes('Runtime Lab'));
+    assert.ok(prompt.length < mockScrapedResult.length + 2000);
+  } finally {
+    mockStorage.indexedContent = prevIndexed;
+    mockTabUrl = prevUrl;
+    mockScrapedResult = prevScraped;
   }
 });
 

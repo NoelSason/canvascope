@@ -203,6 +203,20 @@ class RAGCore {
   }
 
   /**
+   * Bounds a source excerpt before it enters latency-sensitive prompts. Active
+   * pages and PDF snippets can dwarf the retrieved chunks; clipping at a stable
+   * boundary preserves citation usefulness while keeping Ask responsive.
+   * @param {string} text
+   * @param {number} maxChars
+   * @returns {string}
+   */
+  static capSourceText(text, maxChars = 4500) {
+    const value = String(text || '');
+    if (value.length <= maxChars) return value;
+    return `${value.slice(0, maxChars).trimEnd()}\n[Source excerpt truncated for speed; ask a narrower question or open the specific page for more context.]`;
+  }
+
+  /**
    * Builds the unified, normalized corpus of all local study assets
    * (synced assignments, custom to-dos, and dashboard notes).
    * @returns {Promise<Array>} Normalized corpus items
@@ -754,8 +768,9 @@ class RAGCore {
     if (pageContext) {
       const n = sources.length + 1;
       const title = (tab && tab.title) ? (tab.title.split(':').pop().trim() || tab.title) : 'Active page';
+      const boundedPageContext = this.capSourceText(pageContext);
       sources.push({ n, title, courseName: 'This page', type: 'page', url: (tab && tab.url) || '', page: null });
-      body += `[${n}] ${title} (the page the student is viewing right now)\n${pageContext}\n\n`;
+      body += `[${n}] ${title} (the page the student is viewing right now)\n${boundedPageContext}\n\n`;
     }
 
     // Ranked chunks from across the indexed corpus carry their own provenance.
