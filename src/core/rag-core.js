@@ -572,7 +572,14 @@ class RAGCore {
     }
 
     // Ranked chunks from across the indexed corpus carry their own provenance.
+    // If the active page is also indexed, skip the duplicate chunk to keep Ask
+    // prompts smaller, faster, and less confusing (one source number per page).
+    const seenSourceKeys = new Set(sources.map(source => this.normalizedSourceKey(source)));
     chunks.forEach((chunk) => {
+      const key = this.normalizedSourceKey(chunk);
+      if (key && seenSourceKeys.has(key)) return;
+      seenSourceKeys.add(key);
+
       const n = sources.length + 1;
       const loc = chunk.page ? ` — page ${chunk.page}` : '';
       const due = chunk.dueAt ? ` — due ${new Date(chunk.dueAt).toLocaleDateString()}` : '';
@@ -590,6 +597,33 @@ class RAGCore {
     prompt += `=== QUESTION ===\nAnswer the student's question. Ground claims in the numbered sources when they cover it, citing inline like [1] or [2] (source [1] is the page they are viewing, when present). When the sources only partially cover the topic — or are merely related — fill the gaps from your general knowledge (clear teaching beats refusing) and connect the explanation back to the sources and the student's goals where helpful. Only attach an [n] citation to a claim actually drawn from that source; never fabricate a citation. For facts specific to this course (due dates, grading, instructions) rely strictly on the sources and say so plainly if they are missing. Be concise (2-5 sentences or a short list). Question: ${question}`;
 
     return { prompt, sources };
+  }
+
+  /**
+   * Stable de-duplication key for prompt sources. Uses URL without query/hash
+   * plus page when available; falls back to course/title/type for local notes.
+   * @param {{url?: string, page?: number|null, title?: string, courseName?: string, type?: string}} source
+   * @returns {string}
+   */
+  static normalizedSourceKey(source) {
+    if (!source) return '';
+    const page = source.page || '';
+    if (source.url) {
+      try {
+        const url = new URL(source.url);
+        url.hash = '';
+        url.search = '';
+        return `url:${url.toString().toLowerCase()}#${page}`;
+      } catch (_) {
+        const clean = String(source.url).split('#')[0].split('?')[0].toLowerCase();
+        return `url:${clean}#${page}`;
+      }
+    }
+    const title = String(source.title || '').trim().toLowerCase();
+    if (!title) return '';
+    const course = String(source.courseName || '').trim().toLowerCase();
+    const type = String(source.type || '').trim().toLowerCase();
+    return `local:${type}|${course}|${title}#${page}`;
   }
 
   /**

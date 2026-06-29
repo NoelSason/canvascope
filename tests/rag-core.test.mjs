@@ -152,3 +152,36 @@ test('RAGCore.retrieveLocalContext finds a closed PDF by a word in its body only
     mockStorage.indexedContent = prevIndexed;
   }
 });
+
+test('RAGCore.compileUnifiedPrompt de-duplicates active page already present in indexed corpus', async () => {
+  const prevIndexed = mockStorage.indexedContent;
+  const prevUrl = mockTabUrl;
+  const prevTitle = mockTabTitle;
+  const prevScraped = mockScrapedResult;
+  mockTabUrl = 'https://mit.instructure.com/courses/2/pages/cache-systems?module_item_id=99';
+  mockTabTitle = 'CS 101: Cache Systems';
+  mockScrapedResult = 'Cache systems lecture page explains LRU and cache misses.';
+  mockStorage.indexedContent = [
+    {
+      title: 'Cache Systems',
+      courseName: 'CS 101',
+      type: 'page',
+      url: 'https://mit.instructure.com/courses/2/pages/cache-systems#top',
+      content: 'Cache systems lecture page explains LRU and cache misses.'
+    }
+  ];
+
+  try {
+    const { prompt, sources } = await RAGCore.compileUnifiedPrompt('Explain cache misses');
+
+    assert.equal(sources.length, 1, 'indexed duplicate should not be added as a second source');
+    assert.equal(sources[0].type, 'page');
+    assert.ok(prompt.includes('Cache systems lecture page explains LRU'));
+    assert.ok(!prompt.includes('[2] Cache Systems'), 'duplicate indexed source should not get a second citation number');
+  } finally {
+    mockStorage.indexedContent = prevIndexed;
+    mockTabUrl = prevUrl;
+    mockTabTitle = prevTitle;
+    mockScrapedResult = prevScraped;
+  }
+});
