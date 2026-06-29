@@ -189,6 +189,20 @@ class RAGCore {
   }
 
   /**
+   * Lightweight prompt-size guard for latency-sensitive Ask flows. The retriever
+   * already enforces a chunk budget, but active-page/PDF text is added outside
+   * that budget; this keeps the final prompt from ballooning when a PDF page and
+   * many course chunks are both relevant.
+   * @param {string} body
+   * @param {string} nextBlock
+   * @param {number} maxChars
+   * @returns {boolean}
+   */
+  static canAppendPromptBlock(body, nextBlock, maxChars = 12000) {
+    return String(body || '').length + String(nextBlock || '').length <= maxChars;
+  }
+
+  /**
    * Builds the unified, normalized corpus of all local study assets
    * (synced assignments, custom to-dos, and dashboard notes).
    * @returns {Promise<Array>} Normalized corpus items
@@ -657,7 +671,7 @@ class RAGCore {
 
     prompt += this.contextBudgetSection(sources, prompt, { label: 'Study pack source ledger', targetTokenBudget: 2200 });
 
-    prompt += `=== STUDY PACK REQUEST ===\nBuild a concise Markdown study pack for the student. Use the exact sections below:\n# Study Pack\n## Key Concepts\n- 5 bullets max; each bullet must include an inline source citation like [1].\n## Worked Examples & Edge Cases\n- 2 tiny examples or counterexamples the student can test; cite the source that motivates each one.\n## Likely Quiz Questions\n- 3 question/answer pairs; cite the source used for each answer.\n## Flashcards\n- 4 compact Q/A cards; include a Source: [n] line.\n## Review Checklist\n- 3 actionable checkbox items tied to the student's course material.\n## Confusing Points to Revisit\n- 2 items the student should ask about or re-read.\nRules: preserve citation fidelity, include page/slide numbers when the source metadata has them, quote a short evidence phrase when helpful, do not fabricate citations, and keep it easy to copy into Lectra or any Markdown notes app. Student goal: ${goal}`;
+    prompt += `=== STUDY PACK REQUEST ===\nBuild a concise Markdown study pack for the student. Use the exact sections below:\n# Study Pack\n## Key Concepts\n- 5 bullets max; each bullet must include an inline source citation like [1].\n## Worked Examples & Edge Cases\n- 2 tiny examples or counterexamples the student can test; cite the source that motivates each one.\n## Likely Quiz Questions\n- 3 question/answer pairs; cite the source used for each answer.\n## Flashcards\n- 4 compact Q/A cards; include a Source: [n] line.\n## Lectra Handoff\n- 2 bullets that say exactly what to paste into a Lectra notebook, including the source number and the runnable check/example to create.\n## Review Checklist\n- 3 actionable checkbox items tied to the student's course material.\n## Confusing Points to Revisit\n- 2 items the student should ask about or re-read.\nRules: preserve citation fidelity, include page/slide numbers when the source metadata has them, quote a short evidence phrase when helpful, do not fabricate citations, and keep it easy to copy into Lectra or any Markdown notes app. Student goal: ${goal}`;
 
     return { prompt, sources };
   }
@@ -743,7 +757,9 @@ class RAGCore {
       const n = sources.length + 1;
       const loc = chunk.page ? ` — page ${chunk.page}` : '';
       const due = chunk.dueAt ? ` — due ${new Date(chunk.dueAt).toLocaleDateString()}` : '';
-      body += `[${n}] ${chunk.title} (${chunk.courseName}${loc}${due})\n${chunk.text}\n\n`;
+      const block = `[${n}] ${chunk.title} (${chunk.courseName}${loc}${due})\n${chunk.text}\n\n`;
+      if (!this.canAppendPromptBlock(body, block) && sources.length > 0) return;
+      body += block;
       sources.push({ n, title: chunk.title, courseName: chunk.courseName, type: chunk.type, url: chunk.url, page: chunk.page });
     });
 

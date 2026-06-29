@@ -235,6 +235,11 @@ test('RAGCore.contextBudgetSection gives cheap source-ledger diagnostics', () =>
   assert.ok(section.includes('large; narrow course/source scope'));
 });
 
+test('RAGCore.canAppendPromptBlock caps latency-sensitive Ask context cheaply', () => {
+  assert.equal(RAGCore.canAppendPromptBlock('abc', 'def', 6), true);
+  assert.equal(RAGCore.canAppendPromptBlock('abc', 'defg', 6), false);
+});
+
 test('RAGCore.compileUnifiedPrompt includes source ledger diagnostics for scoped Ask', async () => {
   const { prompt } = await RAGCore.compileUnifiedPrompt('Explain merge sort Big-O with edge cases');
   assert.ok(prompt.includes('=== ASK SOURCE LEDGER ==='));
@@ -299,6 +304,8 @@ test('RAGCore.compileStudyPackPrompt emits cited actionable Markdown sections', 
     assert.ok(prompt.includes('counterexamples the student can test'));
     assert.ok(prompt.includes('## Likely Quiz Questions'));
     assert.ok(prompt.includes('## Flashcards'));
+    assert.ok(prompt.includes('## Lectra Handoff'));
+    assert.ok(prompt.includes('runnable check/example'));
     assert.ok(prompt.includes('## Review Checklist'));
     assert.ok(prompt.includes('preserve citation fidelity'));
     assert.ok(prompt.includes('cache locality and LRU'));
