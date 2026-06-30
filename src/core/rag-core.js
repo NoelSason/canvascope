@@ -476,12 +476,15 @@ class RAGCore {
 
     let compiledPrompt = '';
 
-    // 1. Inject Active tab scraped RAG context
+    // 1. Inject Active tab scraped RAG context. Bound the hot-path prompt
+    // just like the unified Ask flow so giant LMS pages/PDF viewers do not
+    // make classic RAG requests feel laggy before the model even answers.
     if (pageContext) {
-      if (pageContext.startsWith('=== ACTIVE PDF DOCUMENT PAGES ===')) {
-        compiledPrompt += `${pageContext}\n\n`;
+      const boundedPageContext = this.capSourceText(pageContext, 5000);
+      if (boundedPageContext.startsWith('=== ACTIVE PDF DOCUMENT PAGES ===')) {
+        compiledPrompt += `${boundedPageContext}\n\n`;
       } else {
-        compiledPrompt += `=== CONTEXT FROM THE ACTIVE PAGE ===\n${pageContext}\n\n`;
+        compiledPrompt += `=== CONTEXT FROM THE ACTIVE PAGE ===\n${boundedPageContext}\n\n`;
       }
     }
 

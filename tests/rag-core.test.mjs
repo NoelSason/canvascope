@@ -212,6 +212,22 @@ test('RAGCore.compileRAGPrompt formats active page context and scheduler context
   assert.ok(compiled.includes('What about Homework 10?'));
 });
 
+test('RAGCore.compileRAGPrompt caps oversized active page context for responsiveness', async () => {
+  const prevUrl = mockTabUrl;
+  const prevScraped = mockScrapedResult;
+  mockTabUrl = 'https://mit.instructure.com/courses/2/pages/huge-reading';
+  mockScrapedResult = 'Canvas reading '.repeat(600);
+
+  try {
+    const compiled = await RAGCore.compileRAGPrompt('summarize this page into study notes');
+    assert.ok(compiled.includes('Source excerpt truncated for speed'));
+    assert.ok(compiled.length < mockScrapedResult.length + 1200);
+  } finally {
+    mockTabUrl = prevUrl;
+    mockScrapedResult = prevScraped;
+  }
+});
+
 test('RAGCore.retrieveLocalContext finds a closed PDF by a word in its body only', async () => {
   // Simulate a PDF that DocumentParser.persistPdfToIndex saved into indexedContent:
   // the matching term ("chemoselectivity") appears ONLY in the body content, never the title.
