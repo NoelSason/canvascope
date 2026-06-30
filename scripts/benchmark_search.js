@@ -2,7 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 
-const Fuse = require('../lib/fuse.min.js');
+const Fuse = require('../src/lib/fuse.min.js');
 
 const RUNS = Number.parseInt(process.env.SEARCH_BENCH_RUNS || '15', 10);
 const COURSE_COUNT = 20;
@@ -95,7 +95,7 @@ function createSearchHarness(indexedContent) {
   context.self = context;
 
   vm.createContext(context);
-  vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'popup.js'), 'utf8'), context);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'src', 'popup', 'popup.js'), 'utf8'), context);
 
   vm.runInContext(`
     const stub = () => ({

@@ -265,6 +265,7 @@ class RAGCore {
           dueAt: note.createdAt || null,
           url: '',
           type: 'note',
+          content: note.content || '',
           done: false
         });
       }
@@ -536,10 +537,13 @@ class RAGCore {
         dueAt: item.dueAt || null
       };
       if (Array.isArray(item.pages) && item.pages.length > 0) {
-        item.pages.forEach(page => {
-          const text = (page && page.text) ? String(page.text) : '';
+        item.pages.forEach((page, index) => {
+          const text = typeof page === 'string'
+            ? page
+            : (page && page.text) ? String(page.text) : '';
           if (!text.trim()) return;
-          chunks.push({ ...base, page: page.pageNum || null, text: text.substring(0, 1500) });
+          const pageNumber = typeof page === 'string' ? index + 1 : (page.pageNum || index + 1);
+          chunks.push({ ...base, page: pageNumber, text: text.substring(0, 1500) });
         });
       } else {
         const text = (item.content || '').substring(0, 1500);
@@ -566,6 +570,15 @@ class RAGCore {
     const scope = String(courseName || '').toLowerCase();
     const parts = corpus.map(item => {
       const pages = Array.isArray(item.pages) ? item.pages.length : 0;
+      const pageSignature = Array.isArray(item.pages)
+        ? item.pages.map(page => {
+            const text = typeof page === 'string'
+              ? page
+              : (page && page.text) ? String(page.text) : '';
+            const pageNum = typeof page === 'string' ? '' : (page && page.pageNum) || '';
+            return `${pageNum}:${text.length}`;
+          }).join(',')
+        : '';
       const contentLength = item.content ? String(item.content).length : 0;
       return [
         item.type || '',
@@ -574,6 +587,7 @@ class RAGCore {
         item.url || '',
         item.dueAt || '',
         pages,
+        pageSignature,
         contentLength
       ].join('\u001f');
     }).join('\u001e');

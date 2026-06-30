@@ -83,6 +83,13 @@ test('RAGCore.retrieveLocalContext matches both custom to-dos and dashboard note
   assert.equal(matchesNote[0].type, 'note');
 });
 
+test('RAGCore.retrieveLocalContext finds dashboard notes by body-only details', async () => {
+  const matches = await RAGCore.retrieveLocalContext('prof 3pm');
+  assert.equal(matches.length, 1);
+  assert.equal(matches[0].title, 'Office Hours Memo');
+  assert.equal(matches[0].type, 'note');
+});
+
 test('RAGCore.retrieveLocalContext returns empty array for non-matching queries', async () => {
   const matches = await RAGCore.retrieveLocalContext('Cooking lasagna recipe');
   assert.equal(matches.length, 0);
@@ -377,6 +384,40 @@ test('RAGCore.compileStudyPackPrompt emits cited actionable Markdown sections', 
     assert.ok(prompt.includes('cache locality and LRU'));
   } finally {
     mockStorage.indexedContent = prevIndexed;
+  }
+});
+
+test('RAGCore.compileStudyPackPrompt cites persisted string PDF pages', async () => {
+  const prevIndexed = mockStorage.indexedContent;
+  mockStorage.indexedContent = [
+    {
+      title: 'Project 2 Spec',
+      courseName: 'CS 101',
+      type: 'file',
+      url: 'https://mit.instructure.com/files/project2.pdf',
+      pages: [
+        'Implement Dijkstra with a priority queue and document runtime complexity.',
+        'Submit tests covering disconnected graphs and equal-weight edges.'
+      ]
+    }
+  ];
+  RAGCore.chunkIndexCache.clear();
+
+  try {
+    const chunks = await RAGCore.buildChunkIndex('CS 101');
+    const specChunks = chunks.filter(chunk => chunk.title === 'Project 2 Spec');
+    assert.equal(specChunks.length, 2);
+    assert.deepEqual(specChunks.map(chunk => chunk.page), [1, 2]);
+
+    const { prompt, sources } = await RAGCore.compileStudyPackPrompt('dijkstra runtime disconnected graphs', { courseName: 'CS 101' });
+
+    assert.equal(sources.length, 1);
+    assert.ok([1, 2].includes(sources[0].page));
+    assert.ok(prompt.includes('Project 2 Spec (CS 101 — page'));
+    assert.ok(prompt.includes(sources[0].page === 1 ? 'priority queue' : 'disconnected graphs'));
+  } finally {
+    mockStorage.indexedContent = prevIndexed;
+    RAGCore.chunkIndexCache.clear();
   }
 });
 
