@@ -152,6 +152,19 @@ class RAGCore {
   }
 
   /**
+   * Detects note-making requests that should produce portable, citation-led
+   * Markdown instead of a loose chat answer. This targets the common student
+   * workflow of turning an open PDF/page into concepts, examples, pitfalls, and
+   * Lectra-ready notes in one pass.
+   * @param {string} promptText
+   * @returns {boolean}
+   */
+  static hasStudyNotesIntent(promptText) {
+    const q = (promptText || '').toLowerCase();
+    return /\b(study notes?|note[- ]?taking|make notes?|summari[sz]e.+notes?|key concepts?|concept map|worked examples?|edge cases?|pitfalls?|flashcards?|cite|citation|source-backed|lectra handoff)\b/.test(q);
+  }
+
+  /**
    * Tokenizes a student query once per retrieval and drops filler words. This
    * keeps Ask responsive on large local indexes by avoiding repeated regex work
    * and reducing broad substring checks that would otherwise scan every stored
@@ -847,7 +860,10 @@ class RAGCore {
     const assignmentBriefInstructions = this.hasAssignmentBriefIntent(question)
       ? ' For assignment/lab pre-brief requests, structure the answer as: Objective, Deliverables, Constraints/Rubric, Files or commands to inspect/run, Edge cases/traps, and a Lectra handoff checklist. Keep every course-specific item cited.'
       : '';
-    prompt += `=== QUESTION ===\nAnswer the student's question. Ground claims in the numbered sources when they cover it, citing inline like [1] or [2] (source [1] is the page they are viewing, when present). When the sources only partially cover the topic — or are merely related — fill the gaps from your general knowledge (clear teaching beats refusing) and connect the explanation back to the sources and the student's goals where helpful. Only attach an [n] citation to a claim actually drawn from that source; never fabricate a citation. For facts specific to this course (due dates, grading, instructions) rely strictly on the sources and say so plainly if they are missing.${programmingInstructions}${assignmentBriefInstructions} Be concise (2-5 sentences or a short list). Question: ${question}`;
+    const studyNotesInstructions = this.hasStudyNotesIntent(question)
+      ? ' For study-note requests, output portable Markdown with: Key Concepts, Worked Example or Edge Case, Evidence/Citations, and Lectra Handoff. Keep bullets short so they paste cleanly into a notebook.'
+      : '';
+    prompt += `=== QUESTION ===\nAnswer the student's question. Ground claims in the numbered sources when they cover it, citing inline like [1] or [2] (source [1] is the page they are viewing, when present). When the sources only partially cover the topic — or are merely related — fill the gaps from your general knowledge (clear teaching beats refusing) and connect the explanation back to the sources and the student's goals where helpful. Only attach an [n] citation to a claim actually drawn from that source; never fabricate a citation. For facts specific to this course (due dates, grading, instructions) rely strictly on the sources and say so plainly if they are missing.${programmingInstructions}${assignmentBriefInstructions}${studyNotesInstructions} Be concise (2-5 sentences or a short list). Question: ${question}`;
 
     return { prompt, sources };
   }

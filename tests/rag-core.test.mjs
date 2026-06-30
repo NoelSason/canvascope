@@ -115,6 +115,36 @@ test('RAGCore.hasAssignmentBriefIntent recognizes lab handoff requests cheaply',
   assert.equal(RAGCore.hasAssignmentBriefIntent('explain binary search complexity'), false);
 });
 
+test('RAGCore.hasStudyNotesIntent recognizes portable cited note requests cheaply', () => {
+  assert.equal(RAGCore.hasStudyNotesIntent('make study notes with key concepts and citations'), true);
+  assert.equal(RAGCore.hasStudyNotesIntent('create a Lectra handoff from this PDF'), true);
+  assert.equal(RAGCore.hasStudyNotesIntent('what assignments are due tomorrow?'), false);
+});
+
+test('RAGCore.compileUnifiedPrompt adds portable Markdown guidance for study-note requests', async () => {
+  const prevIndexed = mockStorage.indexedContent;
+  const prevUrl = mockTabUrl;
+  mockTabUrl = 'https://google.com';
+  mockStorage.indexedContent = [
+    {
+      title: 'Cache Locality Lecture',
+      courseName: 'CS 101',
+      type: 'file',
+      content: 'Spatial locality improves cache hit rates when programs access nearby memory addresses.'
+    }
+  ];
+
+  try {
+    const { prompt } = await RAGCore.compileUnifiedPrompt('make study notes with a worked example and citations');
+    assert.ok(prompt.includes('portable Markdown'));
+    assert.ok(prompt.includes('Evidence/Citations'));
+    assert.ok(prompt.includes('Lectra Handoff'));
+  } finally {
+    mockStorage.indexedContent = prevIndexed;
+    mockTabUrl = prevUrl;
+  }
+});
+
 test('RAGCore.compileUnifiedPrompt adds runnable CS-answer guidance for programming questions', async () => {
   const prevIndexed = mockStorage.indexedContent;
   const prevUrl = mockTabUrl;
