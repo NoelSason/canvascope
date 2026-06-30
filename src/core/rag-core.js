@@ -899,10 +899,15 @@ class RAGCore {
         dueAt: item.dueAt || null
       };
       if (Array.isArray(item.pages) && item.pages.length > 0) {
-        item.pages.forEach(page => {
-          const text = (page && page.text) ? String(page.text) : '';
+        item.pages.forEach((page, index) => {
+          const text = typeof page === 'string'
+            ? page
+            : (page && page.text) ? String(page.text) : '';
           if (!text.trim()) return;
-          chunks.push({ ...base, page: page.pageNum || null, text });
+          const pageNumber = typeof page === 'string'
+            ? index + 1
+            : (page.pageNum || index + 1);
+          chunks.push({ ...base, page: pageNumber, text });
         });
       } else {
         const text = (item.content || '').trim();

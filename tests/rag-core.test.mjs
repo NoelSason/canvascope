@@ -434,6 +434,34 @@ test('RAGCore.compileStudyPackPrompt cites persisted string PDF pages', async ()
   }
 });
 
+test('RAGCore.compileCourseCorpus includes persisted string PDF pages', async () => {
+  const prevIndexed = mockStorage.indexedContent;
+  mockStorage.indexedContent = [
+    {
+      title: 'Project 2 Spec',
+      courseName: 'CS 101',
+      type: 'file',
+      url: 'https://mit.instructure.com/files/project2.pdf',
+      pages: [
+        'Implement Dijkstra with a priority queue and document runtime complexity.',
+        'Submit tests covering disconnected graphs and equal-weight edges.'
+      ]
+    }
+  ];
+
+  try {
+    const { corpus, sources } = await RAGCore.compileCourseCorpus('CS 101');
+
+    const specSources = sources.filter(source => source.title === 'Project 2 Spec');
+    assert.equal(specSources.length, 2);
+    assert.deepEqual(specSources.map(source => source.page), [1, 2]);
+    assert.ok(corpus.includes('Dijkstra'));
+    assert.ok(corpus.includes('disconnected graphs'));
+  } finally {
+    mockStorage.indexedContent = prevIndexed;
+  }
+});
+
 test('RAGCore.retrieveBrainChunks tolerates sparse chunk metadata without blocking Ask', async () => {
   const prevIndexed = mockStorage.indexedContent;
   mockStorage.indexedContent = [
