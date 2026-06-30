@@ -132,6 +132,34 @@ test('DocumentParser.scoreDocumentPages is resilient to pasted repeated prompts'
   assert.equal(fallback[2].text, null);
 });
 
+test('DocumentParser.scoreDocumentPages caches semantic page vectors for follow-up questions', () => {
+  const pages = [
+    'Lecture notes on dynamic programming memoization recurrence examples.',
+    'PDF notes about graph traversal, breadth first search, and depth first search.'
+  ];
+  const originalVectorize = SemanticMatcher.vectorize;
+  let pageVectorizations = 0;
+  SemanticMatcher.vectorize = (text) => {
+    if (pages.includes(text)) {
+      pageVectorizations += 1;
+    }
+    return originalVectorize.call(SemanticMatcher, text);
+  };
+  DocumentParser._pageVectorCache = new Map();
+
+  try {
+    DocumentParser.scoreDocumentPages(pages, 'lecture notes dynamic programming memoization');
+    const afterFirstQuestion = pageVectorizations;
+    DocumentParser.scoreDocumentPages(pages, 'pdf notes graph traversal');
+    assert.equal(pageVectorizations, afterFirstQuestion);
+  } finally {
+    SemanticMatcher.vectorize = originalVectorize;
+  }
+
+  assert.equal(pageVectorizations, 2);
+  assert.ok(DocumentParser._pageVectorCache.size >= 2);
+});
+
 test('DocumentParser.persistPdfToIndex saves PDF persistently to indexedContent', async () => {
   mockStorage = { indexedContent: [] };
   const mockUrl = 'https://ucla.edu/syllabus.pdf';

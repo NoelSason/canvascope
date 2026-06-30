@@ -211,6 +211,35 @@ class DocumentParser {
   }
 
   /**
+   * Returns a cached semantic vector for page text. Students often ask several
+   * follow-up questions against the same PDF or Canvas page; memoizing page
+   * vectors avoids re-tokenizing every page for each prompt while keeping query
+   * vectors fresh. The cache is intentionally small and keyed by a compact text
+   * signature so long readings do not create unbounded memory pressure.
+   */
+  static semanticVectorForPage(text) {
+    if (typeof SemanticMatcher === 'undefined') return null;
+    if (!this._pageVectorCache) this._pageVectorCache = new Map();
+
+    const safeText = String(text || '');
+    const key = `${safeText.length}:${safeText.slice(0, 80)}:${safeText.slice(-80)}`;
+    if (this._pageVectorCache.has(key)) {
+      return this._pageVectorCache.get(key);
+    }
+
+    const vector = SemanticMatcher.vectorize(safeText);
+    this._pageVectorCache.set(key, vector);
+
+    // Keep memory bounded during long course/PDF sessions.
+    if (this._pageVectorCache.size > 200) {
+      const oldestKey = this._pageVectorCache.keys().next().value;
+      this._pageVectorCache.delete(oldestKey);
+    }
+
+    return vector;
+  }
+
+  /**
    * Lexically & conceptually scores parsed pages against prompt text and returns the top 3 matches using RRF.
    * @param {Array<string>} pages - Extracted text per page
    * @param {string} promptText - User query question
@@ -258,8 +287,8 @@ class DocumentParser {
 
       if (hasConcepts) {
         const scoredSemantic = pages.map((text, idx) => {
-          const pageVector = SemanticMatcher.vectorize(text);
-          const similarity = SemanticMatcher.cosineSimilarity(queryVector, pageVector);
+          const pageVector = this.semanticVectorForPage(text);
+          const similarity = pageVector ? SemanticMatcher.cosineSimilarity(queryVector, pageVector) : 0;
           return { pageNum: idx + 1, text, similarity };
         });
 
