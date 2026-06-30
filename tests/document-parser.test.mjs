@@ -72,6 +72,26 @@ test('DocumentParser.extractTextFromPdf extracts page-by-page text content', asy
   assert.ok(pagesText[1].includes('Biodiesel'));
 });
 
+test('DocumentParser.extractTextFromPdf supports page ranges and progress callbacks for large PDFs', async () => {
+  const progress = [];
+  const pagesText = await DocumentParser.extractTextFromPdf(new ArrayBuffer(10), {
+    startPage: 2,
+    endPage: 3,
+    onProgress: (event) => progress.push(event)
+  });
+
+  assert.equal(pagesText.length, 2);
+  assert.ok(pagesText[0].includes('page 2'));
+  assert.ok(pagesText[1].includes('page 3'));
+  assert.deepEqual(progress.map(event => event.pageNum), [2, 3]);
+  assert.deepEqual(progress.map(event => event.total), [2, 2]);
+});
+
+test('DocumentParser.normalizePageSelection clamps and de-duplicates explicit PDF scopes', () => {
+  assert.deepEqual(DocumentParser.normalizePageSelection(5, { pages: [4, 2, 2, 99, -3] }), [1, 2, 4, 5]);
+  assert.deepEqual(DocumentParser.normalizePageSelection(3, { startPage: 3, endPage: 2 }), [2, 3]);
+});
+
 test('DocumentParser.fetchAndParsePdf utilizes storage caches', async () => {
   mockStorage = {};
   const mockUrl = 'https://mit.edu/syllabus.pdf';
@@ -95,6 +115,30 @@ test('DocumentParser.fetchAndParsePdf utilizes storage caches', async () => {
   globalThis.fetch = () => { throw new Error('Fetch should have been bypassed!'); };
   const pages2 = await DocumentParser.fetchAndParsePdf(mockUrl);
   assert.equal(pages2.length, 3);
+});
+
+test('DocumentParser.fetchAndParsePdf keeps scoped PDF cache separate from full index', async () => {
+  mockStorage = { indexedContent: [] };
+  const mockUrl = 'https://mit.edu/large-textbook.pdf';
+  let fetches = 0;
+  globalThis.fetch = async () => {
+    fetches += 1;
+    return {
+      ok: true,
+      arrayBuffer: async () => new ArrayBuffer(20)
+    };
+  };
+
+  const scoped = await DocumentParser.fetchAndParsePdf(mockUrl, 'Large Textbook', 'CS 101', { startPage: 2, endPage: 2 });
+  assert.equal(scoped.length, 1);
+  assert.equal(fetches, 1);
+  assert.equal(mockStorage.indexedContent.length, 0);
+  assert.ok(mockStorage['doc_cache_pdf:https://mit.edu/large-textbook.pdf:range:2-2']);
+  assert.equal(mockStorage['doc_cache_pdf:https://mit.edu/large-textbook.pdf'], undefined);
+
+  const cachedScoped = await DocumentParser.fetchAndParsePdf(mockUrl, 'Large Textbook', 'CS 101', { startPage: 2, endPage: 2 });
+  assert.equal(cachedScoped.length, 1);
+  assert.equal(fetches, 1);
 });
 
 test('DocumentParser.scoreDocumentPages ranks relevant pages and chunks appropriately', () => {

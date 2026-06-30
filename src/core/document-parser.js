@@ -9,7 +9,7 @@ class DocumentParser {
    * @param {ArrayBuffer} arrayBuffer - The PDF binary buffer
    * @returns {Promise<Array<string>>} List of text strings per page
    */
-  static async extractTextFromPdf(arrayBuffer) {
+  static async extractTextFromPdf(arrayBuffer, options = {}) {
     const pdfjsLib = window.pdfjsLib;
     if (!pdfjsLib) {
       throw new Error('PDF.js library is not loaded on this page.');
@@ -20,15 +20,23 @@ class DocumentParser {
 
     const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
     const pagesText = [];
+    const selectedPages = this.normalizePageSelection(pdf.numPages, options);
+    const ocrPageBudget = Number.isFinite(options.ocrPageBudget)
+      ? Math.max(0, options.ocrPageBudget)
+      : 12;
+    let ocrPagesUsed = 0;
 
-    for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+    for (const pageNum of selectedPages) {
       try {
         const page = await pdf.getPage(pageNum);
         const textContent = await page.getTextContent();
         let pageText = textContent.items.map(item => item.str).join(' ').trim();
         
-        // OCR Fallback: if page contains very little text (e.g. scanned image PDF)
-        if (pageText.length < 50) {
+        // OCR Fallback: if page contains very little text (e.g. scanned image PDF).
+        // Cap automatic OCR so long scanned textbooks do not freeze the side panel;
+        // callers can request a smaller page range and retry for citations.
+        if (pageText.length < 50 && ocrPagesUsed < ocrPageBudget) {
+          ocrPagesUsed += 1;
           console.log(`[Canvascope DocumentParser] Low selectable text on page ${pageNum} (${pageText.length} chars). Triggering local OCR...`);
           try {
             if (typeof document === 'undefined') {
@@ -69,12 +77,18 @@ class DocumentParser {
           } catch (ocrErr) {
             console.warn(`[Canvascope DocumentParser] OCR failed on page ${pageNum}:`, ocrErr);
           }
+        } else if (pageText.length < 50 && ocrPagesUsed >= ocrPageBudget) {
+          console.warn(`[Canvascope DocumentParser] Skipping OCR for page ${pageNum}; OCR page budget exhausted.`);
         }
 
         pagesText.push(pageText);
       } catch (err) {
         console.warn(`[Canvascope DocumentParser] Failed to extract page ${pageNum}:`, err);
-        pagesText.push(''); // Keep index offset aligned
+        pagesText.push(''); // Keep selected-page offset aligned
+      } finally {
+        if (typeof options.onProgress === 'function') {
+          options.onProgress({ pageNum, processed: pagesText.length, total: selectedPages.length, pdfPages: pdf.numPages });
+        }
       }
     }
 
@@ -82,13 +96,55 @@ class DocumentParser {
   }
 
   /**
+   * Converts caller PDF scope options into a compact list of 1-based pages.
+   * Large-PDF workflows can request current page / page ranges so Canvascope can
+   * produce useful cited notes without parsing an entire textbook first.
+   */
+  static normalizePageSelection(totalPages, options = {}) {
+    const clamp = (value) => Math.min(totalPages, Math.max(1, Number.parseInt(value, 10)));
+    if (!Number.isFinite(totalPages) || totalPages <= 0) return [];
+
+    if (Array.isArray(options.pages) && options.pages.length > 0) {
+      return [...new Set(options.pages.map(clamp))].sort((a, b) => a - b);
+    }
+
+    const hasStart = Number.isFinite(options.startPage);
+    const hasEnd = Number.isFinite(options.endPage);
+    if (hasStart || hasEnd) {
+      const start = clamp(hasStart ? options.startPage : 1);
+      const end = clamp(hasEnd ? options.endPage : start);
+      const lo = Math.min(start, end);
+      const hi = Math.max(start, end);
+      return Array.from({ length: hi - lo + 1 }, (_, index) => lo + index);
+    }
+
+    return Array.from({ length: totalPages }, (_, index) => index + 1);
+  }
+
+  static hasPdfScope(options = {}) {
+    return (Array.isArray(options.pages) && options.pages.length > 0)
+      || Number.isFinite(options.startPage)
+      || Number.isFinite(options.endPage);
+  }
+
+  static pdfScopeCacheKey(options = {}) {
+    if (Array.isArray(options.pages) && options.pages.length > 0) {
+      return `pages:${[...new Set(options.pages.map(page => Number.parseInt(page, 10)).filter(Number.isFinite))].sort((a, b) => a - b).join(',')}`;
+    }
+    const start = Number.isFinite(options.startPage) ? Number.parseInt(options.startPage, 10) : '';
+    const end = Number.isFinite(options.endPage) ? Number.parseInt(options.endPage, 10) : '';
+    return `range:${start}-${end}`;
+  }
+
+  /**
    * Fetches a PDF as an ArrayBuffer, caches it locally in chrome.storage.local, parses it, and indexes it persistently.
    * @param {string} url - The PDF URL to parse
    * @param {string} titleHint - Optional title hint for indexing
    * @param {string} courseHint - Optional course name hint for indexing
+   * @param {object} options - Optional parsing scope: pages, startPage, endPage, ocrPageBudget, onProgress
    * @returns {Promise<Array<string>>} Page-by-page text content
    */
-  static async fetchAndParsePdf(url, titleHint = null, courseHint = null) {
+  static async fetchAndParsePdf(url, titleHint = null, courseHint = null, options = {}) {
     try {
       if (!url) return [];
 
@@ -96,8 +152,14 @@ class DocumentParser {
       const cleanUrl = url.split('?')[0].split('#')[0];
       const docId = `pdf:${cleanUrl}`;
 
-      // Check storage cache
-      const cacheKey = `doc_cache_${docId}`;
+      const scopedParse = this.hasPdfScope(options);
+
+      // Check storage cache. Full-document parses keep the historical key; scoped
+      // parses use a separate key so a quick current-page read never poisons the
+      // complete-PDF cache used by course indexing.
+      const cacheKey = scopedParse
+        ? `doc_cache_${docId}:${this.pdfScopeCacheKey(options)}`
+        : `doc_cache_${docId}`;
       const cache = await chrome.storage.local.get([cacheKey]);
       let pagesText = null;
 
@@ -112,15 +174,17 @@ class DocumentParser {
         }
 
         const arrayBuffer = await response.arrayBuffer();
-        pagesText = await this.extractTextFromPdf(arrayBuffer);
+        pagesText = await this.extractTextFromPdf(arrayBuffer, options);
 
         // Cache the parsed pages
         await chrome.storage.local.set({ [cacheKey]: pagesText });
         console.log(`[Canvascope DocumentParser] Successfully cached ${pagesText.length} pages for PDF`);
       }
 
-      // Persistently index this PDF to indexedContent
-      if (pagesText && pagesText.length > 0) {
+      // Persistently index only complete PDFs. Scoped extracts are latency-first
+      // previews for current-page/page-range study and do not contain enough page
+      // positions to replace the course corpus safely.
+      if (!scopedParse && pagesText && pagesText.length > 0) {
         await this.persistPdfToIndex(url, titleHint, courseHint, pagesText);
       }
 
