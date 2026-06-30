@@ -518,3 +518,41 @@ test('RAGCore.compileUnifiedPrompt de-duplicates active page already present in 
     mockScrapedResult = prevScraped;
   }
 });
+
+test('RAGCore.compileUnifiedPrompt de-duplicates active PDF against indexed page chunks', async () => {
+  const prevIndexed = mockStorage.indexedContent;
+  const prevUrl = mockTabUrl;
+  const prevTitle = mockTabTitle;
+  const prevScraped = mockScrapedResult;
+  mockTabUrl = 'https://mit.instructure.com/files/cache-notes.pdf?download=1';
+  mockTabTitle = 'CS 101: Cache Notes PDF';
+  mockScrapedResult = '=== ACTIVE PDF DOCUMENT PAGES ===\nFile: cache-notes.pdf\n--- Page 1 ---\nLRU cache notes and benchmark traps.';
+  mockStorage.indexedContent = [
+    {
+      title: 'Cache Notes PDF',
+      courseName: 'CS 101',
+      type: 'file',
+      url: 'https://mit.instructure.com/files/cache-notes.pdf#page=1',
+      pages: [
+        { pageNum: 1, text: 'LRU cache notes and benchmark traps.' },
+        { pageNum: 2, text: 'Cache locality examples and edge cases.' }
+      ]
+    }
+  ];
+  RAGCore.chunkIndexCache.clear();
+
+  try {
+    const { prompt, sources } = await RAGCore.compileUnifiedPrompt('cache locality LRU benchmark traps');
+
+    assert.equal(sources.length, 1, 'active PDF should not be repeated once per indexed page');
+    assert.equal(sources[0].type, 'page');
+    assert.ok(prompt.includes('ACTIVE PDF DOCUMENT PAGES'));
+    assert.ok(!prompt.includes('[2] Cache Notes PDF'), 'indexed PDF pages should not inflate the active-document prompt');
+  } finally {
+    mockStorage.indexedContent = prevIndexed;
+    mockTabUrl = prevUrl;
+    mockTabTitle = prevTitle;
+    mockScrapedResult = prevScraped;
+    RAGCore.chunkIndexCache.clear();
+  }
+});

@@ -810,9 +810,17 @@ class RAGCore {
     // If the active page is also indexed, skip the duplicate chunk to keep Ask
     // prompts smaller, faster, and less confusing (one source number per page).
     const seenSourceKeys = new Set(sources.map(source => this.normalizedSourceKey(source)));
+    const activeDocumentKeys = new Set(
+      sources
+        .filter(source => source.type === 'page' && source.url)
+        .map(source => this.normalizedDocumentSourceKey(source))
+        .filter(Boolean)
+    );
     chunks.forEach((chunk) => {
       const key = this.normalizedSourceKey(chunk);
       if (key && seenSourceKeys.has(key)) return;
+      const documentKey = this.normalizedDocumentSourceKey(chunk);
+      if (documentKey && activeDocumentKeys.has(documentKey)) return;
       seenSourceKeys.add(key);
 
       const n = sources.length + 1;
@@ -869,6 +877,33 @@ class RAGCore {
     const course = String(source.courseName || '').trim().toLowerCase();
     const type = String(source.type || '').trim().toLowerCase();
     return `local:${type}|${course}|${title}#${page}`;
+  }
+
+  /**
+   * Coarser de-duplication key for active-page/PDF prompts. An opened PDF may
+   * scrape several pages into source [1] while the indexed corpus has one chunk
+   * per page; comparing without page keeps those chunks from duplicating the
+   * active document and inflating Ask latency.
+   * @param {{url?: string, title?: string, courseName?: string, type?: string}} source
+   * @returns {string}
+   */
+  static normalizedDocumentSourceKey(source) {
+    if (!source) return '';
+    if (source.url) {
+      try {
+        const url = new URL(source.url);
+        url.hash = '';
+        url.search = '';
+        return `url:${url.toString().toLowerCase()}`;
+      } catch (_) {
+        return `url:${String(source.url).split('#')[0].split('?')[0].toLowerCase()}`;
+      }
+    }
+    const title = String(source.title || '').trim().toLowerCase();
+    if (!title) return '';
+    const course = String(source.courseName || '').trim().toLowerCase();
+    const type = String(source.type || '').trim().toLowerCase();
+    return `local:${type}|${course}|${title}`;
   }
 
   /**
