@@ -145,10 +145,27 @@ class DocumentParser {
       const fullText = pagesText.join('\n').trim();
       const filename = cleanUrl.split('/').pop() || 'document.pdf';
       const cleanTitle = title || filename;
+      const cleanCourseName = courseName || 'General';
+      const existing = existingIdx !== -1 ? indexedContent[existingIdx] : null;
+
+      // Re-parsing the same PDF can happen on page focus, Ask retries, and Study
+      // Pack generation. If nothing student-visible changed, skip the storage
+      // write so large PDF indexes do not churn extension storage or bump
+      // indexedAt ordering, which keeps the side panel responsive on big courses.
+      if (existing &&
+          existing.title === cleanTitle &&
+          existing.courseName === cleanCourseName &&
+          existing.content === fullText &&
+          Array.isArray(existing.pages) &&
+          existing.pages.length === pagesText.length &&
+          existing.pages.every((page, idx) => page === pagesText[idx])) {
+        console.log('[Canvascope DocumentParser] Indexed PDF unchanged; skipped storage rewrite:', cleanTitle);
+        return;
+      }
 
       const pdfIndexItem = {
         title: cleanTitle,
-        courseName: courseName || 'General',
+        courseName: cleanCourseName,
         url: url,
         type: 'file',
         content: fullText, // Save full text in item's content field

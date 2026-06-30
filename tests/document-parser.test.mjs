@@ -146,3 +146,37 @@ test('DocumentParser.persistPdfToIndex saves PDF persistently to indexedContent'
   assert.equal(indexed[0].content, 'Page 1 outline.\nPage 2 schedule.');
   assert.deepEqual(indexed[0].pages, pagesText);
 });
+
+test('DocumentParser.persistPdfToIndex skips identical PDF rewrites', async () => {
+  let writes = 0;
+  const existing = {
+    title: 'Algorithms Notes',
+    courseName: 'CS 101',
+    url: 'https://ucla.edu/algorithms.pdf?download=1',
+    type: 'file',
+    content: 'Page 1 graph search.\nPage 2 dynamic programming.',
+    pages: ['Page 1 graph search.', 'Page 2 dynamic programming.'],
+    indexedAt: 12345
+  };
+  mockStorage = { indexedContent: [existing] };
+  const originalSet = chrome.storage.local.set;
+  chrome.storage.local.set = async (obj) => {
+    writes += 1;
+    return originalSet(obj);
+  };
+
+  try {
+    await DocumentParser.persistPdfToIndex(
+      'https://ucla.edu/algorithms.pdf?download=2',
+      'Algorithms Notes',
+      'CS 101',
+      ['Page 1 graph search.', 'Page 2 dynamic programming.']
+    );
+  } finally {
+    chrome.storage.local.set = originalSet;
+  }
+
+  assert.equal(writes, 0);
+  assert.equal(mockStorage.indexedContent.length, 1);
+  assert.equal(mockStorage.indexedContent[0].indexedAt, 12345);
+});
