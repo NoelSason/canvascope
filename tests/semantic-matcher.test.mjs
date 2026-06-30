@@ -18,6 +18,7 @@ test('SemanticMatcher.vectorize generates normalized concept vectors', () => {
   assert.equal(emptyVec.MATERIAL, 0);
   assert.equal(emptyVec.TIME, 0);
   assert.equal(emptyVec.COMMUNICATION, 0);
+  assert.equal(emptyVec.COMPUTING, 0);
 
   // Synonyms of EVALUATION
   const evalVec = SemanticMatcher.vectorize('midterm quiz final exam');
@@ -33,6 +34,15 @@ test('SemanticMatcher.vectorize generates normalized concept vectors', () => {
   }
   const len = Math.sqrt(sumSq);
   assert.ok(Math.abs(len - 1.0) < 1e-6, 'Vector should be normalized to length 1.0');
+});
+
+test('SemanticMatcher.vectorize recognizes computing coursework and protects cached vectors', () => {
+  const first = SemanticMatcher.vectorize('debug Python notebook from GitHub repo in terminal');
+  assert.ok(first.COMPUTING > 0, 'CS workflow terms should map to the computing dimension');
+  first.COMPUTING = 0;
+
+  const second = SemanticMatcher.vectorize('debug Python notebook from GitHub repo in terminal');
+  assert.ok(second.COMPUTING > 0, 'cached vectors should be returned as defensive copies');
 });
 
 test('SemanticMatcher.cosineSimilarity computes similarity index', () => {

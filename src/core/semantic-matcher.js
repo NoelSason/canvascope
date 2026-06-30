@@ -5,12 +5,44 @@
  */
 class SemanticMatcher {
   static get DIMENSIONS() {
-    return {
-      EVALUATION: ['exam', 'quiz', 'test', 'midterm', 'final', 'grading', 'assessment', 'score', 'points', 'grade'],
-      MATERIAL: ['slides', 'lecture', 'reading', 'paper', 'syllabus', 'deck', 'textbook', 'worksheet', 'document', 'pdf', 'notes'],
-      TIME: ['due', 'deadline', 'date', 'calendar', 'schedule', 'when', 'overdue', 'time', 'upcoming', 'next'],
-      COMMUNICATION: ['email', 'zoom', 'office hours', 'professor', 'ta', 'contact', 'question', 'help', 'instructor', 'officehours']
-    };
+    if (!this._dimensions) {
+      this._dimensions = Object.freeze({
+        EVALUATION: Object.freeze(['exam', 'quiz', 'test', 'midterm', 'final', 'grading', 'assessment', 'score', 'points', 'grade']),
+        MATERIAL: Object.freeze(['slides', 'lecture', 'reading', 'paper', 'syllabus', 'deck', 'textbook', 'worksheet', 'document', 'pdf', 'notes']),
+        TIME: Object.freeze(['due', 'deadline', 'date', 'calendar', 'schedule', 'when', 'overdue', 'time', 'upcoming', 'next']),
+        COMMUNICATION: Object.freeze(['email', 'zoom', 'office hours', 'professor', 'ta', 'contact', 'question', 'help', 'instructor', 'officehours']),
+        COMPUTING: Object.freeze(['code', 'coding', 'programming', 'python', 'notebook', 'jupyter', 'github', 'repo', 'terminal', 'algorithm', 'debug', 'function'])
+      });
+    }
+    return this._dimensions;
+  }
+
+  static get VECTOR_CACHE_LIMIT() {
+    return 250;
+  }
+
+  static cloneVector(vector) {
+    return Array.isArray(vector) ? vector.slice() : { ...vector };
+  }
+
+  static cachedVector(cacheKey) {
+    if (!this._vectorCache) return null;
+    const cached = this._vectorCache.get(cacheKey);
+    if (!cached) return null;
+    // Refresh insertion order for a tiny LRU so repeated Canvas searches stay hot.
+    this._vectorCache.delete(cacheKey);
+    this._vectorCache.set(cacheKey, cached);
+    return this.cloneVector(cached);
+  }
+
+  static rememberVector(cacheKey, vector) {
+    if (!this._vectorCache) this._vectorCache = new Map();
+    this._vectorCache.set(cacheKey, this.cloneVector(vector));
+    while (this._vectorCache.size > this.VECTOR_CACHE_LIMIT) {
+      const oldestKey = this._vectorCache.keys().next().value;
+      this._vectorCache.delete(oldestKey);
+    }
+    return this.cloneVector(vector);
   }
 
   /**
@@ -20,11 +52,18 @@ class SemanticMatcher {
    * @returns {Array<number>|Record<string, number>} Vector representation
    */
   static vectorize(text) {
-    if (typeof window !== 'undefined' && window.LocalEmbeddings) {
-      return window.LocalEmbeddings.generateFallbackEmbedding(text);
+    const normalizedText = String(text || '');
+    const hasWindowEmbeddings = typeof window !== 'undefined' && window.LocalEmbeddings;
+    const hasGlobalEmbeddings = typeof globalThis !== 'undefined' && globalThis.LocalEmbeddings;
+    const cacheKey = `${hasWindowEmbeddings || hasGlobalEmbeddings ? 'dense' : 'concept'}:${normalizedText}`;
+    const cached = this.cachedVector(cacheKey);
+    if (cached) return cached;
+
+    if (hasWindowEmbeddings) {
+      return this.rememberVector(cacheKey, window.LocalEmbeddings.generateFallbackEmbedding(normalizedText));
     }
-    if (typeof globalThis !== 'undefined' && globalThis.LocalEmbeddings) {
-      return globalThis.LocalEmbeddings.generateFallbackEmbedding(text);
+    if (hasGlobalEmbeddings) {
+      return this.rememberVector(cacheKey, globalThis.LocalEmbeddings.generateFallbackEmbedding(normalizedText));
     }
 
     const vector = {};
@@ -35,10 +74,10 @@ class SemanticMatcher {
       vector[key] = 0;
     }
 
-    if (!text) return vector;
+    if (!normalizedText) return this.rememberVector(cacheKey, vector);
 
     // Tokenize text into words
-    const tokens = text.toLowerCase()
+    const tokens = normalizedText.toLowerCase()
       .replace(/[^\w\s]/g, ' ')
       .split(/\s+/)
       .filter(w => w.length > 2);
@@ -66,7 +105,7 @@ class SemanticMatcher {
       }
     }
 
-    return vector;
+    return this.rememberVector(cacheKey, vector);
   }
 
   /**
