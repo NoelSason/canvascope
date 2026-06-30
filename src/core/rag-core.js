@@ -140,6 +140,18 @@ class RAGCore {
   }
 
   /**
+   * Detects lab/assignment pre-brief requests. These benefit from an actionable
+   * handoff format rather than a generic explanation: objective, deliverables,
+   * constraints, commands/files, edge cases, and a Lectra-ready checklist.
+   * @param {string} promptText
+   * @returns {boolean}
+   */
+  static hasAssignmentBriefIntent(promptText) {
+    const q = (promptText || '').toLowerCase();
+    return /\b(pre-?brief|assignment brief|lab brief|project brief|study plan|action checklist|deliverables?|rubric|starter files?|spec|handoff|turn this into notes|what should i do first)\b/.test(q);
+  }
+
+  /**
    * Tokenizes a student query once per retrieval and drops filler words. This
    * keeps Ask responsive on large local indexes by avoiding repeated regex work
    * and reducing broad substring checks that would otherwise scan every stored
@@ -755,7 +767,10 @@ class RAGCore {
     const programmingInstructions = this.hasProgrammingStudyIntent(question)
       ? ' For programming/CS questions, include a tiny runnable example or pseudocode when useful, name at least one edge case or test, and call out Big-O/performance implications without over-explaining.'
       : '';
-    prompt += `=== QUESTION ===\nAnswer the student's question. Ground claims in the numbered sources when they cover it, citing inline like [1] or [2]. When the sources only partially cover the topic (or are merely related, e.g. labs on the concept), fill the gaps from your general knowledge — clearly grounded teaching is better than refusing — and connect the explanation back to the course materials where helpful. Only attach [n] citations to claims actually drawn from the sources; never fabricate a citation. For facts specific to this course (due dates, grading, instructions), rely strictly on the sources and say so if they're missing.${programmingInstructions} Be concise (2-5 sentences or a short list). Question: ${question}`;
+    const assignmentBriefInstructions = this.hasAssignmentBriefIntent(question)
+      ? ' For assignment/lab pre-brief requests, structure the answer as: Objective, Deliverables, Constraints/Rubric, Files or commands to inspect/run, Edge cases/traps, and a Lectra handoff checklist. Keep every course-specific item cited.'
+      : '';
+    prompt += `=== QUESTION ===\nAnswer the student's question. Ground claims in the numbered sources when they cover it, citing inline like [1] or [2]. When the sources only partially cover the topic (or are merely related, e.g. labs on the concept), fill the gaps from your general knowledge — clearly grounded teaching is better than refusing — and connect the explanation back to the course materials where helpful. Only attach [n] citations to claims actually drawn from the sources; never fabricate a citation. For facts specific to this course (due dates, grading, instructions), rely strictly on the sources and say so if they're missing.${programmingInstructions}${assignmentBriefInstructions} Be concise (2-5 sentences or a short list). Question: ${question}`;
 
     return { prompt, sources };
   }
@@ -821,7 +836,10 @@ class RAGCore {
     const programmingInstructions = this.hasProgrammingStudyIntent(question)
       ? ' For programming/CS questions, include a tiny runnable example or pseudocode when useful, name at least one edge case/test, and call out Big-O or performance implications without over-explaining.'
       : '';
-    prompt += `=== QUESTION ===\nAnswer the student's question. Ground claims in the numbered sources when they cover it, citing inline like [1] or [2] (source [1] is the page they are viewing, when present). When the sources only partially cover the topic — or are merely related — fill the gaps from your general knowledge (clear teaching beats refusing) and connect the explanation back to the sources and the student's goals where helpful. Only attach an [n] citation to a claim actually drawn from that source; never fabricate a citation. For facts specific to this course (due dates, grading, instructions) rely strictly on the sources and say so plainly if they are missing.${programmingInstructions} Be concise (2-5 sentences or a short list). Question: ${question}`;
+    const assignmentBriefInstructions = this.hasAssignmentBriefIntent(question)
+      ? ' For assignment/lab pre-brief requests, structure the answer as: Objective, Deliverables, Constraints/Rubric, Files or commands to inspect/run, Edge cases/traps, and a Lectra handoff checklist. Keep every course-specific item cited.'
+      : '';
+    prompt += `=== QUESTION ===\nAnswer the student's question. Ground claims in the numbered sources when they cover it, citing inline like [1] or [2] (source [1] is the page they are viewing, when present). When the sources only partially cover the topic — or are merely related — fill the gaps from your general knowledge (clear teaching beats refusing) and connect the explanation back to the sources and the student's goals where helpful. Only attach an [n] citation to a claim actually drawn from that source; never fabricate a citation. For facts specific to this course (due dates, grading, instructions) rely strictly on the sources and say so plainly if they are missing.${programmingInstructions}${assignmentBriefInstructions} Be concise (2-5 sentences or a short list). Question: ${question}`;
 
     return { prompt, sources };
   }

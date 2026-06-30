@@ -109,6 +109,12 @@ test('RAGCore.hasProgrammingStudyIntent recognizes CS workflow questions cheaply
   assert.equal(RAGCore.hasProgrammingStudyIntent('summarize the reading due tomorrow'), false);
 });
 
+test('RAGCore.hasAssignmentBriefIntent recognizes lab handoff requests cheaply', () => {
+  assert.equal(RAGCore.hasAssignmentBriefIntent('make an assignment pre-brief with deliverables and rubric'), true);
+  assert.equal(RAGCore.hasAssignmentBriefIntent('what should I do first for this lab spec?'), true);
+  assert.equal(RAGCore.hasAssignmentBriefIntent('explain binary search complexity'), false);
+});
+
 test('RAGCore.compileUnifiedPrompt adds runnable CS-answer guidance for programming questions', async () => {
   const prevIndexed = mockStorage.indexedContent;
   const prevUrl = mockTabUrl;
@@ -318,6 +324,13 @@ test('RAGCore.compileUnifiedPrompt includes source ledger diagnostics for scoped
   assert.ok(prompt.includes('=== ASK SOURCE LEDGER ==='));
   assert.ok(prompt.includes('approx context:'));
   assert.ok(prompt.includes('Use this as a source ledger'));
+});
+
+test('RAGCore.compileUnifiedPrompt adds Lectra-ready checklist guidance for assignment pre-briefs', async () => {
+  const { prompt } = await RAGCore.compileUnifiedPrompt('make an assignment pre-brief with deliverables and starter files');
+  assert.ok(prompt.includes('Objective, Deliverables, Constraints/Rubric'));
+  assert.ok(prompt.includes('Lectra handoff checklist'));
+  assert.ok(prompt.includes('Keep every course-specific item cited'));
 });
 
 test('RAGCore.buildChunkIndex reuses cached chunks until indexed metadata changes', async () => {
