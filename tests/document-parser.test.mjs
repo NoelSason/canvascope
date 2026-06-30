@@ -116,6 +116,22 @@ test('DocumentParser.scoreDocumentPages ranks relevant pages and chunks appropri
   assert.equal(fallback[0].pageNum, 1);
 });
 
+test('DocumentParser.scoreDocumentPages is resilient to pasted repeated prompts', () => {
+  const pages = [
+    'Stacks queues heaps and graphs.',
+    'Dynamic programming memoization and recurrence examples.',
+    null
+  ];
+
+  const scored = DocumentParser.scoreDocumentPages(pages, 'memoization memoization recurrence recurrence');
+  assert.equal(scored[0].pageNum, 2);
+  assert.ok(scored[0].text.includes('memoization'));
+
+  const fallback = DocumentParser.scoreDocumentPages(pages, null);
+  assert.equal(fallback.length, 3);
+  assert.equal(fallback[2].text, null);
+});
+
 test('DocumentParser.persistPdfToIndex saves PDF persistently to indexedContent', async () => {
   mockStorage = { indexedContent: [] };
   const mockUrl = 'https://ucla.edu/syllabus.pdf';

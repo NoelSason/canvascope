@@ -202,17 +202,22 @@ class DocumentParser {
   static scoreDocumentPages(pages, promptText) {
     if (!Array.isArray(pages) || pages.length === 0) return [];
 
-    // 1. Lexical page scoring list
-    const tokens = promptText.toLowerCase()
+    // 1. Lexical page scoring list. Normalize once and de-duplicate query tokens
+    // so long repeated prompts (common when a student pastes an assignment page)
+    // do not multiply O(pages × tokens × text scans) work or over-rank a page
+    // just because a word was repeated in the question.
+    const normalizedPrompt = String(promptText || '').toLowerCase();
+    const tokens = [...new Set(normalizedPrompt
       .replace(/[^\w\s]/g, '')
       .split(/\s+/)
-      .filter(w => w.length > 2);
+      .filter(w => w.length > 2))];
 
     let lexicalRankList = [];
     if (tokens.length > 0) {
       const scoredLexical = pages.map((text, idx) => {
+        const safeText = String(text || '');
         let score = 0;
-        const textLower = text.toLowerCase();
+        const textLower = safeText.toLowerCase();
         for (const token of tokens) {
           let pos = textLower.indexOf(token);
           while (pos !== -1) {
@@ -220,7 +225,7 @@ class DocumentParser {
             pos = textLower.indexOf(token, pos + token.length);
           }
         }
-        return { pageNum: idx + 1, text, score };
+        return { pageNum: idx + 1, text: safeText, score };
       });
       
       lexicalRankList = scoredLexical
