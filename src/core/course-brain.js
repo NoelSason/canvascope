@@ -38,9 +38,10 @@
 
   /** Turn [n] markers in rendered markdown into cite pills. */
   function decorateCitations(html, sources) {
+    const sourceByNumber = new Map(sources.map(source => [source.n, source]));
     return html.replace(/\[(\d{1,2})\]/g, (match, num) => {
       const n = Number(num);
-      const source = sources.find(s => s.n === n);
+      const source = sourceByNumber.get(n);
       if (!source) return match;
       return `<button class="brain-cite" data-cite="${n}" title="${escapeHtml(source.title)}">${n}</button>`;
     });
@@ -206,7 +207,8 @@
 3. Worked example — adapt one example from the sources when possible.
 4. Edge cases / common mistakes — what a student is likely to miss.
 5. Likely exam or assignment angle — only if supported by the sources.
-6. Lectra handoff — 3 portable bullets a student can paste into Lectra.
+6. Confusion checkpoint — one self-test question that exposes the most likely misunderstanding.
+7. Lectra handoff — 3 portable bullets a student can paste into Lectra.
 Every factual claim must be grounded in the retrieved sources; if the sources are thin, say what is missing instead of guessing.`;
   }
 

@@ -152,6 +152,18 @@ test('CourseBrain study notes prompt is citation-first and Lectra-ready', () => 
   assert.match(prompt, /CS 101 PDF pages 4-6/);
   assert.match(prompt, /citation like \[1\]/);
   assert.match(prompt, /Edge cases \/ common mistakes/);
+  assert.match(prompt, /Confusion checkpoint/);
   assert.match(prompt, /Lectra handoff/);
   assert.match(prompt, /if the sources are thin, say what is missing/i);
+});
+
+test('CourseBrain citation decoration handles repeated markers without linear source scans', () => {
+  const { brain } = loadCourseBrain();
+  const sources = Array.from({ length: 12 }, (_, i) => ({ n: i + 1, title: `Source ${i + 1}` }));
+  const html = brain.__test.decorateCitations('Compare [12] with [12] and [1]', sources);
+
+  assert.equal(
+    html,
+    'Compare <button class="brain-cite" data-cite="12" title="Source 12">12</button> with <button class="brain-cite" data-cite="12" title="Source 12">12</button> and <button class="brain-cite" data-cite="1" title="Source 1">1</button>'
+  );
 });
