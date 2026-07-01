@@ -141,6 +141,31 @@ test('DocumentParser.fetchAndParsePdf keeps scoped PDF cache separate from full 
   assert.equal(fetches, 1);
 });
 
+test('DocumentParser.fetchAndParsePdf coalesces concurrent parses for the same PDF scope', async () => {
+  mockStorage = { indexedContent: [] };
+  DocumentParser._fetchParseInFlight = new Map();
+  const mockUrl = 'https://ucla.edu/concurrent-notes.pdf';
+  let fetches = 0;
+  globalThis.fetch = async () => {
+    fetches += 1;
+    await new Promise(resolve => setTimeout(resolve, 5));
+    return {
+      ok: true,
+      arrayBuffer: async () => new ArrayBuffer(20)
+    };
+  };
+
+  const [first, second] = await Promise.all([
+    DocumentParser.fetchAndParsePdf(mockUrl, 'Concurrent Notes', 'CS 180', { startPage: 1, endPage: 2 }),
+    DocumentParser.fetchAndParsePdf(mockUrl, 'Concurrent Notes', 'CS 180', { startPage: 1, endPage: 2 })
+  ]);
+
+  assert.deepEqual(first, second);
+  assert.equal(first.length, 2);
+  assert.equal(fetches, 1);
+  assert.equal(DocumentParser._fetchParseInFlight.size, 0);
+});
+
 test('DocumentParser.scoreDocumentPages ranks relevant pages and chunks appropriately', () => {
   const pages = [
     'Lecture 1 covers basic thermodynamics and heat transfer.',

@@ -160,35 +160,50 @@ class DocumentParser {
       const cacheKey = scopedParse
         ? `doc_cache_${docId}:${this.pdfScopeCacheKey(options)}`
         : `doc_cache_${docId}`;
-      const cache = await chrome.storage.local.get([cacheKey]);
-      let pagesText = null;
+      if (!this._fetchParseInFlight) this._fetchParseInFlight = new Map();
+      if (this._fetchParseInFlight.has(cacheKey)) {
+        console.log('[Canvascope DocumentParser] Reusing in-flight PDF parse:', cleanUrl);
+        return await this._fetchParseInFlight.get(cacheKey);
+      }
 
-      if (cache[cacheKey] && Array.isArray(cache[cacheKey])) {
-        console.log('[Canvascope DocumentParser] Cache hit for PDF:', cleanUrl);
-        pagesText = cache[cacheKey];
-      } else {
-        console.log('[Canvascope DocumentParser] Cache miss, fetching PDF:', cleanUrl);
-        const response = await fetch(url);
-        if (!response.ok) {
-          throw new Error(`HTTP network error: status ${response.status}`);
+      const parsePromise = (async () => {
+        const cache = await chrome.storage.local.get([cacheKey]);
+        let pagesText = null;
+
+        if (cache[cacheKey] && Array.isArray(cache[cacheKey])) {
+          console.log('[Canvascope DocumentParser] Cache hit for PDF:', cleanUrl);
+          pagesText = cache[cacheKey];
+        } else {
+          console.log('[Canvascope DocumentParser] Cache miss, fetching PDF:', cleanUrl);
+          const response = await fetch(url);
+          if (!response.ok) {
+            throw new Error(`HTTP network error: status ${response.status}`);
+          }
+
+          const arrayBuffer = await response.arrayBuffer();
+          pagesText = await this.extractTextFromPdf(arrayBuffer, options);
+
+          // Cache the parsed pages
+          await chrome.storage.local.set({ [cacheKey]: pagesText });
+          console.log(`[Canvascope DocumentParser] Successfully cached ${pagesText.length} pages for PDF`);
         }
 
-        const arrayBuffer = await response.arrayBuffer();
-        pagesText = await this.extractTextFromPdf(arrayBuffer, options);
+        // Persistently index only complete PDFs. Scoped extracts are latency-first
+        // previews for current-page/page-range study and do not contain enough page
+        // positions to replace the course corpus safely.
+        if (!scopedParse && pagesText && pagesText.length > 0) {
+          await this.persistPdfToIndex(url, titleHint, courseHint, pagesText);
+        }
 
-        // Cache the parsed pages
-        await chrome.storage.local.set({ [cacheKey]: pagesText });
-        console.log(`[Canvascope DocumentParser] Successfully cached ${pagesText.length} pages for PDF`);
+        return pagesText;
+      })();
+
+      this._fetchParseInFlight.set(cacheKey, parsePromise);
+      try {
+        return await parsePromise;
+      } finally {
+        this._fetchParseInFlight.delete(cacheKey);
       }
-
-      // Persistently index only complete PDFs. Scoped extracts are latency-first
-      // previews for current-page/page-range study and do not contain enough page
-      // positions to replace the course corpus safely.
-      if (!scopedParse && pagesText && pagesText.length > 0) {
-        await this.persistPdfToIndex(url, titleHint, courseHint, pagesText);
-      }
-
-      return pagesText;
     } catch (e) {
       console.error('[Canvascope DocumentParser] PDF extraction failed:', e);
       return [];
