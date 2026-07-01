@@ -235,6 +235,25 @@ class RAGCore {
   }
 
   /**
+   * Deterministic Markdown scaffold for handing course/PDF context into Lectra.
+   * Keeping this small and static avoids extra model prompt tokens while nudging
+   * generated answers toward actionable notebook cells instead of generic prose.
+   * @returns {string}
+   */
+  static lectraContextPackTemplate() {
+    return [
+      'Lectra context pack format: use Markdown headings exactly as follows when the student asks for a handoff.',
+      '# Project/Course Context Pack',
+      '## Objective — one sentence tied to the assignment/PDF goal and cited source.',
+      '## Deliverables — checkbox list; each item cites [n] and names the artifact to create.',
+      '## Sources — page/section ledger with the shortest useful quote.',
+      '## Commands or Checks — terminal commands, tests, or notebook cells to run; include expected signal.',
+      '## Edge Cases — boundary cases, pitfalls, or counterexamples to test.',
+      '## Paste into Lectra — 2-3 compact bullets ready for a Lectra notebook.'
+    ].join('\n');
+  }
+
+  /**
    * Lightweight prompt-size guard for latency-sensitive Ask flows. The retriever
    * already enforces a chunk budget, but active-page/PDF text is added outside
    * that budget; this keeps the final prompt from ballooning when a PDF page and
@@ -896,10 +915,10 @@ class RAGCore {
       ? ' For programming/CS questions, include a tiny runnable example or pseudocode when useful, name at least one edge case/test, and call out Big-O or performance implications without over-explaining.'
       : '';
     const assignmentBriefInstructions = this.hasAssignmentBriefIntent(question)
-      ? ' For assignment/lab pre-brief requests, structure the answer as: Objective, Deliverables, Constraints/Rubric, Files or commands to inspect/run, Edge cases/traps, and a Lectra handoff checklist. Keep every course-specific item cited.'
+      ? ` For assignment/lab pre-brief requests, structure the answer as: Objective, Deliverables, Constraints/Rubric, Files or commands to inspect/run, Edge cases/traps, and a Lectra handoff checklist. Keep every course-specific item cited. ${this.lectraContextPackTemplate()}`
       : '';
     const studyNotesInstructions = this.hasStudyNotesIntent(question)
-      ? ` For study-note requests, output portable Markdown with: Key Concepts, Worked Example or Edge Case, Evidence/Citations, and Lectra Handoff. Keep bullets short so they paste cleanly into a notebook. ${this.citationFirstStudyNoteContract(sources)}`
+      ? ` For study-note requests, output portable Markdown with: Key Concepts, Worked Example or Edge Case, Evidence/Citations, and Lectra Handoff. Keep bullets short so they paste cleanly into a notebook. ${this.citationFirstStudyNoteContract(sources)} ${this.lectraContextPackTemplate()}`
       : '';
     prompt += `=== QUESTION ===\nAnswer the student's question. Ground claims in the numbered sources when they cover it, citing inline like [1] or [2] (source [1] is the page they are viewing, when present). When the sources only partially cover the topic — or are merely related — fill the gaps from your general knowledge (clear teaching beats refusing) and connect the explanation back to the sources and the student's goals where helpful. Only attach an [n] citation to a claim actually drawn from that source; never fabricate a citation. For facts specific to this course (due dates, grading, instructions) rely strictly on the sources and say so plainly if they are missing.${programmingInstructions}${assignmentBriefInstructions}${studyNotesInstructions} Be concise (2-5 sentences or a short list). Question: ${question}`;
 

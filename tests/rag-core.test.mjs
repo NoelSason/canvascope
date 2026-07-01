@@ -171,6 +171,41 @@ test('RAGCore.citationFirstStudyNoteContract adapts to page metadata', () => {
   assert.ok(withoutPages.includes('shortest exact quote'));
 });
 
+test('RAGCore.lectraContextPackTemplate gives a stable notebook handoff scaffold', () => {
+  const template = RAGCore.lectraContextPackTemplate();
+
+  assert.ok(template.includes('# Project/Course Context Pack'));
+  assert.ok(template.includes('## Commands or Checks'));
+  assert.ok(template.includes('## Edge Cases'));
+  assert.ok(template.includes('## Paste into Lectra'));
+  assert.ok(template.length < 700);
+});
+
+test('RAGCore.compileUnifiedPrompt includes context-pack scaffold for handoff requests', async () => {
+  const prevIndexed = mockStorage.indexedContent;
+  const prevUrl = mockTabUrl;
+  mockTabUrl = 'https://google.com';
+  mockStorage.indexedContent = [
+    {
+      title: 'Malloc Lab Spec',
+      courseName: 'CS 101',
+      type: 'assignment',
+      content: 'Implement malloc, free, and realloc. Optimize throughput and utilization.'
+    }
+  ];
+
+  try {
+    const { prompt } = await RAGCore.compileUnifiedPrompt('make a lab brief and Lectra handoff for this spec');
+    assert.ok(prompt.includes('Lectra context pack format'));
+    assert.ok(prompt.includes('## Deliverables'));
+    assert.ok(prompt.includes('## Commands or Checks'));
+    assert.ok(prompt.includes('## Paste into Lectra'));
+  } finally {
+    mockStorage.indexedContent = prevIndexed;
+    mockTabUrl = prevUrl;
+  }
+});
+
 test('RAGCore.compileUnifiedPrompt adds runnable CS-answer guidance for programming questions', async () => {
   const prevIndexed = mockStorage.indexedContent;
   const prevUrl = mockTabUrl;
