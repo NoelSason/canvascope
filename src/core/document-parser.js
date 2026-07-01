@@ -5,6 +5,27 @@
  */
 class DocumentParser {
   /**
+   * Configure the bundled PDF.js worker once per extension runtime. Reassigning
+   * GlobalWorkerOptions on every parse is cheap but sits on a hot path for
+   * follow-up study questions over the same PDF; keep the value stable so scoped
+   * page reads can start parsing immediately.
+   */
+  static configurePdfWorkerSource(pdfjsLib) {
+    if (!pdfjsLib || !pdfjsLib.GlobalWorkerOptions) return;
+    if (this._pdfWorkerSrc && pdfjsLib.GlobalWorkerOptions.workerSrc === this._pdfWorkerSrc) {
+      return;
+    }
+
+    const workerSrc = chrome.runtime.getURL('src/lib/pdf.worker.min.js');
+    if (this._pdfWorkerSrc === workerSrc && pdfjsLib.GlobalWorkerOptions.workerSrc === workerSrc) {
+      return;
+    }
+
+    pdfjsLib.GlobalWorkerOptions.workerSrc = workerSrc;
+    this._pdfWorkerSrc = workerSrc;
+  }
+
+  /**
    * Parses text content of a PDF file array buffer.
    * @param {ArrayBuffer} arrayBuffer - The PDF binary buffer
    * @returns {Promise<Array<string>>} List of text strings per page
@@ -15,8 +36,7 @@ class DocumentParser {
       throw new Error('PDF.js library is not loaded on this page.');
     }
 
-    // Set worker source to our local extension bundle
-    pdfjsLib.GlobalWorkerOptions.workerSrc = chrome.runtime.getURL('src/lib/pdf.worker.min.js');
+    this.configurePdfWorkerSource(pdfjsLib);
 
     const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
     const pagesText = [];

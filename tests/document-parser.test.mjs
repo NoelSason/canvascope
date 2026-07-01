@@ -72,6 +72,27 @@ test('DocumentParser.extractTextFromPdf extracts page-by-page text content', asy
   assert.ok(pagesText[1].includes('Biodiesel'));
 });
 
+test('DocumentParser.configurePdfWorkerSource avoids repeated worker rewrites', () => {
+  let urlCalls = 0;
+  const originalGetURL = chrome.runtime.getURL;
+  chrome.runtime.getURL = (p) => {
+    urlCalls += 1;
+    return originalGetURL(p);
+  };
+  pdfjsLib.GlobalWorkerOptions.workerSrc = '';
+  DocumentParser._pdfWorkerSrc = null;
+
+  try {
+    DocumentParser.configurePdfWorkerSource(pdfjsLib);
+    DocumentParser.configurePdfWorkerSource(pdfjsLib);
+  } finally {
+    chrome.runtime.getURL = originalGetURL;
+  }
+
+  assert.equal(urlCalls, 1);
+  assert.equal(pdfjsLib.GlobalWorkerOptions.workerSrc, 'chrome-extension://mock-id/src/lib/pdf.worker.min.js');
+});
+
 test('DocumentParser.extractTextFromPdf supports page ranges and progress callbacks for large PDFs', async () => {
   const progress = [];
   const pagesText = await DocumentParser.extractTextFromPdf(new ArrayBuffer(10), {
