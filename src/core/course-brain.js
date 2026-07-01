@@ -245,6 +245,36 @@ Do not invent facts beyond the selected excerpt.`;
 Every factual claim must be grounded in the retrieved sources; if the sources are thin, say what is missing instead of guessing.`;
   }
 
+  function buildAssignmentBridgePrompt(assignment, source = {}) {
+    const assignmentText = String(assignment || '').trim();
+    const clippedAssignment = assignmentText.length > 2000
+      ? `${assignmentText.slice(0, 2000).trim()}\n… clipped for speed; ask for targeted PDF/page context before expanding.`
+      : assignmentText;
+    const title = String(source.title || source.pageTitle || 'course assignment').trim();
+    const course = String(source.course || source.courseName || '').trim();
+    const locator = [course, source.page ? `p. ${source.page}` : '', source.url || '']
+      .filter(Boolean)
+      .join(' · ');
+    return `Bridge this Canvas/PDF assignment context into a Lectra-ready coding/study plan. Work from the provided excerpt first so large course pages stay responsive; request only the missing context needed for the next action.
+
+Source: ${title}${locator ? ` (${locator})` : ''}
+
+Assignment excerpt:
+"""
+${clippedAssignment || '[No assignment excerpt provided]'}
+"""
+
+Use this exact structure:
+1. Goal in one sentence — grounded in the excerpt.
+2. Concepts to review — cite source title/page/URL when available.
+3. Starter examples — one tiny input/output or worked example.
+4. Edge cases / tests — at least three checks a CS student can run.
+5. Commands or files to inspect — include likely notebook, repo, terminal, or PDF handoff steps.
+6. Performance / lag audit — name the largest file/PDF/dataset and how to avoid re-parsing it.
+7. Lectra handoff — 3 portable Markdown bullets to paste into a notebook.
+Do not invent rubric details, due dates, APIs, or requirements not present in the excerpt.`;
+  }
+
   function init(dependencies) {
     deps = dependencies;
     const select = $('brain-course-select');
@@ -262,6 +292,6 @@ Every factual claim must be grounded in the retrieved sources; if the sources ar
     selectionStudyNote,
     refresh: populateCoursePicker,
     isBusy: () => busy,
-    __test: { createThrottledBrainRenderer, decorateCitations, buildStudyNotesPrompt, buildSelectionStudyNotePrompt }
+    __test: { createThrottledBrainRenderer, decorateCitations, buildStudyNotesPrompt, buildSelectionStudyNotePrompt, buildAssignmentBridgePrompt }
   };
 })();

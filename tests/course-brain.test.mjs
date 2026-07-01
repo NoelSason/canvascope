@@ -183,6 +183,31 @@ test('CourseBrain selection study note prompt clips long selections for responsi
   assert.ok(prompt.length < 3300);
 });
 
+test('CourseBrain assignment bridge prompt turns course context into Lectra action plan', () => {
+  const { brain } = loadCourseBrain();
+  const prompt = brain.__test.buildAssignmentBridgePrompt(
+    'Implement Dijkstra and compare it against BFS on weighted graphs.',
+    { title: 'Project 3 PDF', course: 'CS 201', page: 4, url: 'https://canvas.example/project3.pdf' }
+  );
+
+  assert.match(prompt, /Canvas\/PDF assignment context/);
+  assert.match(prompt, /Project 3 PDF \(CS 201 · p\. 4 · https:\/\/canvas\.example\/project3\.pdf\)/);
+  assert.match(prompt, /Implement Dijkstra/);
+  assert.match(prompt, /Edge cases \/ tests/);
+  assert.match(prompt, /Commands or files to inspect/);
+  assert.match(prompt, /Performance \/ lag audit/);
+  assert.match(prompt, /Lectra handoff/);
+  assert.match(prompt, /Do not invent rubric details/);
+});
+
+test('CourseBrain assignment bridge prompt clips long assignment text for responsiveness', () => {
+  const { brain } = loadCourseBrain();
+  const prompt = brain.__test.buildAssignmentBridgePrompt('x'.repeat(2500), { title: 'Long Assignment' });
+
+  assert.match(prompt, /clipped for speed/);
+  assert.ok(prompt.length < 3100);
+});
+
 test('CourseBrain citation decoration handles repeated markers without linear source scans', () => {
   const { brain } = loadCourseBrain();
   const sources = Array.from({ length: 12 }, (_, i) => ({ n: i + 1, title: `Source ${i + 1}` }));
