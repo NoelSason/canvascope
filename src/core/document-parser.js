@@ -127,6 +127,39 @@ class DocumentParser {
       || Number.isFinite(options.endPage);
   }
 
+  /**
+   * Quick extraction quality signal for PDF study notes. This gives Canvascope a
+   * cheap way to warn on scanned/image-heavy PDFs or empty page ranges without
+   * re-reading the file or sending low-confidence context to AI as if complete.
+   */
+  static assessPdfTextQuality(pagesText, options = {}) {
+    const pages = Array.isArray(pagesText) ? pagesText : [];
+    const readablePages = pages.filter(text => String(text || '').trim().length >= 80).length;
+    const totalChars = pages.reduce((sum, text) => sum + String(text || '').trim().length, 0);
+    const averageChars = pages.length ? Math.round(totalChars / pages.length) : 0;
+    const readableRatio = pages.length ? readablePages / pages.length : 0;
+    const scoped = this.hasPdfScope(options);
+    const likelyScanned = pages.length > 0 && (readableRatio < 0.4 || averageChars < 120);
+    const warning = pages.length === 0
+      ? 'No readable PDF pages were extracted.'
+      : likelyScanned
+        ? 'This PDF appears scanned or low-text; notes may be incomplete. Try a smaller page range or OCR-first workflow.'
+        : scoped
+          ? 'Notes are based on the selected PDF scope, not the full document.'
+          : null;
+
+    return {
+      pages: pages.length,
+      readablePages,
+      totalChars,
+      averageChars,
+      readableRatio,
+      scoped,
+      likelyScanned,
+      warning
+    };
+  }
+
   static pdfScopeCacheKey(options = {}) {
     if (Array.isArray(options.pages) && options.pages.length > 0) {
       return `pages:${[...new Set(options.pages.map(page => Number.parseInt(page, 10)).filter(Number.isFinite))].sort((a, b) => a - b).join(',')}`;

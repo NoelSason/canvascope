@@ -92,6 +92,20 @@ test('DocumentParser.normalizePageSelection clamps and de-duplicates explicit PD
   assert.deepEqual(DocumentParser.normalizePageSelection(3, { startPage: 3, endPage: 2 }), [2, 3]);
 });
 
+test('DocumentParser.assessPdfTextQuality warns on low-text or scoped extracts', () => {
+  const scanned = DocumentParser.assessPdfTextQuality(['', 'diagram', '   ']);
+  assert.equal(scanned.likelyScanned, true);
+  assert.match(scanned.warning, /scanned|low-text/);
+
+  const scoped = DocumentParser.assessPdfTextQuality([
+    'Lecture notes '.repeat(20),
+    'Assignment instructions '.repeat(20)
+  ], { startPage: 2, endPage: 3 });
+  assert.equal(scoped.likelyScanned, false);
+  assert.equal(scoped.scoped, true);
+  assert.match(scoped.warning, /selected PDF scope/);
+});
+
 test('DocumentParser.fetchAndParsePdf utilizes storage caches', async () => {
   mockStorage = {};
   const mockUrl = 'https://mit.edu/syllabus.pdf';

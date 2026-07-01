@@ -87,8 +87,13 @@ class RAGCore {
 
         const pages = await DocumentParser.fetchAndParsePdf(pdfUrl, documentTitle, courseName);
         if (pages && pages.length > 0) {
+          const quality = DocumentParser.assessPdfTextQuality(pages);
           const matched = DocumentParser.scoreDocumentPages(pages, promptText);
-          let context = `=== ACTIVE PDF DOCUMENT PAGES ===\nFile: ${pdfUrl.split('/').pop().split('?')[0]}\n\n`;
+          let context = `=== ACTIVE PDF DOCUMENT PAGES ===\nFile: ${pdfUrl.split('/').pop().split('?')[0]}\n`;
+          if (quality.warning) {
+            context += `Extraction note: ${quality.warning} (${quality.readablePages}/${quality.pages} readable pages, avg ${quality.averageChars} chars/page).\n`;
+          }
+          context += '\n';
           matched.forEach(page => {
             context += `--- Page ${page.pageNum} ---\n${page.text.substring(0, 1500)}\n\n`;
           });
