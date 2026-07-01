@@ -154,10 +154,21 @@ test('RAGCore.compileUnifiedPrompt adds portable Markdown guidance for study-not
     assert.ok(prompt.includes('portable Markdown'));
     assert.ok(prompt.includes('Evidence/Citations'));
     assert.ok(prompt.includes('Lectra Handoff'));
+    assert.ok(prompt.includes('Citation-first note contract'));
+    assert.ok(prompt.includes('citation missing/uncertain'));
   } finally {
     mockStorage.indexedContent = prevIndexed;
     mockTabUrl = prevUrl;
   }
+});
+
+test('RAGCore.citationFirstStudyNoteContract adapts to page metadata', () => {
+  const withPages = RAGCore.citationFirstStudyNoteContract([{ n: 1, page: 7 }]);
+  const withoutPages = RAGCore.citationFirstStudyNoteContract([{ n: 1 }]);
+
+  assert.ok(withPages.includes('page/slide numbers'));
+  assert.ok(withPages.includes('exact supporting quote'));
+  assert.ok(withoutPages.includes('shortest exact quote'));
 });
 
 test('RAGCore.compileUnifiedPrompt adds runnable CS-answer guidance for programming questions', async () => {
@@ -455,6 +466,8 @@ test('RAGCore.compileStudyPackPrompt emits cited actionable Markdown sections', 
     assert.ok(prompt.includes('runnable check/example'));
     assert.ok(prompt.includes('## Review Checklist'));
     assert.ok(prompt.includes('preserve citation fidelity'));
+    assert.ok(prompt.includes('Citation-first note contract'));
+    assert.ok(prompt.includes('page/slide numbers'));
     assert.ok(prompt.includes('cache locality and LRU'));
   } finally {
     mockStorage.indexedContent = prevIndexed;

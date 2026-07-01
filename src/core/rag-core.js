@@ -219,6 +219,22 @@ class RAGCore {
   }
 
   /**
+   * Compact citation contract for source-led study notes. Keeping it as a
+   * reusable string avoids divergent prompt shapes between Study Pack and Ask,
+   * and nudges models toward trustworthy page/quote grounding instead of long,
+   * generic summaries.
+   * @param {Array} sources
+   * @returns {string}
+   */
+  static citationFirstStudyNoteContract(sources = []) {
+    const hasPageMetadata = Array.isArray(sources) && sources.some(source => source && source.page);
+    const pageRule = hasPageMetadata
+      ? ' Include page/slide numbers from source metadata in each citation line.'
+      : ' If a source lacks page metadata, cite its [n] marker and use the shortest exact quote you can find.';
+    return 'Citation-first note contract: every Key Concept, Worked Example, Edge Case, Quiz Answer, and Lectra Handoff item must include at least one real [n] citation. Add a short Evidence line with an exact supporting quote or page phrase; if the provided sources do not support a claim, mark it "citation missing/uncertain" instead of inventing a source.' + pageRule;
+  }
+
+  /**
    * Lightweight prompt-size guard for latency-sensitive Ask flows. The retriever
    * already enforces a chunk budget, but active-page/PDF text is added outside
    * that budget; this keeps the final prompt from ballooning when a PDF page and
@@ -763,7 +779,7 @@ class RAGCore {
 
     prompt += this.contextBudgetSection(sources, prompt, { label: 'Study pack source ledger', targetTokenBudget: 2200 });
 
-    prompt += `=== STUDY PACK REQUEST ===\nBuild a concise Markdown study pack for the student. Use the exact sections below:\n# Study Pack\n## Key Concepts\n- 5 bullets max; each bullet must include an inline source citation like [1].\n## Worked Examples & Edge Cases\n- 2 tiny examples or counterexamples the student can test; cite the source that motivates each one.\n## Likely Quiz Questions\n- 3 question/answer pairs; cite the source used for each answer.\n## Flashcards\n- 4 compact Q/A cards; include a Source: [n] line.\n## Lectra Handoff\n- 2 bullets that say exactly what to paste into a Lectra notebook, including the source number and the runnable check/example to create.\n## Review Checklist\n- 3 actionable checkbox items tied to the student's course material.\n## Confusing Points to Revisit\n- 2 items the student should ask about or re-read.\nRules: preserve citation fidelity, include page/slide numbers when the source metadata has them, quote a short evidence phrase when helpful, do not fabricate citations, and keep it easy to copy into Lectra or any Markdown notes app. Student goal: ${goal}`;
+    prompt += `=== STUDY PACK REQUEST ===\nBuild a concise Markdown study pack for the student. Use the exact sections below:\n# Study Pack\n## Key Concepts\n- 5 bullets max; each bullet must include an inline source citation like [1].\n## Worked Examples & Edge Cases\n- 2 tiny examples or counterexamples the student can test; cite the source that motivates each one.\n## Likely Quiz Questions\n- 3 question/answer pairs; cite the source used for each answer.\n## Flashcards\n- 4 compact Q/A cards; include a Source: [n] line.\n## Lectra Handoff\n- 2 bullets that say exactly what to paste into a Lectra notebook, including the source number and the runnable check/example to create.\n## Review Checklist\n- 3 actionable checkbox items tied to the student's course material.\n## Confusing Points to Revisit\n- 2 items the student should ask about or re-read.\nRules: preserve citation fidelity, include page/slide numbers when the source metadata has them, quote a short evidence phrase when helpful, do not fabricate citations, and keep it easy to copy into Lectra or any Markdown notes app. ${this.citationFirstStudyNoteContract(sources)} Student goal: ${goal}`;
 
     return { prompt, sources };
   }
@@ -883,7 +899,7 @@ class RAGCore {
       ? ' For assignment/lab pre-brief requests, structure the answer as: Objective, Deliverables, Constraints/Rubric, Files or commands to inspect/run, Edge cases/traps, and a Lectra handoff checklist. Keep every course-specific item cited.'
       : '';
     const studyNotesInstructions = this.hasStudyNotesIntent(question)
-      ? ' For study-note requests, output portable Markdown with: Key Concepts, Worked Example or Edge Case, Evidence/Citations, and Lectra Handoff. Keep bullets short so they paste cleanly into a notebook.'
+      ? ` For study-note requests, output portable Markdown with: Key Concepts, Worked Example or Edge Case, Evidence/Citations, and Lectra Handoff. Keep bullets short so they paste cleanly into a notebook. ${this.citationFirstStudyNoteContract(sources)}`
       : '';
     prompt += `=== QUESTION ===\nAnswer the student's question. Ground claims in the numbered sources when they cover it, citing inline like [1] or [2] (source [1] is the page they are viewing, when present). When the sources only partially cover the topic — or are merely related — fill the gaps from your general knowledge (clear teaching beats refusing) and connect the explanation back to the sources and the student's goals where helpful. Only attach an [n] citation to a claim actually drawn from that source; never fabricate a citation. For facts specific to this course (due dates, grading, instructions) rely strictly on the sources and say so plainly if they are missing.${programmingInstructions}${assignmentBriefInstructions}${studyNotesInstructions} Be concise (2-5 sentences or a short list). Question: ${question}`;
 
