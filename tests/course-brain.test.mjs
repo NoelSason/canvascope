@@ -157,6 +157,32 @@ test('CourseBrain study notes prompt is citation-first and Lectra-ready', () => 
   assert.match(prompt, /if the sources are thin, say what is missing/i);
 });
 
+test('CourseBrain selection study note prompt is structured and citation preserving', () => {
+  const { brain } = loadCourseBrain();
+  const prompt = brain.__test.buildSelectionStudyNotePrompt(
+    'Dynamic programming stores overlapping subproblem answers.',
+    { title: 'Week 5 Slides', page: 12, url: 'https://canvas.example/courses/1/files/2' }
+  );
+
+  assert.match(prompt, /selected Canvas\/PDF passage/);
+  assert.match(prompt, /Process only the selected excerpt first/);
+  assert.match(prompt, /Week 5 Slides \(p\. 12 · https:\/\/canvas\.example\/courses\/1\/files\/2\)/);
+  assert.match(prompt, /Dynamic programming stores overlapping/);
+  assert.match(prompt, /Worked example/);
+  assert.match(prompt, /Edge case \/ common mistake/);
+  assert.match(prompt, /Citation chip/);
+  assert.match(prompt, /Lectra handoff/);
+  assert.match(prompt, /Do not invent facts/);
+});
+
+test('CourseBrain selection study note prompt clips long selections for responsiveness', () => {
+  const { brain } = loadCourseBrain();
+  const prompt = brain.__test.buildSelectionStudyNotePrompt('x'.repeat(2600), { title: 'Long PDF' });
+
+  assert.match(prompt, /clipped for speed/);
+  assert.ok(prompt.length < 3300);
+});
+
 test('CourseBrain citation decoration handles repeated markers without linear source scans', () => {
   const { brain } = loadCourseBrain();
   const sources = Array.from({ length: 12 }, (_, i) => ({ n: i + 1, title: `Source ${i + 1}` }));

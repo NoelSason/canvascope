@@ -199,6 +199,39 @@
     return ask(buildStudyNotesPrompt(scopeLabel));
   }
 
+  function selectionStudyNote(selection, source = {}) {
+    return ask(buildSelectionStudyNotePrompt(selection, source));
+  }
+
+  function buildSelectionStudyNotePrompt(selection, source = {}) {
+    const excerpt = String(selection || '').trim();
+    const safeExcerpt = excerpt.length > 2400
+      ? `${excerpt.slice(0, 2400).trim()}\n… clipped for speed; use Expand context only if the selection is too thin.`
+      : excerpt;
+    const title = String(source.title || source.pageTitle || 'selected course material').trim();
+    const locator = [source.page ? `p. ${source.page}` : '', source.url || '']
+      .filter(Boolean)
+      .join(' · ');
+    return `Turn this selected Canvas/PDF passage into one compact study note. Process only the selected excerpt first so long PDFs and Canvas pages stay responsive; if more context is required, say exactly what is missing.
+
+Source: ${title}${locator ? ` (${locator})` : ''}
+
+Selected excerpt:
+"""
+${safeExcerpt || '[No selection provided]'}
+"""
+
+Use this exact structure:
+- Concept
+- Plain-English explanation
+- Worked example
+- Edge case / common mistake
+- Why it matters for this course
+- Citation chip: include the provided source title/page/URL when available
+- Lectra handoff: one portable Markdown bullet
+Do not invent facts beyond the selected excerpt.`;
+  }
+
   function buildStudyNotesPrompt(scopeLabel) {
     const cleanScope = String(scopeLabel || 'the indexed course materials').trim() || 'the indexed course materials';
     return `Turn ${cleanScope} into actionable study notes. Use this exact structure:
@@ -226,8 +259,9 @@ Every factual claim must be grounded in the retrieved sources; if the sources ar
     ask,
     quiz,
     studyNotes,
+    selectionStudyNote,
     refresh: populateCoursePicker,
     isBusy: () => busy,
-    __test: { createThrottledBrainRenderer, decorateCitations, buildStudyNotesPrompt }
+    __test: { createThrottledBrainRenderer, decorateCitations, buildStudyNotesPrompt, buildSelectionStudyNotePrompt }
   };
 })();
