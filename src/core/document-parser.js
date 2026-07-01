@@ -282,6 +282,8 @@ class DocumentParser {
         type: 'file',
         content: fullText, // Save full text in item's content field
         pages: pagesText,
+        textQuality: this.assessPdfTextQuality(pagesText),
+        sourceRevision: this.pdfIndexRevision(pagesText),
         indexedAt: Date.now()
       };
 
@@ -320,6 +322,28 @@ class DocumentParser {
     } catch (e) {
       console.warn('[Canvascope DocumentParser] Failed to persist PDF to index:', e);
     }
+  }
+
+  /**
+   * Compact revision token for indexed PDFs. RAG prompt cache invalidation can
+   * compare this token instead of re-walking every page body on each Ask request,
+   * which keeps large course/PDF indexes responsive while still changing when
+   * extracted page text materially changes.
+   */
+  static pdfIndexRevision(pagesText) {
+    const pages = Array.isArray(pagesText) ? pagesText : [];
+    let hash = 2166136261;
+    let chars = 0;
+    for (const page of pages) {
+      const text = String(page || '');
+      chars += text.length;
+      const sample = `${text.length}:${text.slice(0, 64)}:${text.slice(-64)}`;
+      for (let i = 0; i < sample.length; i += 1) {
+        hash ^= sample.charCodeAt(i);
+        hash = Math.imul(hash, 16777619) >>> 0;
+      }
+    }
+    return `pdf:v1:${pages.length}:${chars}:${hash.toString(36)}`;
   }
 
   /**

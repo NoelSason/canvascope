@@ -269,6 +269,8 @@ class RAGCore {
           type: item.type || 'assignment',
           content: item.content || '',
           pages: item.pages || null,
+          sourceRevision: item.sourceRevision || '',
+          textQuality: item.textQuality || null,
           done: false
         });
       }
@@ -592,6 +594,28 @@ class RAGCore {
   }
 
   /**
+   * Lightweight signature for chunk-cache invalidation. New PDF indexes carry a
+   * precomputed sourceRevision so Ask/Brain follow-ups do not have to walk every
+   * stored page just to decide whether cached chunks are still valid. Older
+   * indexes fall back to the previous page-count/length signature.
+   * @param {object} item
+   * @returns {string}
+   */
+  static corpusItemRevision(item) {
+    if (item.sourceRevision) return String(item.sourceRevision);
+    if (Array.isArray(item.pages)) {
+      return item.pages.map(page => {
+        const text = typeof page === 'string'
+          ? page
+          : (page && page.text) ? String(page.text) : '';
+        const pageNum = typeof page === 'string' ? '' : (page && page.pageNum) || '';
+        return `${pageNum}:${text.length}`;
+      }).join(',');
+    }
+    return String(item.content ? String(item.content).length : 0);
+  }
+
+  /**
    * Lightweight signature for chunk-cache invalidation. It intentionally uses
    * stable metadata plus text lengths/page counts instead of full PDF bodies, so
    * a cache check is O(items) rather than O(total indexed characters).
@@ -603,16 +627,7 @@ class RAGCore {
     const scope = String(courseName || '').toLowerCase();
     const parts = corpus.map(item => {
       const pages = Array.isArray(item.pages) ? item.pages.length : 0;
-      const pageSignature = Array.isArray(item.pages)
-        ? item.pages.map(page => {
-            const text = typeof page === 'string'
-              ? page
-              : (page && page.text) ? String(page.text) : '';
-            const pageNum = typeof page === 'string' ? '' : (page && page.pageNum) || '';
-            return `${pageNum}:${text.length}`;
-          }).join(',')
-        : '';
-      const contentLength = item.content ? String(item.content).length : 0;
+      const revision = this.corpusItemRevision(item);
       return [
         item.type || '',
         item.courseName || '',
@@ -620,8 +635,7 @@ class RAGCore {
         item.url || '',
         item.dueAt || '',
         pages,
-        pageSignature,
-        contentLength
+        revision
       ].join('\u001f');
     }).join('\u001e');
     return `${scope}\u001d${corpus.length}\u001d${parts}`;

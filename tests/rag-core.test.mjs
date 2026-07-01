@@ -121,6 +121,21 @@ test('RAGCore.hasStudyNotesIntent recognizes portable cited note requests cheapl
   assert.equal(RAGCore.hasStudyNotesIntent('what assignments are due tomorrow?'), false);
 });
 
+test('RAGCore.corpusItemRevision uses precomputed PDF revision for fast cache keys', () => {
+  const item = {
+    title: 'Operating Systems Slides',
+    courseName: 'CS 111',
+    type: 'file',
+    pages: ['process scheduling '.repeat(1000), 'virtual memory '.repeat(1000)],
+    sourceRevision: 'pdf:v1:2:32000:fast'
+  };
+
+  assert.equal(RAGCore.corpusItemRevision(item), 'pdf:v1:2:32000:fast');
+  const key = RAGCore.chunkIndexCacheKey([item], 'CS 111');
+  assert.ok(key.includes('pdf:v1:2:32000:fast'));
+  assert.ok(!key.includes('process scheduling'));
+});
+
 test('RAGCore.compileUnifiedPrompt adds portable Markdown guidance for study-note requests', async () => {
   const prevIndexed = mockStorage.indexedContent;
   const prevUrl = mockTabUrl;

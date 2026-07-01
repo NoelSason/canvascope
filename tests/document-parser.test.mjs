@@ -256,6 +256,8 @@ test('DocumentParser.persistPdfToIndex saves PDF persistently to indexedContent'
   assert.equal(indexed[0].courseName, 'CS 101');
   assert.equal(indexed[0].content, 'Page 1 outline.\nPage 2 schedule.');
   assert.deepEqual(indexed[0].pages, pagesText);
+  assert.equal(indexed[0].sourceRevision, DocumentParser.pdfIndexRevision(pagesText));
+  assert.equal(indexed[0].textQuality.pages, 2);
 });
 
 test('DocumentParser.persistPdfToIndex skips identical PDF rewrites', async () => {
