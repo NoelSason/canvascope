@@ -88,12 +88,15 @@
 
   function createThrottledBrainRenderer(body, sources) {
     let pendingMarkdown = '';
+    let lastRenderedMarkdown = null;
     let frame = 0;
     const scheduleFrame = window.requestAnimationFrame || ((fn) => window.setTimeout(fn, 16));
     const cancelFrame = window.cancelAnimationFrame || window.clearTimeout;
 
     const render = () => {
       frame = 0;
+      if (pendingMarkdown === lastRenderedMarkdown) return;
+      lastRenderedMarkdown = pendingMarkdown;
       body.innerHTML = decorateCitations(deps.markdown(pendingMarkdown), sources);
       scrollThread();
     };
@@ -189,6 +192,24 @@
     return ask(`Create a 4-question practice quiz on the most important concepts in ${scopeLabel}. For each question give the answer on the next line in bold. Base every question on the sources.`);
   }
 
+  /** Generate concise, citation-first notes for the current course/PDF scope. */
+  async function studyNotes() {
+    const scopeLabel = courseScope || 'the indexed course materials';
+    return ask(buildStudyNotesPrompt(scopeLabel));
+  }
+
+  function buildStudyNotesPrompt(scopeLabel) {
+    const cleanScope = String(scopeLabel || 'the indexed course materials').trim() || 'the indexed course materials';
+    return `Turn ${cleanScope} into actionable study notes. Use this exact structure:
+1. Key concepts — bullets, each with at least one citation like [1].
+2. Plain-English explanation — short and source-grounded.
+3. Worked example — adapt one example from the sources when possible.
+4. Edge cases / common mistakes — what a student is likely to miss.
+5. Likely exam or assignment angle — only if supported by the sources.
+6. Lectra handoff — 3 portable bullets a student can paste into Lectra.
+Every factual claim must be grounded in the retrieved sources; if the sources are thin, say what is missing instead of guessing.`;
+  }
+
   function init(dependencies) {
     deps = dependencies;
     const select = $('brain-course-select');
@@ -202,8 +223,9 @@
     init,
     ask,
     quiz,
+    studyNotes,
     refresh: populateCoursePicker,
     isBusy: () => busy,
-    __test: { createThrottledBrainRenderer, decorateCitations }
+    __test: { createThrottledBrainRenderer, decorateCitations, buildStudyNotesPrompt }
   };
 })();

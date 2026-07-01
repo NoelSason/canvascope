@@ -124,9 +124,34 @@ test('CourseBrain renderer finish cancels pending frame and flushes final answer
   assert.equal(loaded.renderCount, 1);
 });
 
+test('CourseBrain renderer skips duplicate streaming DOM writes', () => {
+  const loaded = loadCourseBrain();
+  const body = makeBody();
+  const renderer = loaded.brain.__test.createThrottledBrainRenderer(body, []);
+
+  renderer.update('same answer');
+  loaded.flushFrames();
+  renderer.update('same answer');
+  loaded.flushFrames();
+
+  assert.equal(body.innerHTML, '<p>same answer</p>');
+  assert.equal(loaded.renderCount, 1);
+});
+
 test('CourseBrain citation decoration leaves unknown markers unchanged', () => {
   const { brain } = loadCourseBrain();
   const html = brain.__test.decorateCitations('Use [1] and [9]', [{ n: 1, title: 'Escaped <Source>' }]);
 
   assert.equal(html, 'Use <button class="brain-cite" data-cite="1" title="Escaped &lt;Source&gt;">1</button> and [9]');
+});
+
+test('CourseBrain study notes prompt is citation-first and Lectra-ready', () => {
+  const { brain } = loadCourseBrain();
+  const prompt = brain.__test.buildStudyNotesPrompt('CS 101 PDF pages 4-6');
+
+  assert.match(prompt, /CS 101 PDF pages 4-6/);
+  assert.match(prompt, /citation like \[1\]/);
+  assert.match(prompt, /Edge cases \/ common mistakes/);
+  assert.match(prompt, /Lectra handoff/);
+  assert.match(prompt, /if the sources are thin, say what is missing/i);
 });
