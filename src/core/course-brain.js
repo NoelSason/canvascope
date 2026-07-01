@@ -86,6 +86,34 @@
     if (viewport) viewport.scrollTop = viewport.scrollHeight;
   }
 
+  function createThrottledBrainRenderer(body, sources) {
+    let pendingMarkdown = '';
+    let frame = 0;
+    const scheduleFrame = window.requestAnimationFrame || ((fn) => window.setTimeout(fn, 16));
+    const cancelFrame = window.cancelAnimationFrame || window.clearTimeout;
+
+    const render = () => {
+      frame = 0;
+      body.innerHTML = decorateCitations(deps.markdown(pendingMarkdown), sources);
+      scrollThread();
+    };
+
+    return {
+      update(markdown) {
+        pendingMarkdown = markdown;
+        if (!frame) frame = scheduleFrame(render);
+      },
+      finish(markdown) {
+        pendingMarkdown = markdown;
+        if (frame) {
+          cancelFrame(frame);
+          frame = 0;
+        }
+        render();
+      }
+    };
+  }
+
   /**
    * Ask the Brain a question. Returns when streaming completes.
    * @param {string} question
@@ -117,15 +145,17 @@
       const system = profileBlock ? AIRouter.getState().systemInstruction + profileBlock : undefined;
 
       let full = '';
+      const renderer = createThrottledBrainRenderer(body, sources);
       for await (const delta of AIRouter.stream(prompt, { system })) {
         if (body.querySelector('.stream-loader')) body.innerHTML = '';
         full += delta;
-        body.innerHTML = decorateCitations(deps.markdown(full), sources);
-        scrollThread();
+        renderer.update(full);
       }
 
       if (!full.trim()) {
         body.innerHTML = deps.markdown('*No answer was generated. Try rephrasing the question.*');
+      } else {
+        renderer.finish(full);
       }
       renderSourceChips(body.parentElement, sources);
 
@@ -168,5 +198,12 @@
     populateCoursePicker();
   }
 
-  window.CourseBrain = { init, ask, quiz, refresh: populateCoursePicker, isBusy: () => busy };
+  window.CourseBrain = {
+    init,
+    ask,
+    quiz,
+    refresh: populateCoursePicker,
+    isBusy: () => busy,
+    __test: { createThrottledBrainRenderer, decorateCitations }
+  };
 })();
