@@ -233,6 +233,31 @@ test('CourseBrain concept drill prompt clips long excerpts for responsiveness', 
   assert.ok(prompt.length < 2800);
 });
 
+test('CourseBrain code trace prompt creates Lectra-ready debug handoff', () => {
+  const { brain } = loadCourseBrain();
+  const prompt = brain.__test.buildCodeTracePrompt(
+    'FAILED test_graph.py::test_empty_graph - AssertionError: expected [] got null',
+    { title: 'Graph Lab', course: 'CS 201', page: 3, url: 'https://canvas.example/graph-lab.pdf' }
+  );
+
+  assert.match(prompt, /code trace/);
+  assert.match(prompt, /Graph Lab \(CS 201 · p\. 3 · https:\/\/canvas\.example\/graph-lab\.pdf\)/);
+  assert.match(prompt, /FAILED test_graph/);
+  assert.match(prompt, /Minimal reproduction/);
+  assert.match(prompt, /Edge-case test/);
+  assert.match(prompt, /Performance \/ lag audit/);
+  assert.match(prompt, /Lectra debug handoff/);
+  assert.match(prompt, /do not invent hidden requirements/i);
+});
+
+test('CourseBrain code trace prompt clips long logs for responsiveness', () => {
+  const { brain } = loadCourseBrain();
+  const prompt = brain.__test.buildCodeTracePrompt('trace\n'.repeat(500), { title: 'Long Log' });
+
+  assert.match(prompt, /clipped for speed/);
+  assert.ok(prompt.length < 2800);
+});
+
 test('CourseBrain citation decoration handles repeated markers without linear source scans', () => {
   const { brain } = loadCourseBrain();
   const sources = Array.from({ length: 12 }, (_, i) => ({ n: i + 1, title: `Source ${i + 1}` }));

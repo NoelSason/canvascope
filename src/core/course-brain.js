@@ -304,6 +304,35 @@ Use this exact structure:
 Preserve provided source title/page/URL in the drill; do not invent facts beyond the excerpt.`;
   }
 
+  function buildCodeTracePrompt(trace, source = {}) {
+    const traceText = String(trace || '').trim();
+    const clippedTrace = traceText.length > 1800
+      ? `${traceText.slice(0, 1800).trim()}\n… clipped for speed; summarize the smallest failing trace before asking for more logs.`
+      : traceText;
+    const title = String(source.title || source.pageTitle || 'course code context').trim();
+    const course = String(source.course || source.courseName || '').trim();
+    const locator = [course, source.page ? `p. ${source.page}` : '', source.url || '']
+      .filter(Boolean)
+      .join(' · ');
+    return `Turn this Canvas/PDF/notebook code trace into a Lectra-ready debugging study note. Prioritize the selected excerpt so long logs, generated notebooks, and large PDFs stay responsive.
+
+Source: ${title}${locator ? ` (${locator})` : ''}
+
+Trace or snippet:
+"""
+${clippedTrace || '[No trace or snippet provided]'}
+"""
+
+Use this exact structure:
+1. Symptom — the key failing line or surprising behavior.
+2. Likely concept — algorithm, data structure, API, or language rule involved.
+3. Minimal reproduction — smallest input, command, or cell to rerun.
+4. Edge-case test — one assertion to add before editing.
+5. Performance / lag audit — note input size, repeated work, or parsing/indexing step to avoid rerunning blindly.
+6. Lectra debug handoff — 3 portable Markdown bullets for a notebook postmortem.
+Preserve provided source title/page/URL; do not invent hidden requirements, stack frames, or rubric details.`;
+  }
+
   function init(dependencies) {
     deps = dependencies;
     const select = $('brain-course-select');
@@ -321,6 +350,6 @@ Preserve provided source title/page/URL in the drill; do not invent facts beyond
     selectionStudyNote,
     refresh: populateCoursePicker,
     isBusy: () => busy,
-    __test: { createThrottledBrainRenderer, decorateCitations, buildStudyNotesPrompt, buildSelectionStudyNotePrompt, buildAssignmentBridgePrompt, buildConceptDrillPrompt }
+    __test: { createThrottledBrainRenderer, decorateCitations, buildStudyNotesPrompt, buildSelectionStudyNotePrompt, buildAssignmentBridgePrompt, buildConceptDrillPrompt, buildCodeTracePrompt }
   };
 })();
