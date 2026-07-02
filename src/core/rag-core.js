@@ -4,6 +4,12 @@
  */
 class RAGCore {
   static chunkIndexCache = new Map();
+  static queryStopWords = new Set([
+    'about', 'after', 'again', 'also', 'answer', 'because', 'before', 'could',
+    'does', 'explain', 'for', 'from', 'have', 'into', 'need', 'please', 'show',
+    'should', 'that', 'the', 'their', 'there', 'these', 'this', 'what', 'when',
+    'where', 'which', 'with', 'would', 'your'
+  ]);
 
   /**
    * Scrapes raw text from the active LMS browser tab, handling both HTML DOM and PDF documents natively.
@@ -178,16 +184,10 @@ class RAGCore {
    * @returns {Array<string>}
    */
   static queryTokens(promptText) {
-    const stopWords = new Set([
-      'about', 'after', 'again', 'also', 'answer', 'because', 'before', 'could',
-      'does', 'explain', 'for', 'from', 'have', 'into', 'need', 'please', 'show',
-      'should', 'that', 'the', 'their', 'there', 'these', 'this', 'what', 'when',
-      'where', 'which', 'with', 'would', 'your'
-    ]);
     return [...new Set(String(promptText || '').toLowerCase()
       .replace(/[^\w\s]/g, ' ')
       .split(/\s+/)
-      .filter(w => w.length > 2 && !stopWords.has(w)))];
+      .filter(w => w.length > 2 && !RAGCore.queryStopWords.has(w)))];
   }
 
   /**

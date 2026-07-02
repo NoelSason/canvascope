@@ -347,6 +347,14 @@ test('RAGCore.scoreCorpusItem checks large content lazily after title/course tok
   assert.equal(score, 12);
 });
 
+test('RAGCore.queryTokens reuses the shared stop-word set on the hot path', () => {
+  const stopWords = RAGCore.queryStopWords;
+  const tokens = RAGCore.queryTokens('please explain this graph algorithm for me');
+
+  assert.equal(RAGCore.queryStopWords, stopWords);
+  assert.deepEqual(tokens, ['graph', 'algorithm']);
+});
+
 test('RAGCore.semanticPreviewText caps body text for responsive semantic scoring', () => {
   const preview = RAGCore.semanticPreviewText({
     title: 'Graph Search Notes',
