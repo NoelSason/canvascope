@@ -396,6 +396,19 @@ class DocumentParser {
   }
 
   /**
+   * Keeps per-page ranking work bounded for very large readings. Ranking only
+   * needs enough signal to choose cited pages; the returned matched page still
+   * carries the original full text for downstream note generation.
+   */
+  static textSampleForScoring(text, maxChars = 12000) {
+    const safeText = String(text || '');
+    if (safeText.length <= maxChars) return safeText;
+
+    const half = Math.floor(maxChars / 2);
+    return `${safeText.slice(0, half)}\n…\n${safeText.slice(-half)}`;
+  }
+
+  /**
    * Lexically & conceptually scores parsed pages against prompt text and returns the top 3 matches using RRF.
    * @param {Array<string>} pages - Extracted text per page
    * @param {string} promptText - User query question
@@ -418,8 +431,9 @@ class DocumentParser {
     if (tokens.length > 0) {
       const scoredLexical = pages.map((text, idx) => {
         const safeText = String(text || '');
+        const scoringText = this.textSampleForScoring(safeText);
         let score = 0;
-        const textLower = safeText.toLowerCase();
+        const textLower = scoringText.toLowerCase();
         for (const token of tokens) {
           let pos = textLower.indexOf(token);
           while (pos !== -1) {
@@ -443,7 +457,7 @@ class DocumentParser {
 
       if (hasConcepts) {
         const scoredSemantic = pages.map((text, idx) => {
-          const pageVector = this.semanticVectorForPage(text);
+          const pageVector = this.semanticVectorForPage(this.textSampleForScoring(text));
           const similarity = pageVector ? SemanticMatcher.cosineSimilarity(queryVector, pageVector) : 0;
           return { pageNum: idx + 1, text, similarity };
         });

@@ -236,6 +236,22 @@ test('DocumentParser.scoreDocumentPages is resilient to pasted repeated prompts'
   assert.equal(fallback[2].text, null);
 });
 
+test('DocumentParser.scoreDocumentPages samples huge pages but returns full cited text', () => {
+  const giantMiddle = `intro ${'filler '.repeat(5000)} rare-tail-concept`;
+  const pages = [
+    giantMiddle,
+    'short dynamic programming notes'
+  ];
+
+  const sample = DocumentParser.textSampleForScoring(giantMiddle, 80);
+  assert.ok(sample.length < giantMiddle.length);
+  assert.ok(sample.includes('rare-tail-concept'));
+
+  const scored = DocumentParser.scoreDocumentPages(pages, 'rare-tail-concept');
+  assert.equal(scored[0].pageNum, 1);
+  assert.equal(scored[0].text, giantMiddle);
+});
+
 test('DocumentParser.scoreDocumentPages caches semantic page vectors for follow-up questions', () => {
   const pages = [
     'Lecture notes on dynamic programming memoization recurrence examples.',
