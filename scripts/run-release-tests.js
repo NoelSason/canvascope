@@ -6,18 +6,8 @@ const rootDir = path.resolve(__dirname, '..');
 const steps = [
   {
     name: 'Node regression tests',
-    command: process.execPath,
-    args: [
-      '--experimental-transform-types',
-      '--test',
-      'tests/backend-search-habits.test.mjs',
-      'tests/legacy-regressions.test.mjs',
-      'tests/skin-themes.test.mjs',
-      'tests/academic-tools-gpa.test.mjs',
-      'tests/local-ai.test.mjs',
-      'tests/dropbridge-v2.test.mjs',
-      'tests/risc-removal.test.mjs'
-    ]
+    command: 'npm',
+    args: ['run', 'test:node']
   },
   {
     name: 'Start local Supabase database',
