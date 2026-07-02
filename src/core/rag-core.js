@@ -4,6 +4,7 @@
  */
 class RAGCore {
   static chunkIndexCache = new Map();
+  static chunkIndexCacheLimit = 4;
   static queryStopWords = new Set([
     'about', 'after', 'again', 'also', 'answer', 'because', 'before', 'could',
     'does', 'explain', 'for', 'from', 'have', 'into', 'need', 'please', 'show',
@@ -591,7 +592,10 @@ class RAGCore {
     const corpus = await this.buildCorpus();
     const cacheKey = this.chunkIndexCacheKey(corpus, courseName);
     const cached = this.chunkIndexCache.get(cacheKey);
-    if (cached) return cached;
+    if (cached) {
+      this.touchChunkIndexCache(cacheKey, cached);
+      return cached;
+    }
 
     const scope = courseName
       ? corpus.filter(i => (i.courseName || '').toLowerCase() === courseName.toLowerCase())
@@ -620,12 +624,35 @@ class RAGCore {
         chunks.push({ ...base, page: null, text });
       }
     });
-    // Keep the cache tiny: it only spans repeated Ask/Brain calls within this
-    // extension worker lifetime, but avoids rebuilding thousands of PDF/page
-    // chunks while a student asks follow-up questions on the same course.
-    if (this.chunkIndexCache.size > 4) this.chunkIndexCache.clear();
-    this.chunkIndexCache.set(cacheKey, chunks);
+    this.rememberChunkIndex(cacheKey, chunks);
     return chunks;
+  }
+
+  /**
+   * Records chunk indexes with tiny LRU eviction instead of clearing every cached
+   * course at once. Students often switch between two or three courses while
+   * building study packs; preserving hot indexes avoids re-splitting large PDFs
+   * while still bounding service-worker memory.
+   * @param {string} cacheKey
+   * @param {Array} chunks
+   */
+  static rememberChunkIndex(cacheKey, chunks) {
+    this.touchChunkIndexCache(cacheKey, chunks);
+    while (this.chunkIndexCache.size > this.chunkIndexCacheLimit) {
+      const oldestKey = this.chunkIndexCache.keys().next().value;
+      if (!oldestKey) break;
+      this.chunkIndexCache.delete(oldestKey);
+    }
+  }
+
+  /**
+   * Moves a cache entry to the back of the Map so iteration order acts as LRU.
+   * @param {string} cacheKey
+   * @param {Array} chunks
+   */
+  static touchChunkIndexCache(cacheKey, chunks) {
+    if (this.chunkIndexCache.has(cacheKey)) this.chunkIndexCache.delete(cacheKey);
+    this.chunkIndexCache.set(cacheKey, chunks);
   }
 
   /**

@@ -478,6 +478,26 @@ test('RAGCore.buildChunkIndex reuses cached chunks until indexed metadata change
   }
 });
 
+test('RAGCore.rememberChunkIndex evicts least-recently-used course chunks', () => {
+  RAGCore.chunkIndexCache.clear();
+  const previousLimit = RAGCore.chunkIndexCacheLimit;
+  RAGCore.chunkIndexCacheLimit = 2;
+
+  try {
+    RAGCore.rememberChunkIndex('course-a', ['a']);
+    RAGCore.rememberChunkIndex('course-b', ['b']);
+    RAGCore.touchChunkIndexCache('course-a', ['a']);
+    RAGCore.rememberChunkIndex('course-c', ['c']);
+
+    assert.equal(RAGCore.chunkIndexCache.has('course-a'), true, 'recently reused course should stay hot');
+    assert.equal(RAGCore.chunkIndexCache.has('course-b'), false, 'least-recently-used course should be evicted');
+    assert.equal(RAGCore.chunkIndexCache.has('course-c'), true);
+  } finally {
+    RAGCore.chunkIndexCacheLimit = previousLimit;
+    RAGCore.chunkIndexCache.clear();
+  }
+});
+
 test('RAGCore.chunkTextWindow preserves tail concepts without increasing chunk size', () => {
   const longPage = `intro ${'filler '.repeat(500)}rare-tail-concept`;
   const windowed = RAGCore.chunkTextWindow(longPage, 120);
