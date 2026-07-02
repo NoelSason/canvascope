@@ -95,6 +95,25 @@ test('RAGCore.retrieveLocalContext returns empty array for non-matching queries'
   assert.equal(matches.length, 0);
 });
 
+test('RAGCore.retrieveBrainChunks skips all-stop-word queries before lowercasing corpus text', async () => {
+  const prevIndexed = mockStorage.indexedContent;
+  mockStorage.indexedContent = [
+    {
+      title: 'Large PDF',
+      courseName: 'CS 101',
+      type: 'file',
+      pages: [Array(1001).join('cache locality ')]
+    }
+  ];
+
+  try {
+    const chunks = await RAGCore.retrieveBrainChunks('what is this about the for', { courseName: 'CS 101' });
+    assert.deepEqual(chunks, []);
+  } finally {
+    mockStorage.indexedContent = prevIndexed;
+  }
+});
+
 test('RAGCore.hasScheduleIntent recognizes task/schedule questions', () => {
   assert.equal(RAGCore.hasScheduleIntent("what's on my to-do list?"), true);
   assert.equal(RAGCore.hasScheduleIntent('what do I have to do this week?'), true);
@@ -177,8 +196,10 @@ test('RAGCore.lectraContextPackTemplate gives a stable notebook handoff scaffold
   assert.ok(template.includes('# Project/Course Context Pack'));
   assert.ok(template.includes('## Commands or Checks'));
   assert.ok(template.includes('## Edge Cases'));
+  assert.ok(template.includes('## Citation Anchors'));
+  assert.ok(template.includes('## Performance / Lag Audit'));
   assert.ok(template.includes('## Paste into Lectra'));
-  assert.ok(template.length < 700);
+  assert.ok(template.length < 1000);
 });
 
 test('RAGCore.compileUnifiedPrompt includes context-pack scaffold for handoff requests', async () => {

@@ -250,6 +250,8 @@ class RAGCore {
       '## Sources — page/section ledger with the shortest useful quote.',
       '## Commands or Checks — terminal commands, tests, or notebook cells to run; include expected signal.',
       '## Edge Cases — boundary cases, pitfalls, or counterexamples to test.',
+      '## Citation Anchors — map each concept/example/check back to [n] plus page or quote.',
+      '## Performance / Lag Audit — name the largest PDF/page/notebook and one way to avoid re-parsing or re-rendering it.',
       '## Paste into Lectra — 2-3 compact bullets ready for a Lectra notebook.'
     ].join('\n');
   }
@@ -733,6 +735,7 @@ class RAGCore {
     if (chunks.length === 0) return [];
 
     const tokens = this.queryTokens(question);
+    if (tokens.length === 0) return [];
 
     const preparedChunks = chunks.map(chunk => ({
       chunk,
