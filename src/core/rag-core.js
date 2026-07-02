@@ -613,10 +613,10 @@ class RAGCore {
             : (page && page.text) ? String(page.text) : '';
           if (!text.trim()) return;
           const pageNumber = typeof page === 'string' ? index + 1 : (page.pageNum || index + 1);
-          chunks.push({ ...base, page: pageNumber, text: text.substring(0, 1500) });
+          chunks.push({ ...base, page: pageNumber, text: this.chunkTextWindow(text) });
         });
       } else {
-        const text = (item.content || '').substring(0, 1500);
+        const text = this.chunkTextWindow(item.content || '');
         chunks.push({ ...base, page: null, text });
       }
     });
@@ -626,6 +626,23 @@ class RAGCore {
     if (this.chunkIndexCache.size > 4) this.chunkIndexCache.clear();
     this.chunkIndexCache.set(cacheKey, chunks);
     return chunks;
+  }
+
+  /**
+   * Keeps indexed-course chunks prompt-budget bounded while preserving the page
+   * tail where conclusions, edge cases, and assignment requirements often live.
+   * The returned window stays roughly the same size as the former substring cap,
+   * so retrieval quality improves without increasing Ask/Study Pack latency.
+   * @param {string} text
+   * @param {number} maxChars
+   * @returns {string}
+   */
+  static chunkTextWindow(text, maxChars = 1500) {
+    const value = String(text || '');
+    if (value.length <= maxChars) return value;
+    const head = Math.floor(maxChars * 0.65);
+    const tail = maxChars - head;
+    return `${value.slice(0, head).trimEnd()}\n…\n${value.slice(-tail).trimStart()}`;
   }
 
   /**

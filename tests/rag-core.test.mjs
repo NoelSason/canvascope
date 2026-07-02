@@ -470,6 +470,49 @@ test('RAGCore.buildChunkIndex reuses cached chunks until indexed metadata change
   }
 });
 
+test('RAGCore.chunkTextWindow preserves tail concepts without increasing chunk size', () => {
+  const longPage = `intro ${'filler '.repeat(500)}rare-tail-concept`;
+  const windowed = RAGCore.chunkTextWindow(longPage, 120);
+
+  assert.ok(windowed.length <= 125, windowed);
+  assert.ok(windowed.includes('intro'));
+  assert.ok(windowed.includes('rare-tail-concept'));
+  assert.ok(windowed.includes('…'));
+});
+
+test('RAGCore.retrieveBrainChunks can find concepts near the end of long PDF pages', async () => {
+  const prevIndexed = mockStorage.indexedContent;
+  mockStorage.indexedContent = [
+    {
+      title: 'Long Systems PDF',
+      courseName: 'CS 101',
+      type: 'file',
+      url: 'https://mit.instructure.com/files/systems.pdf',
+      pages: [
+        {
+          pageNum: 8,
+          text: `Operating systems overview. ${'background filler '.repeat(300)} rare-tail-concept scheduler trap`
+        }
+      ]
+    }
+  ];
+  RAGCore.chunkIndexCache.clear();
+
+  try {
+    const chunks = await RAGCore.retrieveBrainChunks('rare-tail-concept scheduler trap', {
+      courseName: 'CS 101'
+    });
+
+    assert.equal(chunks.length, 1);
+    assert.equal(chunks[0].title, 'Long Systems PDF');
+    assert.equal(chunks[0].page, 8);
+    assert.ok(chunks[0].text.includes('rare-tail-concept'));
+  } finally {
+    mockStorage.indexedContent = prevIndexed;
+    RAGCore.chunkIndexCache.clear();
+  }
+});
+
 test('RAGCore.compileStudyPackPrompt emits cited actionable Markdown sections', async () => {
   const prevIndexed = mockStorage.indexedContent;
   mockStorage.indexedContent = [
