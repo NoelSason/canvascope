@@ -275,6 +275,35 @@ Use this exact structure:
 Do not invent rubric details, due dates, APIs, or requirements not present in the excerpt.`;
   }
 
+  function buildConceptDrillPrompt(concept, source = {}) {
+    const conceptText = String(concept || '').trim();
+    const clippedConcept = conceptText.length > 1800
+      ? `${conceptText.slice(0, 1800).trim()}\n… clipped for speed; drill the selected concept before expanding to the full PDF/page.`
+      : conceptText;
+    const title = String(source.title || source.pageTitle || 'course concept').trim();
+    const course = String(source.course || source.courseName || '').trim();
+    const locator = [course, source.page ? `p. ${source.page}` : '', source.url || '']
+      .filter(Boolean)
+      .join(' · ');
+    return `Turn this focused course concept into a fast active-recall drill for a CS student. Use only the selected excerpt first so long PDFs, Canvas pages, and generated notes stay responsive.
+
+Source: ${title}${locator ? ` (${locator})` : ''}
+
+Concept excerpt:
+"""
+${clippedConcept || '[No concept excerpt provided]'}
+"""
+
+Use this exact structure:
+1. One-sentence mental model — grounded in the excerpt.
+2. Tiny worked example — include inputs, output, and one intermediate state if applicable.
+3. Recall questions — 3 short questions, each answer hidden on the next line as **Answer:**.
+4. Edge-case trap — the mistake a student is most likely to make.
+5. Performance / lag hook — if this concept touches code, state the input size or repeated operation to watch.
+6. Lectra drill handoff — 3 portable Markdown bullets that can become notebook cells.
+Preserve provided source title/page/URL in the drill; do not invent facts beyond the excerpt.`;
+  }
+
   function init(dependencies) {
     deps = dependencies;
     const select = $('brain-course-select');
@@ -292,6 +321,6 @@ Do not invent rubric details, due dates, APIs, or requirements not present in th
     selectionStudyNote,
     refresh: populateCoursePicker,
     isBusy: () => busy,
-    __test: { createThrottledBrainRenderer, decorateCitations, buildStudyNotesPrompt, buildSelectionStudyNotePrompt, buildAssignmentBridgePrompt }
+    __test: { createThrottledBrainRenderer, decorateCitations, buildStudyNotesPrompt, buildSelectionStudyNotePrompt, buildAssignmentBridgePrompt, buildConceptDrillPrompt }
   };
 })();

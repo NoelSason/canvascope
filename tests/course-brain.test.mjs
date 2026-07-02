@@ -208,6 +208,31 @@ test('CourseBrain assignment bridge prompt clips long assignment text for respon
   assert.ok(prompt.length < 3100);
 });
 
+test('CourseBrain concept drill prompt makes fast active recall Lectra handoff', () => {
+  const { brain } = loadCourseBrain();
+  const prompt = brain.__test.buildConceptDrillPrompt(
+    'Hash tables trade memory for expected O(1) lookup using a hash function and collision handling.',
+    { title: 'Week 7 Notes', course: 'CS 201', page: 8, url: 'https://canvas.example/hash.pdf' }
+  );
+
+  assert.match(prompt, /active-recall drill/);
+  assert.match(prompt, /Use only the selected excerpt first/);
+  assert.match(prompt, /Week 7 Notes \(CS 201 · p\. 8 · https:\/\/canvas\.example\/hash\.pdf\)/);
+  assert.match(prompt, /Tiny worked example/);
+  assert.match(prompt, /Recall questions/);
+  assert.match(prompt, /Performance \/ lag hook/);
+  assert.match(prompt, /Lectra drill handoff/);
+  assert.match(prompt, /do not invent facts/i);
+});
+
+test('CourseBrain concept drill prompt clips long excerpts for responsiveness', () => {
+  const { brain } = loadCourseBrain();
+  const prompt = brain.__test.buildConceptDrillPrompt('x'.repeat(2200), { title: 'Long Concept' });
+
+  assert.match(prompt, /clipped for speed/);
+  assert.ok(prompt.length < 2800);
+});
+
 test('CourseBrain citation decoration handles repeated markers without linear source scans', () => {
   const { brain } = loadCourseBrain();
   const sources = Array.from({ length: 12 }, (_, i) => ({ n: i + 1, title: `Source ${i + 1}` }));
