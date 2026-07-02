@@ -10,6 +10,7 @@ const docParserCode = fs.readFileSync(docParserPath, 'utf8');
 
 // Define chrome mocks
 let mockStorage = {};
+let mockStorageSetCalls = 0;
 globalThis.chrome = {
   runtime: {
     getURL: (p) => `chrome-extension://mock-id/${p}`
@@ -24,6 +25,7 @@ globalThis.chrome = {
         return out;
       },
       set: async (obj) => {
+        mockStorageSetCalls += 1;
         mockStorage = { ...mockStorage, ...obj };
       }
     }
@@ -129,6 +131,7 @@ test('DocumentParser.assessPdfTextQuality warns on low-text or scoped extracts',
 
 test('DocumentParser.fetchAndParsePdf utilizes storage caches', async () => {
   mockStorage = {};
+  mockStorageSetCalls = 0;
   const mockUrl = 'https://mit.edu/syllabus.pdf';
   
   // Set mock network fetch
@@ -152,8 +155,35 @@ test('DocumentParser.fetchAndParsePdf utilizes storage caches', async () => {
   assert.equal(pages2.length, 3);
 });
 
+test('DocumentParser.persistPdfToIndex skips unchanged PDFs by compact revision', async () => {
+  const pages = [
+    'Cache locality lecture notes with examples and citations.'.repeat(20),
+    'Virtual memory translation and page table notes.'.repeat(20)
+  ];
+  const url = 'https://mit.edu/cache-notes.pdf';
+  mockStorageSetCalls = 0;
+  mockStorage = {
+    indexedContent: [{
+      title: 'Cache Notes',
+      courseName: 'CS 101',
+      url,
+      type: 'file',
+      content: '',
+      pages: [],
+      sourceRevision: DocumentParser.pdfIndexRevision(pages),
+      indexedAt: 123
+    }]
+  };
+
+  await DocumentParser.persistPdfToIndex(url, 'Cache Notes', 'CS 101', pages);
+
+  assert.equal(mockStorageSetCalls, 0);
+  assert.equal(mockStorage.indexedContent[0].indexedAt, 123);
+});
+
 test('DocumentParser.fetchAndParsePdf keeps scoped PDF cache separate from full index', async () => {
   mockStorage = { indexedContent: [] };
+  mockStorageSetCalls = 0;
   const mockUrl = 'https://mit.edu/large-textbook.pdf';
   let fetches = 0;
   globalThis.fetch = async () => {

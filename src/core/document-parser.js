@@ -274,17 +274,30 @@ class DocumentParser {
       const { indexedContent = [] } = await chrome.storage.local.get(['indexedContent']);
       const existingIdx = indexedContent.findIndex(item => item.url && item.url.split('?')[0].split('#')[0] === cleanUrl);
       
-      const fullText = pagesText.join('\n').trim();
       const filename = cleanUrl.split('/').pop() || 'document.pdf';
       const cleanTitle = title || filename;
       const cleanCourseName = courseName || 'General';
       const existing = existingIdx !== -1 ? indexedContent[existingIdx] : null;
+      const sourceRevision = this.pdfIndexRevision(pagesText);
 
       // Re-parsing the same PDF can happen on page focus, Ask retries, and Study
-      // Pack generation. If nothing student-visible changed, skip the storage
-      // write so large PDF indexes do not churn extension storage or bump
-      // indexedAt ordering, which keeps the side panel responsive on big courses.
+      // Pack generation. Compare the compact revision token before joining the
+      // whole PDF body or walking every stored page, which avoids a large string
+      // allocation on hot follow-up questions over unchanged readings.
       if (existing &&
+          existing.title === cleanTitle &&
+          existing.courseName === cleanCourseName &&
+          existing.sourceRevision === sourceRevision) {
+        console.log('[Canvascope DocumentParser] Indexed PDF unchanged by revision; skipped storage rewrite:', cleanTitle);
+        return;
+      }
+
+      const fullText = pagesText.join('\n').trim();
+
+      // Backward compatibility for indexes created before sourceRevision existed:
+      // still skip the write if the stored full text/pages exactly match.
+      if (existing &&
+          !existing.sourceRevision &&
           existing.title === cleanTitle &&
           existing.courseName === cleanCourseName &&
           existing.content === fullText &&
@@ -303,7 +316,7 @@ class DocumentParser {
         content: fullText, // Save full text in item's content field
         pages: pagesText,
         textQuality: this.assessPdfTextQuality(pagesText),
-        sourceRevision: this.pdfIndexRevision(pagesText),
+        sourceRevision,
         indexedAt: Date.now()
       };
 
