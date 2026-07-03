@@ -827,7 +827,7 @@ Style: concise (2-4 sentences or a short list). Use bold text, inline code backt
 
   function applyPdfSuggestions() {
     if (suggestButtons.length >= 3) {
-      setSuggestLabel(suggestButtons[0], "Summarize PDF Document", "Provide a comprehensive summary of this active PDF document.");
+      setSuggestLabel(suggestButtons[0], "Study Notes from PDF", "Turn this active PDF into actionable study notes. Include: key concepts, Cornell-style cue questions, worked examples or applications, likely edge cases/pitfalls, a short retrieval-practice quiz, and page-number citations. End with a concise Lectra handoff checklist I can use on iPad.");
       setSuggestLabel(suggestButtons[1], "Extract Tasks from PDF", "Identify and list all key due dates, milestones, and deliverables inside this PDF document.");
       setSuggestLabel(suggestButtons[2], "Practice Quiz on PDF", "Create a 3-question conceptual practice quiz based on the contents of this PDF document.");
     }

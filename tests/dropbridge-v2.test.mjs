@@ -5,6 +5,7 @@ import { test } from 'node:test';
 const backgroundSource = readFileSync(new URL('../src/background/background.js', import.meta.url), 'utf8');
 const offscreenSource = readFileSync(new URL('../src/offscreen/offscreen.js', import.meta.url), 'utf8');
 const popupHtmlSource = readFileSync(new URL('../src/popup/popup.html', import.meta.url), 'utf8');
+const popupJsSource = readFileSync(new URL('../src/popup/popup.js', import.meta.url), 'utf8');
 const sidepanelHtmlSource = readFileSync(new URL('../src/sidepanel/sidepanel.html', import.meta.url), 'utf8');
 const sidepanelJsSource = readFileSync(new URL('../src/sidepanel/sidepanel.js', import.meta.url), 'utf8');
 const gradescopeSource = readFileSync(new URL('../src/content/gradescope.js', import.meta.url), 'utf8');
@@ -80,6 +81,26 @@ test('Lectra disabled hides UI and prevents FileDrop receiver warmup', () => {
   assert.match(gradescopeSource, /removeButtons\(\)/);
   assert.match(sidepanelHtmlSource, /id="btn-lectra-send"[^>]*hidden/);
   assert.match(sidepanelJsSource, /function updateLectraButtonVisibility/);
+});
+
+test('PDF study workflow favors actionable notes with citations and Lectra handoff', () => {
+  const pdfSuggestions = sourceBetween(
+    sidepanelJsSource,
+    'function applyPdfSuggestions()',
+    'function restoreDefaultSuggestions()',
+  );
+
+  assert.match(pdfSuggestions, /Study Notes from PDF/);
+  assert.match(pdfSuggestions, /key concepts/);
+  assert.match(pdfSuggestions, /Cornell-style cue questions/);
+  assert.match(pdfSuggestions, /worked examples or applications/);
+  assert.match(pdfSuggestions, /edge cases\/pitfalls/);
+  assert.match(pdfSuggestions, /page-number citations/);
+  assert.match(pdfSuggestions, /Lectra handoff checklist/);
+});
+
+test('popup PDF viewer diagnostics are opt-in for responsiveness', () => {
+  assert.match(popupJsSource, /const PDF_VIEWER_DEBUG = false;/);
 });
 
 test('DropBridge upload sends explicit realtime wake with sender device tracking', () => {

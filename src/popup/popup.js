@@ -3546,7 +3546,10 @@ const elements = {};
 // ============================================
 
 const MAX_RECENTS = 5;
-const PDF_VIEWER_DEBUG = true;
+// Keep active-tab PDF diagnostics opt-in. The debug probe injects a script into
+// the current tab from popup startup/refresh paths, so leaving it enabled adds
+// avoidable latency and console noise to the common study workflow.
+const PDF_VIEWER_DEBUG = false;
 const POPUP_UI_STORAGE_KEY = 'popupUi';
 const DEFAULT_EXTENSION_SETTINGS = Object.freeze({
   enableSendToLectra: false,
