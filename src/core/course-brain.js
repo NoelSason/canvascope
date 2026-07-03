@@ -507,12 +507,28 @@ Use only the cited context first; say what source is missing instead of inventin
   }
 
   /**
+   * Build a grounded practice-quiz request with a tiny spaced-review follow-up.
+   * Students using AI study tools are better served by retrieval practice than
+   * one-off summaries, so keep the quiz cited and add a short replay schedule.
+   */
+  function buildPracticeQuizPrompt(scopeLabel) {
+    return `Create a 4-question practice quiz on the most important concepts in ${scopeLabel}. For each question give the answer on the next line in bold. Base every question on the sources.
+
+After the answers, add a short "Review next" section with:
+- what to retry today
+- what to revisit tomorrow
+- what to save into Lectra as a notebook cell, flashcard, or checklist
+
+If the sources are thin, say what material is missing instead of inventing facts.`;
+  }
+
+  /**
    * Generate a grounded practice quiz from the current Brain scope.
    * Rides the same retrieval + router path as ask().
    */
   async function quiz() {
     const scopeLabel = courseScope || 'my courses';
-    return ask(`Create a 4-question practice quiz on the most important concepts in ${scopeLabel}. For each question give the answer on the next line in bold. Base every question on the sources.`);
+    return ask(buildPracticeQuizPrompt(scopeLabel));
   }
 
   function init(dependencies) {
@@ -534,6 +550,7 @@ Use only the cited context first; say what source is missing instead of inventin
     buildConceptDrillPrompt,
     buildCodeTracePrompt,
     buildExamSprintPrompt,
+    buildPracticeQuizPrompt,
     parseTargetLetter,
     normName,
     nameMatch

@@ -294,6 +294,20 @@ test('CourseBrain exam sprint prompt clips long contexts for responsiveness', ()
   assert.ok(prompt.length < 2300);
 });
 
+test('CourseBrain practice quiz prompt adds spaced review and Lectra save guidance', () => {
+  const { brain } = loadCourseBrain();
+  const prompt = brain.__test.buildPracticeQuizPrompt('CS 201');
+
+  assert.match(prompt, /4-question practice quiz/);
+  assert.match(prompt, /CS 201/);
+  assert.match(prompt, /Base every question on the sources/);
+  assert.match(prompt, /Review next/);
+  assert.match(prompt, /retry today/);
+  assert.match(prompt, /revisit tomorrow/);
+  assert.match(prompt, /save into Lectra/);
+  assert.match(prompt, /instead of inventing facts/i);
+});
+
 test('CourseBrain grade target parser handles for-a-letter phrasing', () => {
   const { brain } = loadCourseBrain();
 
