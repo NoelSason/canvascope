@@ -122,6 +122,23 @@ test('DocumentParser.scoreDocumentPages ranks relevant pages and chunks appropri
   assert.equal(fallback[0].pageNum, 1);
 });
 
+test('DocumentParser filters repeated study-command words before scanning pages', () => {
+  const tokens = DocumentParser.getPromptSearchTokens(
+    'Please explain explain study notes about biodiesel biodiesel citations from the page'
+  );
+  assert.deepEqual(tokens, ['biodiesel', 'citations']);
+
+  const pages = [
+    'This page says study notes lecture material page summary over and over.',
+    'Biodiesel transesterification citations and edge cases are covered here.'
+  ];
+  const scored = DocumentParser.scoreDocumentPages(
+    pages,
+    'Please make study notes about biodiesel biodiesel citations from the page'
+  );
+  assert.equal(scored[0].pageNum, 2);
+});
+
 test('DocumentParser.persistPdfToIndex saves PDF persistently to indexedContent', async () => {
   mockStorage = { indexedContent: [] };
   const mockUrl = 'https://ucla.edu/syllabus.pdf';

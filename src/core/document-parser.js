@@ -227,14 +227,33 @@ class DocumentParser {
    * @param {string} promptText - User query question
    * @returns {Array<{pageNum: number, text: string}>} Top 3 matching pages
    */
+  static getPromptSearchTokens(promptText) {
+    const stopWords = new Set([
+      'about', 'also', 'and', 'answer', 'based', 'brief', 'canvas', 'citation', 'cite', 'class',
+      'concept', 'concepts', 'course', 'define', 'detail', 'details', 'example', 'examples',
+      'explain', 'find', 'for', 'from', 'give', 'help', 'into', 'lecture', 'make', 'material', 'materials',
+      'note', 'notes', 'page', 'pages', 'please', 'provide', 'question', 'read', 'section',
+      'show', 'study', 'summarize', 'summary', 'tell', 'the', 'this', 'using', 'what', 'when', 'where',
+      'which', 'with'
+    ]);
+    const seen = new Set();
+    return String(promptText || '').toLowerCase()
+      .replace(/[^\w\s]/g, ' ')
+      .split(/\s+/)
+      .filter((word) => {
+        if (word.length <= 2 || stopWords.has(word) || seen.has(word)) return false;
+        seen.add(word);
+        return true;
+      });
+  }
+
   static scoreDocumentPages(pages, promptText) {
     if (!Array.isArray(pages) || pages.length === 0) return [];
 
-    // 1. Lexical page scoring list
-    const tokens = promptText.toLowerCase()
-      .replace(/[^\w\s]/g, '')
-      .split(/\s+/)
-      .filter(w => w.length > 2);
+    // 1. Lexical page scoring list. De-duping and filtering common study-command
+    // words avoids repeated full-page scans and keeps actionable course terms
+    // (e.g. named concepts, formulas, authors) from being drowned out by prompt phrasing.
+    const tokens = this.getPromptSearchTokens(promptText);
 
     let lexicalRankList = [];
     if (tokens.length > 0) {
