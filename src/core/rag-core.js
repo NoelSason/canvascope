@@ -3,11 +3,29 @@
  * Scrapes page content and retrieves relevant local schedule/task context.
  */
 class RAGCore {
+  static get TOKEN_CACHE_LIMIT() {
+    return 300;
+  }
+
   static tokenize(text) {
-    return String(text || '').toLowerCase()
+    const source = String(text || '');
+    if (!this._tokenCache) this._tokenCache = new Map();
+    const cached = this._tokenCache.get(source);
+    if (cached) {
+      this._tokenCache.delete(source);
+      this._tokenCache.set(source, cached);
+      return cached.slice();
+    }
+    const tokens = source.toLowerCase()
       .replace(/[^\w\s]/g, ' ')
       .split(/\s+/)
       .filter(w => w.length > 2);
+    this._tokenCache.set(source, tokens);
+    while (this._tokenCache.size > this.TOKEN_CACHE_LIMIT) {
+      const oldestKey = this._tokenCache.keys().next().value;
+      this._tokenCache.delete(oldestKey);
+    }
+    return tokens.slice();
   }
 
   static normalizeTimestamp(value) {
@@ -85,6 +103,14 @@ class RAGCore {
     const q = String(question || '').toLowerCase();
     if (!q) return false;
     return /\b(big[- ]?o|time complexity|space complexity|runtime|asymptotic|worst case|average case|amortized|scales?|efficient|efficiency)\b/.test(q);
+  }
+
+  static hasLectraHandoffIntent(question) {
+    const q = String(question || '').toLowerCase();
+    if (!q) return false;
+    const handoff = /\b(lectra|ipad|portable notes?|export|handoff|send|carry over)\b/.test(q);
+    const studyArtifact = /\b(notes?|study guide|cornell|outline|summary|flashcards?|quiz|practice|checklist)\b/.test(q);
+    return handoff && studyArtifact;
   }
 
   static isCourseMaterialChunk(chunk) {
@@ -685,7 +711,10 @@ class RAGCore {
     // the student's own records (tasks/deadlines, PDF pages) rather than the
     // broad active-page course list, which otherwise causes over-cautious
     // "I can't find that" refusals when a task's course code differs from the page.
-    compiledPrompt += `=== QUESTION ===\nAnswer the student's request. Use the sections above as authoritative context for their personal specifics (tasks/deadlines, document pages) — prefer those over the general active-page text, and match tasks by topic even if the course code differs from the page. For conceptual or "explain/teach me" questions, answer fully from your general knowledge even when the sections don't cover the topic, and tie the explanation to the student's profile and course materials where relevant. Do not refuse a concept question for lack of a matching section. Request: ${promptText}`;
+    const lectraHandoff = this.hasLectraHandoffIntent(promptText)
+      ? ' If the student asks for Lectra/iPad handoff notes, end with a compact "Lectra handoff" checklist: portable note title, source/page citations to keep, concepts to ink, examples to rewrite, and retrieval-practice prompts.'
+      : '';
+    compiledPrompt += `=== QUESTION ===\nAnswer the student's request. Use the sections above as authoritative context for their personal specifics (tasks/deadlines, document pages) — prefer those over the general active-page text, and match tasks by topic even if the course code differs from the page. For conceptual or "explain/teach me" questions, answer fully from your general knowledge even when the sections don't cover the topic, and tie the explanation to the student's profile and course materials where relevant. Do not refuse a concept question for lack of a matching section.${lectraHandoff} Request: ${promptText}`;
 
     return compiledPrompt;
   }

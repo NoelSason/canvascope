@@ -96,6 +96,20 @@ test('RAGCore.hasScheduleIntent recognizes task/schedule questions', () => {
   assert.equal(RAGCore.hasScheduleIntent('explain the quadratic formula'), false);
 });
 
+test('RAGCore.tokenize returns defensive copies from its cache', () => {
+  const first = RAGCore.tokenize('Make Lectra study notes from this PDF');
+  first.push('mutated');
+  const second = RAGCore.tokenize('Make Lectra study notes from this PDF');
+  assert.deepEqual(second, ['make', 'lectra', 'study', 'notes', 'from', 'this', 'pdf']);
+});
+
+test('RAGCore.compileRAGPrompt adds Lectra handoff guidance when requested', async () => {
+  mockTabUrl = 'https://google.com';
+  const compiled = await RAGCore.compileRAGPrompt('make this into Lectra iPad study notes');
+  assert.ok(compiled.includes('Lectra handoff'));
+  assert.ok(compiled.includes('source/page citations'));
+});
+
 test('RAGCore.retrieveLocalContext surfaces tasks for schedule queries with no keyword match', async () => {
   // "what do I need to do?" does not lexically match any stored title/course,
   // but the context-aware fallback should still surface the pending to-do.
