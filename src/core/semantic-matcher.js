@@ -11,7 +11,7 @@ class SemanticMatcher {
         MATERIAL: Object.freeze(['slides', 'lecture', 'reading', 'paper', 'syllabus', 'deck', 'textbook', 'worksheet', 'document', 'pdf', 'notes']),
         TIME: Object.freeze(['due', 'deadline', 'date', 'calendar', 'schedule', 'when', 'overdue', 'time', 'upcoming', 'next']),
         COMMUNICATION: Object.freeze(['email', 'zoom', 'office hours', 'professor', 'ta', 'contact', 'question', 'help', 'instructor', 'officehours']),
-        COMPUTING: Object.freeze(['code', 'coding', 'programming', 'python', 'notebook', 'jupyter', 'github', 'repo', 'terminal', 'algorithm', 'debug', 'function'])
+        COMPUTING: Object.freeze(['code', 'coding', 'programming', 'python', 'notebook', 'jupyter', 'github', 'repo', 'terminal', 'algorithm', 'debug', 'function', 'runtime', 'complexity', 'big-o', 'recursion', 'stack', 'heap', 'array', 'graph', 'tree', 'api', 'cli', 'compile', 'test'])
       });
     }
     return this._dimensions;
@@ -19,6 +19,19 @@ class SemanticMatcher {
 
   static get VECTOR_CACHE_LIMIT() {
     return 250;
+  }
+
+  static get CONCEPT_TERMS() {
+    if (!this._conceptTerms) {
+      this._conceptTerms = Object.freeze(
+        Object.entries(this.DIMENSIONS).map(([dimension, synonyms]) => Object.freeze({
+          dimension,
+          exact: Object.freeze(new Set(synonyms.filter(term => !term.includes(' ')))),
+          phrases: Object.freeze(synonyms.filter(term => term.includes(' ')))
+        }))
+      );
+    }
+    return this._conceptTerms;
   }
 
   static cloneVector(vector) {
@@ -76,17 +89,27 @@ class SemanticMatcher {
 
     if (!normalizedText) return this.rememberVector(cacheKey, vector);
 
-    // Tokenize text into words
-    const tokens = normalizedText.toLowerCase()
-      .replace(/[^\w\s]/g, ' ')
-      .split(/\s+/)
-      .filter(w => w.length > 2);
+    // Tokenize text once, then score exact concept hits in O(tokens + phrases)
+    // instead of repeatedly scanning every synonym for every token. This keeps
+    // side-panel retrieval responsive when CS PDFs/notebooks produce many chunks.
+    const lowerText = normalizedText.toLowerCase();
+    const tokenCounts = new Map();
+    for (const token of lowerText.replace(/[^\w\s-]/g, ' ').split(/\s+/)) {
+      if (token.length > 2) {
+        tokenCounts.set(token, (tokenCounts.get(token) || 0) + 1);
+      }
+    }
 
     // Populate frequencies
-    for (const token of tokens) {
-      for (const [dim, synonyms] of Object.entries(dims)) {
-        if (synonyms.some(syn => token.includes(syn) || syn.includes(token))) {
-          vector[dim] += 1;
+    for (const { dimension, exact, phrases } of this.CONCEPT_TERMS) {
+      for (const [token, count] of tokenCounts) {
+        if (exact.has(token)) {
+          vector[dimension] += count;
+        }
+      }
+      for (const phrase of phrases) {
+        if (lowerText.includes(phrase)) {
+          vector[dimension] += 1;
         }
       }
     }

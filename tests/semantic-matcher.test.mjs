@@ -45,6 +45,12 @@ test('SemanticMatcher.vectorize recognizes computing coursework and protects cac
   assert.ok(second.COMPUTING > 0, 'cached vectors should be returned as defensive copies');
 });
 
+test('SemanticMatcher.vectorize recognizes CS complexity and data-structure study terms', () => {
+  const vector = SemanticMatcher.vectorize('Big-O runtime for recursion stack and graph traversal');
+  assert.ok(vector.COMPUTING > 0, 'complexity/data-structure language should rank as computing context');
+  assert.equal(vector.EVALUATION, 0);
+});
+
 test('SemanticMatcher.cosineSimilarity computes similarity index', () => {
   const v1 = SemanticMatcher.vectorize('When is the chemistry midterm exam due?'); // Evaluative + Temporal
   const v2 = SemanticMatcher.vectorize('Final quiz deadline schedule'); // Evaluative + Temporal
