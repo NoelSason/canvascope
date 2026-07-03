@@ -268,3 +268,37 @@ test('CourseBrain citation decoration handles repeated markers without linear so
     'Compare <button class="brain-cite" data-cite="12" title="Source 12">12</button> with <button class="brain-cite" data-cite="12" title="Source 12">12</button> and <button class="brain-cite" data-cite="1" title="Source 1">1</button>'
   );
 });
+
+test('CourseBrain exam sprint prompt creates fast cited Lectra handoffs', () => {
+  const { brain } = loadCourseBrain();
+  const prompt = brain.__test.buildExamSprintPrompt(
+    'Midterm covers BFS, Dijkstra, and shortest-path edge cases.',
+    { title: 'Exam Review PDF', course: 'CS 201', page: 9, url: 'https://canvas.example/exam-review.pdf' }
+  );
+
+  assert.match(prompt, /25-minute exam sprint/);
+  assert.match(prompt, /Exam Review PDF \(CS 201 · p\. 9 · https:\/\/canvas\.example\/exam-review\.pdf\)/);
+  assert.match(prompt, /5-minute skim plan/);
+  assert.match(prompt, /active recall drill/);
+  assert.match(prompt, /worked example or trace/);
+  assert.match(prompt, /Lectra handoff/);
+  assert.match(prompt, /performance\/lag angle/);
+  assert.match(prompt, /instead of inventing facts/i);
+});
+
+test('CourseBrain exam sprint prompt clips long contexts for responsiveness', () => {
+  const { brain } = loadCourseBrain();
+  const prompt = brain.__test.buildExamSprintPrompt('chapter '.repeat(500), { title: 'Huge Review Packet' });
+
+  assert.match(prompt, /clipped for speed/);
+  assert.ok(prompt.length < 2300);
+});
+
+test('CourseBrain course normalization strips terms and reuses cached labels', () => {
+  const { brain } = loadCourseBrain();
+
+  assert.equal(brain.__test.normName('Organic Chemistry Laboratory (Spring 2026)'), 'organic chemistry laboratory');
+  assert.equal(brain.__test.normName('CS-201: Data Structures — Fall 2026'), 'cs 201 data structures');
+  assert.equal(brain.__test.normName('CS-201: Data Structures — Fall 2026'), 'cs 201 data structures');
+  assert.equal(brain.__test.nameMatch('CS 201 Data Structures (Fall 2026)', 'Data Structures'), true);
+});

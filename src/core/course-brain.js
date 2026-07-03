@@ -222,6 +222,24 @@ Include:
 Do not invent hidden requirements.`;
   }
 
+  function buildExamSprintPrompt(topic, source) {
+    const clipped = clipForPrompt(topic, 1200);
+    return `Create a 25-minute exam sprint from this Canvas/PDF context.
+Source: ${sourceLabel(source)}
+${clipped.clipped ? 'Note: the topic/context was clipped for speed; ask for missing pages if needed.\n' : ''}
+Context:
+${clipped.text}
+
+Return:
+- 5-minute skim plan with citation targets
+- 10-minute active recall drill
+- 7-minute worked example or trace
+- 3-minute Lectra handoff: exact note title, notebook cell, or checklist to save
+- One performance/lag angle if the topic involves code, tools, PDFs, or notebooks
+
+Use only the cited context first; say what source is missing instead of inventing facts.`;
+  }
+
   // Questions like "what do I need to get an A" are answered by the deterministic
   // grade-target calculator (grade-target.js), NOT the LLM — LLMs are unreliable
   // at the weighted arithmetic. Schedule/policy questions fall through to the
@@ -252,9 +270,16 @@ Do not invent hidden requirements.`;
   // courseName (e.g. "Organic Chemistry Laboratory (Spring 2026)"), the syllabus
   // parse stores the breadcrumb name ("Chem 3BL"), and Canvas grades use yet
   // another course.name. Normalize (drop term/year/punctuation) and match
-  // loosely so any of them resolves to the same Canvas courseId.
+  // loosely so any of them resolves to the same Canvas courseId. This path can
+  // run repeatedly while answering grade questions, so cache normalized labels
+  // to avoid regex churn on large indexed course lists.
+  const normNameCache = new Map();
+  const MAX_NORM_NAME_CACHE = 256;
+
   function normName(s) {
-    return String(s || '')
+    const key = String(s || '');
+    if (normNameCache.has(key)) return normNameCache.get(key);
+    const normalized = key
       .toLowerCase()
       .replace(/\([^)]*\)/g, ' ')                       // drop "(Spring 2026)"
       .replace(/\b(spring|summer|fall|winter)\b/g, ' ')
@@ -262,6 +287,9 @@ Do not invent hidden requirements.`;
       .replace(/[^a-z0-9]+/g, ' ')
       .replace(/\s+/g, ' ')
       .trim();
+    if (normNameCache.size >= MAX_NORM_NAME_CACHE) normNameCache.clear();
+    normNameCache.set(key, normalized);
+    return normalized;
   }
   function nameMatch(a, b) {
     const x = normName(a), y = normName(b);
@@ -504,7 +532,10 @@ Do not invent hidden requirements.`;
     buildSelectionStudyNotePrompt,
     buildAssignmentBridgePrompt,
     buildConceptDrillPrompt,
-    buildCodeTracePrompt
+    buildCodeTracePrompt,
+    buildExamSprintPrompt,
+    normName,
+    nameMatch
   };
   window.CourseBrain = api;
 })();
