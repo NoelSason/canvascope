@@ -103,6 +103,16 @@ test('RAGCore.tokenize returns defensive copies from its cache', () => {
   assert.deepEqual(second, ['make', 'lectra', 'study', 'notes', 'from', 'this', 'pdf']);
 });
 
+test('RAGCore.tokenize avoids retaining huge scraped source blobs', () => {
+  RAGCore._tokenCache = new Map();
+  const huge = `${'recursion '.repeat(1600)}dynamic programming`;
+  const tokens = RAGCore.tokenize(huge);
+
+  assert.ok(tokens.includes('recursion'));
+  assert.ok(tokens.includes('dynamic'));
+  assert.equal(RAGCore._tokenCache.size, 0);
+});
+
 test('RAGCore.compileRAGPrompt adds Lectra handoff guidance when requested', async () => {
   mockTabUrl = 'https://google.com';
   const compiled = await RAGCore.compileRAGPrompt('make this into Lectra iPad study notes');
@@ -326,6 +336,35 @@ test('RAGCore prompts add Big-O guidance for CS complexity questions', async () 
     const compiled = await RAGCore.compileUnifiedPrompt('what is the time complexity of BFS?');
     assert.match(compiled.prompt, /time and space complexity/i);
     assert.match(compiled.prompt, /input variables/i);
+  } finally {
+    mockStorage.indexedContent = prevIndexed;
+    mockTabUrl = prevTabUrl;
+  }
+});
+
+test('RAGCore prompts structure concept maps and prerequisite gap checks', async () => {
+  assert.equal(RAGCore.hasConceptMapIntent('make a concept map of trees and heaps'), true);
+  assert.equal(RAGCore.hasConceptMapIntent('what are my knowledge gaps before the midterm?'), true);
+  assert.equal(RAGCore.hasConceptMapIntent('summarize the reading'), false);
+
+  const prevIndexed = mockStorage.indexedContent;
+  const prevTabUrl = mockTabUrl;
+  mockTabUrl = 'https://google.com';
+  mockStorage.indexedContent = [
+    {
+      title: 'Trees and heaps notes',
+      courseName: 'CS 61B',
+      type: 'file',
+      content: 'Binary trees, heaps, priority queues, and traversal invariants.'
+    }
+  ];
+
+  try {
+    const compiled = await RAGCore.compileUnifiedPrompt('make a concept map and gap check for heaps');
+    assert.match(compiled.prompt, /Core concepts/);
+    assert.match(compiled.prompt, /How they connect/);
+    assert.match(compiled.prompt, /Prerequisites to review/);
+    assert.match(compiled.prompt, /Next study action/);
   } finally {
     mockStorage.indexedContent = prevIndexed;
     mockTabUrl = prevTabUrl;

@@ -9,6 +9,14 @@ class RAGCore {
 
   static tokenize(text) {
     const source = String(text || '');
+    // Large scraped PDFs/pages are common in Canvascope. Caching those full
+    // strings as Map keys keeps megabytes alive after retrieval and can make the
+    // sidepanel feel progressively laggier during long study sessions. Cache the
+    // short/repeated queries and metadata labels where reuse is high; tokenize
+    // one-off large source blobs directly.
+    if (source.length > 12000) {
+      return this.tokenizeUncached(source);
+    }
     if (!this._tokenCache) this._tokenCache = new Map();
     const cached = this._tokenCache.get(source);
     if (cached) {
@@ -16,16 +24,20 @@ class RAGCore {
       this._tokenCache.set(source, cached);
       return cached.slice();
     }
-    const tokens = source.toLowerCase()
-      .replace(/[^\w\s]/g, ' ')
-      .split(/\s+/)
-      .filter(w => w.length > 2);
+    const tokens = this.tokenizeUncached(source);
     this._tokenCache.set(source, tokens);
     while (this._tokenCache.size > this.TOKEN_CACHE_LIMIT) {
       const oldestKey = this._tokenCache.keys().next().value;
       this._tokenCache.delete(oldestKey);
     }
     return tokens.slice();
+  }
+
+  static tokenizeUncached(text) {
+    return String(text || '').toLowerCase()
+      .replace(/[^\w\s]/g, ' ')
+      .split(/\s+/)
+      .filter(w => w.length > 2);
   }
 
   static normalizeTimestamp(value) {
@@ -105,6 +117,12 @@ class RAGCore {
     return /\b(big[- ]?o|time complexity|space complexity|runtime|asymptotic|worst case|average case|amortized|scales?|efficient|efficiency)\b/.test(q);
   }
 
+  static hasConceptMapIntent(question) {
+    const q = String(question || '').toLowerCase();
+    if (!q) return false;
+    return /\b(concept map|dependency map|how (?:does|do) .* connect|connect(?:ions|ed)? between|what (?:am i|are we) missing|knowledge gaps?|gap check|prerequisites?|build on each other|relationship between)\b/.test(q);
+  }
+
   static hasLectraHandoffIntent(question) {
     const q = String(question || '').toLowerCase();
     if (!q) return false;
@@ -122,6 +140,11 @@ class RAGCore {
   static activeRecallGuidance(question) {
     if (!this.hasActiveRecallIntent(question)) return '';
     return ' Because the student is asking for active recall, format the answer as 5-8 quick retrieval prompts with answers hidden or immediately below each prompt, include one cloze-style card when possible, cite source-specific cards inline, and end with a short Lectra-ready review loop (what to ink, what to quiz tomorrow).';
+  }
+
+  static conceptMapGuidance(question) {
+    if (!this.hasConceptMapIntent(question)) return '';
+    return ' Because the student is asking for a concept/gap map, organize the answer as: Core concepts, How they connect, Prerequisites to review, Likely gaps/edge cases, and Next study action. Cite only the source-backed links between concepts.';
   }
 
   static isCourseMaterialChunk(chunk) {
@@ -951,7 +974,8 @@ class RAGCore {
       ? ' Include time and space complexity with the assumptions that justify them; when there is a tradeoff, name the input variables explicitly.'
       : '';
     const activeRecallGuidance = this.activeRecallGuidance(question);
-    prompt += `=== QUESTION ===\nAnswer the student's question. Ground claims in the numbered sources when they cover it, citing inline like [1] or [2]. When the sources only partially cover the topic (or are merely related, e.g. labs on the concept), fill the gaps from your general knowledge — clearly grounded teaching is better than refusing — and connect the explanation back to the course materials where helpful. For material-summary questions such as "what did we study this week", use source titles, folders, module names, dates, and week labels to summarize what the available materials indicate, even when body text is sparse.${drillGuidance}${complexityGuidance}${activeRecallGuidance} Only attach [n] citations to claims actually drawn from the sources; never fabricate a citation. For facts specific to this course (due dates, grading, instructions), rely strictly on the sources and say so if they're missing. Be concise (2-5 sentences or a short list). Question: ${question}`;
+    const conceptMapGuidance = this.conceptMapGuidance(question);
+    prompt += `=== QUESTION ===\nAnswer the student's question. Ground claims in the numbered sources when they cover it, citing inline like [1] or [2]. When the sources only partially cover the topic (or are merely related, e.g. labs on the concept), fill the gaps from your general knowledge — clearly grounded teaching is better than refusing — and connect the explanation back to the course materials where helpful. For material-summary questions such as "what did we study this week", use source titles, folders, module names, dates, and week labels to summarize what the available materials indicate, even when body text is sparse.${drillGuidance}${complexityGuidance}${activeRecallGuidance}${conceptMapGuidance} Only attach [n] citations to claims actually drawn from the sources; never fabricate a citation. For facts specific to this course (due dates, grading, instructions), rely strictly on the sources and say so if they're missing. Be concise (2-5 sentences or a short list). Question: ${question}`;
 
     return { prompt, sources };
   }
@@ -1037,7 +1061,8 @@ class RAGCore {
       ? ' Include time and space complexity with named input variables and call out any tradeoff between speed and memory.'
       : '';
     const activeRecallGuidance = this.activeRecallGuidance(question);
-    prompt += `=== QUESTION ===\nAnswer the student's question. Use the active course scope first${effectiveCourseName ? ` (${effectiveCourseName})` : ''}; do not pull supporting links or materials from other courses unless the student explicitly asks for them. For material-summary questions such as "what am I learning this week?", explain the actual topics in plain language rather than summarizing source numbers. Prefer parsed PDF/OCR content over title-only metadata; when only titles/folders are available, say "based on the indexed file list" and avoid inventing slide details.${drillGuidance}${complexityGuidance}${activeRecallGuidance} Do not include a bibliography or source list in the answer. Use citations sparingly only when a specific claim needs verification; never fabricate a citation. For facts specific to this course (due dates, grading, instructions) rely strictly on the sources and say so plainly if they are missing. Be concise: 3-5 bullets or 2-5 sentences. Question: ${question}`;
+    const conceptMapGuidance = this.conceptMapGuidance(question);
+    prompt += `=== QUESTION ===\nAnswer the student's question. Use the active course scope first${effectiveCourseName ? ` (${effectiveCourseName})` : ''}; do not pull supporting links or materials from other courses unless the student explicitly asks for them. For material-summary questions such as "what am I learning this week?", explain the actual topics in plain language rather than summarizing source numbers. Prefer parsed PDF/OCR content over title-only metadata; when only titles/folders are available, say "based on the indexed file list" and avoid inventing slide details.${drillGuidance}${complexityGuidance}${activeRecallGuidance}${conceptMapGuidance} Do not include a bibliography or source list in the answer. Use citations sparingly only when a specific claim needs verification; never fabricate a citation. For facts specific to this course (due dates, grading, instructions) rely strictly on the sources and say so plainly if they are missing. Be concise: 3-5 bullets or 2-5 sentences. Question: ${question}`;
 
     return {
       prompt,
