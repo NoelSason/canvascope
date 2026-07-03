@@ -38,9 +38,10 @@
 
   /** Turn [n] markers in rendered markdown into cite pills. */
   function decorateCitations(html, sources) {
+    const byNumber = new Map((sources || []).map(source => [Number(source.n), source]));
     return html.replace(/\[(\d{1,2})\]/g, (match, num) => {
       const n = Number(num);
-      const source = sources.find(s => s.n === n);
+      const source = byNumber.get(n);
       if (!source) return match;
       return `<button class="brain-cite" data-cite="${n}" title="${escapeHtml(source.title)}">${n}</button>`;
     });

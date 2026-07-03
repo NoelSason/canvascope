@@ -110,6 +110,25 @@ test('RAGCore.compileRAGPrompt adds Lectra handoff guidance when requested', asy
   assert.ok(compiled.includes('source/page citations'));
 });
 
+test('RAGCore active recall guidance creates flashcard-style Lectra review loops', async () => {
+  mockTabUrl = 'https://google.com';
+  assert.equal(RAGCore.hasActiveRecallIntent('make Anki flashcards for this lecture'), true);
+  assert.equal(RAGCore.hasActiveRecallIntent('summarize this lecture'), false);
+
+  const compiled = await RAGCore.compileRAGPrompt('make flashcards for this PDF');
+  assert.match(compiled, /5-8 quick retrieval prompts/);
+  assert.match(compiled, /cloze-style card/);
+  assert.match(compiled, /Lectra-ready review loop/);
+});
+
+test('RAGCore unified prompts include active recall guidance for quiz requests', async () => {
+  mockTabUrl = 'https://google.com';
+  const compiled = await RAGCore.compileUnifiedPrompt('quiz me with spaced repetition prompts');
+
+  assert.match(compiled.prompt, /5-8 quick retrieval prompts/);
+  assert.match(compiled.prompt, /what to quiz tomorrow/);
+});
+
 test('RAGCore.retrieveLocalContext surfaces tasks for schedule queries with no keyword match', async () => {
   // "what do I need to do?" does not lexically match any stored title/course,
   // but the context-aware fallback should still surface the pending to-do.
