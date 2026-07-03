@@ -87,6 +87,141 @@
     if (viewport) viewport.scrollTop = viewport.scrollHeight;
   }
 
+  function createThrottledBrainRenderer(body, sources) {
+    let pendingText = '';
+    let lastRendered = null;
+    let frameId = 0;
+    const raf = window.requestAnimationFrame || ((fn) => window.setTimeout(fn, 16));
+    const caf = window.cancelAnimationFrame || window.clearTimeout;
+
+    const render = (text) => {
+      if (text === lastRendered) return;
+      lastRendered = text;
+      body.innerHTML = decorateCitations(deps.markdown(text), sources || []);
+      scrollThread();
+    };
+
+    const flush = () => {
+      frameId = 0;
+      render(pendingText);
+    };
+
+    return {
+      update(text) {
+        pendingText = String(text || '');
+        if (pendingText === lastRendered || frameId) return;
+        frameId = raf(flush);
+      },
+      finish(text) {
+        pendingText = String(text || '');
+        if (frameId) {
+          caf(frameId);
+          frameId = 0;
+        }
+        render(pendingText);
+      }
+    };
+  }
+
+  function clipForPrompt(text, limit) {
+    const value = String(text || '').trim();
+    if (value.length <= limit) return { text: value, clipped: false };
+    return { text: value.slice(0, limit).trimEnd(), clipped: true };
+  }
+
+  function sourceLabel(source = {}) {
+    const parts = [source.title || 'Canvas/PDF source'];
+    const details = [];
+    if (source.course) details.push(source.course);
+    if (source.page) details.push(`p. ${source.page}`);
+    if (source.url) details.push(source.url);
+    return details.length ? `${parts[0]} (${details.join(' · ')})` : parts[0];
+  }
+
+  function buildStudyNotesPrompt(topic) {
+    return `Create citation-first study notes for: ${String(topic || '').trim()}.
+
+Use the course/PDF sources and include a citation like [1] on every factual bullet. Structure:
+1. Key concepts and definitions
+2. Worked examples that a CS student can replay in Lectra
+3. Edge cases / common mistakes
+4. Confusion checkpoint: 3 quick self-test questions
+5. Lectra handoff: portable notes, commands, files, or notebook cells to create next
+
+If the sources are thin, say what is missing instead of inventing facts.`;
+  }
+
+  function buildSelectionStudyNotePrompt(selection, source) {
+    const clipped = clipForPrompt(selection, 1800);
+    return `Turn this selected Canvas/PDF passage into structured study notes.
+Source: ${sourceLabel(source)}
+${clipped.clipped ? 'Note: the selection was clipped for speed; focus on the visible excerpt.\n' : ''}
+Process only the selected excerpt first; Do not invent facts beyond it.
+
+Excerpt:
+${clipped.text}
+
+Output:
+- Concept summary with Citation chip [1]
+- Worked example
+- Edge case / common mistake
+- Confusion checkpoint question
+- Lectra handoff: what to save as a note or notebook cell`;
+  }
+
+  function buildAssignmentBridgePrompt(text, source) {
+    const clipped = clipForPrompt(text, 1700);
+    return `Convert this Canvas/PDF assignment context into a Lectra action plan.
+Source: ${sourceLabel(source)}
+${clipped.clipped ? 'Note: the assignment text was clipped for speed; flag any missing rubric details.\n' : ''}
+Assignment context:
+${clipped.text}
+
+Include:
+- Requirements explicitly present in the source
+- Edge cases / tests to run
+- Commands or files to inspect
+- Performance / lag audit opportunities
+- Lectra handoff: concise checklist for the project notebook
+
+Do not invent rubric details.`;
+  }
+
+  function buildConceptDrillPrompt(selection, source) {
+    const clipped = clipForPrompt(selection, 1600);
+    return `Create a fast active-recall drill from this selected excerpt.
+Source: ${sourceLabel(source)}
+${clipped.clipped ? 'Note: the excerpt was clipped for speed.\n' : ''}
+Use only the selected excerpt first and do not invent facts.
+
+Excerpt:
+${clipped.text}
+
+Return:
+- Tiny worked example
+- Recall questions with answers hidden under short labels
+- Performance / lag hook if the concept relates to code or tooling
+- Lectra drill handoff`;
+  }
+
+  function buildCodeTracePrompt(trace, source) {
+    const clipped = clipForPrompt(trace, 1600);
+    return `Explain this code trace using the course context, then prepare a Lectra debug handoff.
+Source: ${sourceLabel(source)}
+${clipped.clipped ? 'Note: the log was clipped for speed; ask for the missing tail if needed.\n' : ''}
+Trace:
+${clipped.text}
+
+Include:
+- Likely failure point
+- Minimal reproduction
+- Edge-case test
+- Performance / lag audit
+- Lectra debug handoff
+
+Do not invent hidden requirements.`;
+  }
+
   // Questions like "what do I need to get an A" are answered by the deterministic
   // grade-target calculator (grade-target.js), NOT the LLM — LLMs are unreliable
   // at the weighted arithmetic. Schedule/policy questions fall through to the
@@ -308,15 +443,17 @@
       const system = AIRouter.getState().systemInstruction + dateBlock + profileBlock;
 
       let full = '';
+      const renderer = createThrottledBrainRenderer(body, sources);
       for await (const delta of AIRouter.stream(prompt, { system })) {
         if (body.querySelector('.stream-loader')) body.innerHTML = '';
         full += delta;
-        body.innerHTML = decorateCitations(deps.markdown(full), sources);
-        scrollThread();
+        renderer.update(full);
       }
 
       if (!full.trim()) {
-        body.innerHTML = deps.markdown('*No answer was generated. Try rephrasing the question.*');
+        renderer.finish('*No answer was generated. Try rephrasing the question.*');
+      } else {
+        renderer.finish(full);
       }
       renderSourceChips(body.parentElement, sources);
 
@@ -359,5 +496,15 @@
     populateCoursePicker();
   }
 
-  window.CourseBrain = { init, ask, quiz, refresh: populateCoursePicker, isBusy: () => busy };
+  const api = { init, ask, quiz, refresh: populateCoursePicker, isBusy: () => busy };
+  api.__test = {
+    decorateCitations,
+    createThrottledBrainRenderer,
+    buildStudyNotesPrompt,
+    buildSelectionStudyNotePrompt,
+    buildAssignmentBridgePrompt,
+    buildConceptDrillPrompt,
+    buildCodeTracePrompt
+  };
+  window.CourseBrain = api;
 })();
