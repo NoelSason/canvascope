@@ -3,10 +3,12 @@ import { admin, sanitizeFileName } from "../_shared/device-auth.ts";
 import { HttpError, requireAuthUser } from "../_shared/auth-user.ts";
 import { sendApnsPush } from "../_shared/apns.ts";
 import { recordDropBridgeReceipt } from "../_shared/dropbridge-receipts.ts";
+import { broadcastDropBridgeEvent } from "../_shared/dropbridge-realtime.ts";
 
 const MAX_FILE_BYTES = 25 * 1024 * 1024;
 const QUEUE_RETENTION_MS = 24 * 60 * 60 * 1000;
 const ACTIVE_RECEIVER_WINDOW_MS = 12 * 60 * 1000;
+const FILE_DROP_EVENT = "upload_queued";
 
 Deno.serve(async (request) => {
   if (request.method === "OPTIONS") {
@@ -128,6 +130,7 @@ Deno.serve(async (request) => {
       id: uploadId,
       user_id: user.id,
       device_id: receiver.id,
+      sender_device_id: senderDeviceId || null,
       file_name: fileName,
       object_path: objectPath,
       mime_type: contentType,
@@ -153,6 +156,30 @@ Deno.serve(async (request) => {
         fileName,
         sizeBytes: file.size,
         mimeType: contentType,
+      },
+    });
+
+    const realtimeBroadcasted = await broadcastDropBridgeEvent({
+      userId: user.id,
+      deviceId: receiver.id,
+      event: FILE_DROP_EVENT,
+      payload: {
+        uploadId,
+        fileName,
+        sizeBytes: file.size,
+        mimeType: contentType,
+        createdAt: new Date().toISOString(),
+      },
+    });
+
+    await recordDropBridgeReceipt({
+      uploadId,
+      userId: user.id,
+      deviceId: receiver.id,
+      stage: realtimeBroadcasted ? "wake_broadcasted" : "wake_broadcast_failed",
+      detail: {
+        receiverKind,
+        senderDeviceId: senderDeviceId || null,
       },
     });
 

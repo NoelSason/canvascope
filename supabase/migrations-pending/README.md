@@ -10,9 +10,4 @@ timestamp prefix, or re-stamp to a current time so it sorts last), then run
 
 ## Contents
 
-- `20260610120000_dropbridge_v3_realtime_receipts.sql` — adds a
-  `public.dropbridge_receipts` telemetry table + indexes and rewrites
-  `dropbridge_emit_upload_wake()` to insert receipts. Quarantined 2026-06-22:
-  the table does not exist on remote and this was never deployed. The
-  `dropbridge_emit_upload_wake()` function on remote currently does not write
-  receipts.
+No pending migrations.

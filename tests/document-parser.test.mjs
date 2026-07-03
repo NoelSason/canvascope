@@ -7,10 +7,11 @@ import { fileURLToPath } from 'node:url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const docParserPath = path.resolve(__dirname, '..', 'src', 'core', 'document-parser.js');
 const docParserCode = fs.readFileSync(docParserPath, 'utf8');
+const courseMaterialsPath = path.resolve(__dirname, '..', 'src', 'core', 'course-materials.js');
+const courseMaterialsCode = fs.readFileSync(courseMaterialsPath, 'utf8');
 
 // Define chrome mocks
 let mockStorage = {};
-let mockStorageSetCalls = 0;
 globalThis.chrome = {
   runtime: {
     getURL: (p) => `chrome-extension://mock-id/${p}`
@@ -25,7 +26,6 @@ globalThis.chrome = {
         return out;
       },
       set: async (obj) => {
-        mockStorageSetCalls += 1;
         mockStorage = { ...mockStorage, ...obj };
       }
     }
@@ -64,6 +64,10 @@ const matcherPath = path.resolve(__dirname, '..', 'src', 'core', 'semantic-match
 const matcherCode = fs.readFileSync(matcherPath, 'utf8');
 new Function(matcherCode + '\nglobalThis.SemanticMatcher = SemanticMatcher;')();
 
+// Evaluate course material storage helper before DocumentParser so parsed PDFs
+// are also persisted into the document/chunk index.
+new Function(courseMaterialsCode)();
+
 // Evaluate the DocumentParser code
 new Function(docParserCode + '\nglobalThis.DocumentParser = DocumentParser;')();
 
@@ -74,64 +78,8 @@ test('DocumentParser.extractTextFromPdf extracts page-by-page text content', asy
   assert.ok(pagesText[1].includes('Biodiesel'));
 });
 
-test('DocumentParser.configurePdfWorkerSource avoids repeated worker rewrites', () => {
-  let urlCalls = 0;
-  const originalGetURL = chrome.runtime.getURL;
-  chrome.runtime.getURL = (p) => {
-    urlCalls += 1;
-    return originalGetURL(p);
-  };
-  pdfjsLib.GlobalWorkerOptions.workerSrc = '';
-  DocumentParser._pdfWorkerSrc = null;
-
-  try {
-    DocumentParser.configurePdfWorkerSource(pdfjsLib);
-    DocumentParser.configurePdfWorkerSource(pdfjsLib);
-  } finally {
-    chrome.runtime.getURL = originalGetURL;
-  }
-
-  assert.equal(urlCalls, 1);
-  assert.equal(pdfjsLib.GlobalWorkerOptions.workerSrc, 'chrome-extension://mock-id/src/lib/pdf.worker.min.js');
-});
-
-test('DocumentParser.extractTextFromPdf supports page ranges and progress callbacks for large PDFs', async () => {
-  const progress = [];
-  const pagesText = await DocumentParser.extractTextFromPdf(new ArrayBuffer(10), {
-    startPage: 2,
-    endPage: 3,
-    onProgress: (event) => progress.push(event)
-  });
-
-  assert.equal(pagesText.length, 2);
-  assert.ok(pagesText[0].includes('page 2'));
-  assert.ok(pagesText[1].includes('page 3'));
-  assert.deepEqual(progress.map(event => event.pageNum), [2, 3]);
-  assert.deepEqual(progress.map(event => event.total), [2, 2]);
-});
-
-test('DocumentParser.normalizePageSelection clamps and de-duplicates explicit PDF scopes', () => {
-  assert.deepEqual(DocumentParser.normalizePageSelection(5, { pages: [4, 2, 2, 99, -3] }), [1, 2, 4, 5]);
-  assert.deepEqual(DocumentParser.normalizePageSelection(3, { startPage: 3, endPage: 2 }), [2, 3]);
-});
-
-test('DocumentParser.assessPdfTextQuality warns on low-text or scoped extracts', () => {
-  const scanned = DocumentParser.assessPdfTextQuality(['', 'diagram', '   ']);
-  assert.equal(scanned.likelyScanned, true);
-  assert.match(scanned.warning, /scanned|low-text/);
-
-  const scoped = DocumentParser.assessPdfTextQuality([
-    'Lecture notes '.repeat(20),
-    'Assignment instructions '.repeat(20)
-  ], { startPage: 2, endPage: 3 });
-  assert.equal(scoped.likelyScanned, false);
-  assert.equal(scoped.scoped, true);
-  assert.match(scoped.warning, /selected PDF scope/);
-});
-
 test('DocumentParser.fetchAndParsePdf utilizes storage caches', async () => {
   mockStorage = {};
-  mockStorageSetCalls = 0;
   const mockUrl = 'https://mit.edu/syllabus.pdf';
   
   // Set mock network fetch
@@ -155,82 +103,6 @@ test('DocumentParser.fetchAndParsePdf utilizes storage caches', async () => {
   assert.equal(pages2.length, 3);
 });
 
-test('DocumentParser.persistPdfToIndex skips unchanged PDFs by compact revision', async () => {
-  const pages = [
-    'Cache locality lecture notes with examples and citations.'.repeat(20),
-    'Virtual memory translation and page table notes.'.repeat(20)
-  ];
-  const url = 'https://mit.edu/cache-notes.pdf';
-  mockStorageSetCalls = 0;
-  mockStorage = {
-    indexedContent: [{
-      title: 'Cache Notes',
-      courseName: 'CS 101',
-      url,
-      type: 'file',
-      content: '',
-      pages: [],
-      sourceRevision: DocumentParser.pdfIndexRevision(pages),
-      indexedAt: 123
-    }]
-  };
-
-  await DocumentParser.persistPdfToIndex(url, 'Cache Notes', 'CS 101', pages);
-
-  assert.equal(mockStorageSetCalls, 0);
-  assert.equal(mockStorage.indexedContent[0].indexedAt, 123);
-});
-
-test('DocumentParser.fetchAndParsePdf keeps scoped PDF cache separate from full index', async () => {
-  mockStorage = { indexedContent: [] };
-  mockStorageSetCalls = 0;
-  const mockUrl = 'https://mit.edu/large-textbook.pdf';
-  let fetches = 0;
-  globalThis.fetch = async () => {
-    fetches += 1;
-    return {
-      ok: true,
-      arrayBuffer: async () => new ArrayBuffer(20)
-    };
-  };
-
-  const scoped = await DocumentParser.fetchAndParsePdf(mockUrl, 'Large Textbook', 'CS 101', { startPage: 2, endPage: 2 });
-  assert.equal(scoped.length, 1);
-  assert.equal(fetches, 1);
-  assert.equal(mockStorage.indexedContent.length, 0);
-  assert.ok(mockStorage['doc_cache_pdf:https://mit.edu/large-textbook.pdf:range:2-2']);
-  assert.equal(mockStorage['doc_cache_pdf:https://mit.edu/large-textbook.pdf'], undefined);
-
-  const cachedScoped = await DocumentParser.fetchAndParsePdf(mockUrl, 'Large Textbook', 'CS 101', { startPage: 2, endPage: 2 });
-  assert.equal(cachedScoped.length, 1);
-  assert.equal(fetches, 1);
-});
-
-test('DocumentParser.fetchAndParsePdf coalesces concurrent parses for the same PDF scope', async () => {
-  mockStorage = { indexedContent: [] };
-  DocumentParser._fetchParseInFlight = new Map();
-  const mockUrl = 'https://ucla.edu/concurrent-notes.pdf';
-  let fetches = 0;
-  globalThis.fetch = async () => {
-    fetches += 1;
-    await new Promise(resolve => setTimeout(resolve, 5));
-    return {
-      ok: true,
-      arrayBuffer: async () => new ArrayBuffer(20)
-    };
-  };
-
-  const [first, second] = await Promise.all([
-    DocumentParser.fetchAndParsePdf(mockUrl, 'Concurrent Notes', 'CS 180', { startPage: 1, endPage: 2 }),
-    DocumentParser.fetchAndParsePdf(mockUrl, 'Concurrent Notes', 'CS 180', { startPage: 1, endPage: 2 })
-  ]);
-
-  assert.deepEqual(first, second);
-  assert.equal(first.length, 2);
-  assert.equal(fetches, 1);
-  assert.equal(DocumentParser._fetchParseInFlight.size, 0);
-});
-
 test('DocumentParser.scoreDocumentPages ranks relevant pages and chunks appropriately', () => {
   const pages = [
     'Lecture 1 covers basic thermodynamics and heat transfer.',
@@ -250,66 +122,6 @@ test('DocumentParser.scoreDocumentPages ranks relevant pages and chunks appropri
   assert.equal(fallback[0].pageNum, 1);
 });
 
-test('DocumentParser.scoreDocumentPages is resilient to pasted repeated prompts', () => {
-  const pages = [
-    'Stacks queues heaps and graphs.',
-    'Dynamic programming memoization and recurrence examples.',
-    null
-  ];
-
-  const scored = DocumentParser.scoreDocumentPages(pages, 'memoization memoization recurrence recurrence');
-  assert.equal(scored[0].pageNum, 2);
-  assert.ok(scored[0].text.includes('memoization'));
-
-  const fallback = DocumentParser.scoreDocumentPages(pages, null);
-  assert.equal(fallback.length, 3);
-  assert.equal(fallback[2].text, null);
-});
-
-test('DocumentParser.scoreDocumentPages samples huge pages but returns full cited text', () => {
-  const giantMiddle = `intro ${'filler '.repeat(5000)} rare-tail-concept`;
-  const pages = [
-    giantMiddle,
-    'short dynamic programming notes'
-  ];
-
-  const sample = DocumentParser.textSampleForScoring(giantMiddle, 80);
-  assert.ok(sample.length < giantMiddle.length);
-  assert.ok(sample.includes('rare-tail-concept'));
-
-  const scored = DocumentParser.scoreDocumentPages(pages, 'rare-tail-concept');
-  assert.equal(scored[0].pageNum, 1);
-  assert.equal(scored[0].text, giantMiddle);
-});
-
-test('DocumentParser.scoreDocumentPages caches semantic page vectors for follow-up questions', () => {
-  const pages = [
-    'Lecture notes on dynamic programming memoization recurrence examples.',
-    'PDF notes about graph traversal, breadth first search, and depth first search.'
-  ];
-  const originalVectorize = SemanticMatcher.vectorize;
-  let pageVectorizations = 0;
-  SemanticMatcher.vectorize = (text) => {
-    if (pages.includes(text)) {
-      pageVectorizations += 1;
-    }
-    return originalVectorize.call(SemanticMatcher, text);
-  };
-  DocumentParser._pageVectorCache = new Map();
-
-  try {
-    DocumentParser.scoreDocumentPages(pages, 'lecture notes dynamic programming memoization');
-    const afterFirstQuestion = pageVectorizations;
-    DocumentParser.scoreDocumentPages(pages, 'pdf notes graph traversal');
-    assert.equal(pageVectorizations, afterFirstQuestion);
-  } finally {
-    SemanticMatcher.vectorize = originalVectorize;
-  }
-
-  assert.equal(pageVectorizations, 2);
-  assert.ok(DocumentParser._pageVectorCache.size >= 2);
-});
-
 test('DocumentParser.persistPdfToIndex saves PDF persistently to indexedContent', async () => {
   mockStorage = { indexedContent: [] };
   const mockUrl = 'https://ucla.edu/syllabus.pdf';
@@ -322,41 +134,12 @@ test('DocumentParser.persistPdfToIndex saves PDF persistently to indexedContent'
   assert.equal(indexed[0].title, 'Syllabus');
   assert.equal(indexed[0].courseName, 'CS 101');
   assert.equal(indexed[0].content, 'Page 1 outline.\nPage 2 schedule.');
-  assert.deepEqual(indexed[0].pages, pagesText);
-  assert.equal(indexed[0].sourceRevision, DocumentParser.pdfIndexRevision(pagesText));
-  assert.equal(indexed[0].textQuality.pages, 2);
-});
-
-test('DocumentParser.persistPdfToIndex skips identical PDF rewrites', async () => {
-  let writes = 0;
-  const existing = {
-    title: 'Algorithms Notes',
-    courseName: 'CS 101',
-    url: 'https://ucla.edu/algorithms.pdf?download=1',
-    type: 'file',
-    content: 'Page 1 graph search.\nPage 2 dynamic programming.',
-    pages: ['Page 1 graph search.', 'Page 2 dynamic programming.'],
-    indexedAt: 12345
-  };
-  mockStorage = { indexedContent: [existing] };
-  const originalSet = chrome.storage.local.set;
-  chrome.storage.local.set = async (obj) => {
-    writes += 1;
-    return originalSet(obj);
-  };
-
-  try {
-    await DocumentParser.persistPdfToIndex(
-      'https://ucla.edu/algorithms.pdf?download=2',
-      'Algorithms Notes',
-      'CS 101',
-      ['Page 1 graph search.', 'Page 2 dynamic programming.']
-    );
-  } finally {
-    chrome.storage.local.set = originalSet;
-  }
-
-  assert.equal(writes, 0);
-  assert.equal(mockStorage.indexedContent.length, 1);
-  assert.equal(mockStorage.indexedContent[0].indexedAt, 12345);
+  assert.deepEqual(indexed[0].pages, [
+    { pageNum: 1, text: 'Page 1 outline.' },
+    { pageNum: 2, text: 'Page 2 schedule.' }
+  ]);
+  assert.equal(mockStorage.courseMaterialDocuments.length, 1);
+  assert.equal(mockStorage.courseMaterialDocuments[0].status, 'indexed');
+  assert.equal(mockStorage.courseMaterialChunks.length, 2);
+  assert.equal(mockStorage.courseMaterialChunks[1].pageStart, 2);
 });

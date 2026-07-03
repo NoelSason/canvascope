@@ -3,14 +3,270 @@
  * Scrapes page content and retrieves relevant local schedule/task context.
  */
 class RAGCore {
-  static chunkIndexCache = new Map();
-  static chunkIndexCacheLimit = 4;
-  static queryStopWords = new Set([
-    'about', 'after', 'again', 'also', 'answer', 'because', 'before', 'could',
-    'does', 'explain', 'for', 'from', 'have', 'into', 'need', 'please', 'show',
-    'should', 'that', 'the', 'their', 'there', 'these', 'this', 'what', 'when',
-    'where', 'which', 'with', 'would', 'your'
-  ]);
+  static tokenize(text) {
+    return String(text || '').toLowerCase()
+      .replace(/[^\w\s]/g, ' ')
+      .split(/\s+/)
+      .filter(w => w.length > 2);
+  }
+
+  static normalizeTimestamp(value) {
+    if (value == null || value === '') return 0;
+    if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
+    const parsed = Date.parse(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+
+  static itemTimestamp(item) {
+    if (!item) return 0;
+    return this.normalizeTimestamp(
+      item.scannedAt || item.indexedAt || item.updatedAt || item.createdAt || item.dueAt
+    );
+  }
+
+  static metadataTextForItem(item) {
+    const parts = [
+      item?.title,
+      item?.courseName,
+      item?.moduleName,
+      item?.folderPath,
+      Array.isArray(item?.pathSegments) ? item.pathSegments.join(' > ') : '',
+      Array.isArray(item?.searchAliases) ? item.searchAliases.join(' ') : item?.searchAliases,
+      item?.type
+    ];
+
+    const weekHints = Array.isArray(item?.weekHints) ? item.weekHints : [];
+    weekHints.forEach(week => {
+      const normalized = String(week || '').replace(/^0+/, '') || '0';
+      if (normalized) parts.push(`week ${normalized}`);
+    });
+
+    const dates = [
+      item?.dueAt,
+      item?.scannedAt,
+      item?.indexedAt,
+      item?.updatedAt,
+      item?.createdAt
+    ].filter(Boolean);
+    dates.forEach(value => parts.push(String(value)));
+
+    return parts
+      .map(part => String(part || '').replace(/\s+/g, ' ').trim())
+      .filter(Boolean)
+      .join('\n');
+  }
+
+  static sourceTextForItem(item, body = '') {
+    const metadata = this.metadataTextForItem(item);
+    const content = String(body || '').trim();
+    if (!metadata) return content;
+    if (!content) return metadata;
+    return `${metadata}\n${content}`;
+  }
+
+  static hasStudySummaryIntent(question) {
+    const q = String(question || '').toLowerCase();
+    if (!q) return false;
+    const material = /\b(stud(?:y|ied|ying)|learn(?:ed|ing)?|cover(?:ed|ing)?|topic|topics|material|materials|lecture|lectures|slides?|readings?|notes?|files?|content|work(?:ed)? on)\b/.test(q);
+    const temporal = /\b(this week|last week|today|recent(?:ly)?|latest|current|now|so far|week(?:\s*\d+)?)\b/.test(q);
+    const summaryAsk = /\b(what|which|list|summar(?:y|ize|ise)|tell me|show me)\b/.test(q);
+    return material && (temporal || summaryAsk);
+  }
+
+  static isCourseMaterialChunk(chunk) {
+    const type = String(chunk?.type || '').toLowerCase();
+    return [
+      'file',
+      'folder',
+      'slides',
+      'document',
+      'pdf',
+      'page',
+      'module',
+      'video',
+      'syllabus',
+      'assignment',
+      'quiz',
+      'discussion'
+    ].includes(type);
+  }
+
+  static explicitWeekHints(text) {
+    const hints = [];
+    const source = String(text || '');
+    const re = /\bweek\s*#?\s*0*(\d{1,3})\b/ig;
+    let match = re.exec(source);
+    while (match) {
+      hints.push(String(match[1] || '').replace(/^0+/, '') || '0');
+      match = re.exec(source);
+    }
+    return hints;
+  }
+
+  static materialOverviewChunks(chunks, question, limit = 8) {
+    if (!Array.isArray(chunks) || chunks.length === 0) return [];
+    const tokens = this.tokenize(question)
+      .filter(token => !['what', 'when', 'where', 'which', 'this', 'that', 'with', 'from', 'about', 'study', 'studied', 'learn', 'learned'].includes(token));
+    const queryWeeks = this.explicitWeekHints(question);
+    const now = Date.now();
+    const bySource = new Map();
+
+    chunks.forEach(chunk => {
+      if (!this.isCourseMaterialChunk(chunk)) return;
+
+      const blob = [
+        chunk.title,
+        chunk.courseName,
+        chunk.moduleName,
+        chunk.folderPath,
+        chunk.text
+      ].join(' ').toLowerCase();
+
+      let score = 2;
+      const type = String(chunk.type || '').toLowerCase();
+      if (['file', 'slides', 'document', 'pdf', 'page', 'video'].includes(type)) score += 1.2;
+      if (['course', 'navigation'].includes(type)) score -= 2;
+
+      for (const token of tokens) {
+        if (blob.includes(token)) score += 0.8;
+      }
+
+      const chunkWeeks = Array.isArray(chunk.weekHints)
+        ? chunk.weekHints.map(value => String(value || '').replace(/^0+/, '') || '0').filter(Boolean)
+        : [];
+      if (chunkWeeks.length > 0) score += 1;
+      if (queryWeeks.length > 0) {
+        const exact = queryWeeks.some(week => chunkWeeks.includes(week));
+        score += exact ? 4 : -0.5;
+      }
+
+      const ts = this.itemTimestamp(chunk);
+      if (ts > 0 && ts <= now) {
+        const daysAgo = (now - ts) / (1000 * 60 * 60 * 24);
+        if (daysAgo <= 7) score += 2;
+        else if (daysAgo <= 30) score += 1;
+        else if (daysAgo <= 120) score += 0.35;
+      }
+
+      const key = `${chunk.url || chunk.title}|${chunk.courseName}|${chunk.page || ''}`;
+      const prev = bySource.get(key);
+      if (!prev || score > prev.score) {
+        bySource.set(key, { chunk, score, ts });
+      }
+    });
+
+    return [...bySource.values()]
+      .sort((a, b) => b.score - a.score || b.ts - a.ts || String(a.chunk.title || '').localeCompare(String(b.chunk.title || '')))
+      .slice(0, limit)
+      .map(entry => entry.chunk);
+  }
+
+  static mergeUniqueChunks(primary, secondary) {
+    const out = [];
+    const seen = new Set();
+    const add = (chunk) => {
+      if (!chunk) return;
+      const key = `${chunk.url || chunk.title}|${chunk.courseName}|${chunk.page || ''}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      out.push(chunk);
+    };
+    (primary || []).forEach(add);
+    (secondary || []).forEach(add);
+    return out;
+  }
+
+  static currentGroundingBlock() {
+    const today = new Date().toLocaleDateString('en-US', {
+      weekday: 'long',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric'
+    });
+    return `=== CURRENT CONTEXT ===\nToday's date is ${today}. Treat source titles, paths, modules, week labels, and dates as evidence that course materials exist. If sources show current or recent course files, summarize what those materials indicate; do not claim the course has not started, is not active, or has no information based on the term name or your own sense of the year. If a source only provides a title/path/date and no body text, use that label for a high-level materials summary without inventing details beyond it.\n\n`;
+  }
+
+  static extractCourseIdFromUrl(rawUrl) {
+    const match = String(rawUrl || '').match(/\/courses\/(\d+)/);
+    return match ? match[1] : '';
+  }
+
+  static async inferActiveCanvasContext() {
+    try {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (!tab || !tab.url || !/\/courses\/\d+/i.test(tab.url)) return null;
+      const courseId = this.extractCourseIdFromUrl(tab.url);
+      let courseName = '';
+      let folderPath = '';
+      let moduleName = '';
+      let weekHints = [];
+
+      try {
+        const [{ result } = {}] = await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          func: () => {
+            const clean = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+            const crumbs = Array.from(document.querySelectorAll('#breadcrumbs li'))
+              .map(node => clean((node.querySelector('a') || node).textContent))
+              .filter(Boolean);
+            const path = String(location.pathname || '').toLowerCase();
+            let course = '';
+            let segments = [];
+            if (crumbs.length >= 2) {
+              course = crumbs[1];
+              segments = crumbs.slice(2);
+            }
+            if (!course) {
+              course = clean(document.querySelector('.mobile-header-title, #breadcrumbs .home span')?.textContent || '');
+            }
+            if (!path.includes('/files/folder/')) {
+              segments = [];
+            }
+            const hints = [];
+            for (const value of segments) {
+              const re = /\bweek\s*#?\s*0*(\d{1,3})\b/ig;
+              let match = re.exec(value);
+              while (match) {
+                hints.push(String(match[1] || '').replace(/^0+/, '') || '0');
+                match = re.exec(value);
+              }
+            }
+            return {
+              courseName: course,
+              folderPath: segments.join(' > '),
+              moduleName: segments[0] || '',
+              weekHints
+            };
+          }
+        });
+        if (result && typeof result === 'object') {
+          courseName = result.courseName || '';
+          folderPath = result.folderPath || '';
+          moduleName = result.moduleName || '';
+          weekHints = Array.isArray(result.weekHints) ? result.weekHints : [];
+        }
+      } catch (error) {
+        console.warn('[Canvascope RAG] Active course DOM inference failed:', error);
+      }
+
+      if (!courseName && tab.title) {
+        courseName = String(tab.title).split(':')[0].trim();
+      }
+      return { tab, courseId, courseName, folderPath, moduleName, weekHints };
+    } catch (error) {
+      console.warn('[Canvascope RAG] Active course inference failed:', error);
+      return null;
+    }
+  }
+
+  static triggerActiveCourseMaterialDiscovery(activeContext) {
+    if (!activeContext?.tab?.id) return;
+    if (typeof chrome === 'undefined' || !chrome?.tabs?.sendMessage) return;
+    chrome.tabs.sendMessage(activeContext.tab.id, {
+      action: 'discoverCourseMaterials',
+      reason: 'rag-question'
+    }, () => { void chrome.runtime?.lastError; });
+  }
 
   /**
    * Scrapes raw text from the active LMS browser tab, handling both HTML DOM and PDF documents natively.
@@ -94,13 +350,8 @@ class RAGCore {
 
         const pages = await DocumentParser.fetchAndParsePdf(pdfUrl, documentTitle, courseName);
         if (pages && pages.length > 0) {
-          const quality = DocumentParser.assessPdfTextQuality(pages);
           const matched = DocumentParser.scoreDocumentPages(pages, promptText);
-          let context = `=== ACTIVE PDF DOCUMENT PAGES ===\nFile: ${pdfUrl.split('/').pop().split('?')[0]}\n`;
-          if (quality.warning) {
-            context += `Extraction note: ${quality.warning} (${quality.readablePages}/${quality.pages} readable pages, avg ${quality.averageChars} chars/page).\n`;
-          }
-          context += '\n';
+          let context = `=== ACTIVE PDF DOCUMENT PAGES ===\nFile: ${pdfUrl.split('/').pop().split('?')[0]}\n\n`;
           matched.forEach(page => {
             context += `--- Page ${page.pageNum} ---\n${page.text.substring(0, 1500)}\n\n`;
           });
@@ -140,162 +391,44 @@ class RAGCore {
   }
 
   /**
-   * Detects programming-study prompts that benefit from code-shaped answers:
-   * tiny runnable examples, edge cases, tests, and performance notes. Kept as a
-   * cheap regex so it can run in every Ask request without touching storage.
-   * @param {string} promptText
-   * @returns {boolean}
-   */
-  static hasProgrammingStudyIntent(promptText) {
-    const q = (promptText || '').toLowerCase();
-    return /\b(code|coding|programming|python|javascript|java|swift|c\+\+|algorithm|algorithms|data structure|debug|trace|runtime|complexity|big-?o|edge cases?|unit tests?|pytest|github|repo|terminal|cli)\b/.test(q);
-  }
-
-  /**
-   * Detects lab/assignment pre-brief requests. These benefit from an actionable
-   * handoff format rather than a generic explanation: objective, deliverables,
-   * constraints, commands/files, edge cases, and a Lectra-ready checklist.
-   * @param {string} promptText
-   * @returns {boolean}
-   */
-  static hasAssignmentBriefIntent(promptText) {
-    const q = (promptText || '').toLowerCase();
-    return /\b(pre-?brief|assignment brief|lab brief|project brief|study plan|action checklist|deliverables?|rubric|starter files?|spec|handoff|turn this into notes|what should i do first)\b/.test(q);
-  }
-
-  /**
-   * Detects note-making requests that should produce portable, citation-led
-   * Markdown instead of a loose chat answer. This targets the common student
-   * workflow of turning an open PDF/page into concepts, examples, pitfalls, and
-   * Lectra-ready notes in one pass.
-   * @param {string} promptText
-   * @returns {boolean}
-   */
-  static hasStudyNotesIntent(promptText) {
-    const q = (promptText || '').toLowerCase();
-    return /\b(study notes?|note[- ]?taking|make notes?|summari[sz]e.+notes?|key concepts?|concept map|worked examples?|edge cases?|pitfalls?|flashcards?|cite|citation|source-backed|lectra handoff)\b/.test(q);
-  }
-
-  /**
-   * Tokenizes a student query once per retrieval and drops filler words. This
-   * keeps Ask responsive on large local indexes by avoiding repeated regex work
-   * and reducing broad substring checks that would otherwise scan every stored
-   * PDF/page body for words like "what" or "the".
-   * @param {string} promptText
-   * @returns {Array<string>}
-   */
-  static queryTokens(promptText) {
-    return [...new Set(String(promptText || '').toLowerCase()
-      .replace(/[^\w\s]/g, ' ')
-      .split(/\s+/)
-      .filter(w => w.length > 2 && !RAGCore.queryStopWords.has(w)))];
-  }
-
-  /**
-   * Cheap context diagnostics for prompts. This gives students and future UI
-   * surfaces a visible sense of how broad an Ask/Study Pack request is without
-   * doing tokenizer work on the hot path. Four chars/token is intentionally
-   * approximate but stable enough for fast budget warnings and telemetry.
-   * @param {string} text
-   * @returns {number}
-   */
-  static approximateTokenCount(text) {
-    return Math.ceil(String(text || '').length / 4);
-  }
-
-  /**
-   * Builds a compact, source-ledger style prompt section so generated notes can
-   * preserve provenance and users can spot slow/over-broad retrievals quickly.
-   * @param {Array} sources
-   * @param {string} body
-   * @param {{label?: string, targetTokenBudget?: number}} opts
-   * @returns {string}
-   */
-  static contextBudgetSection(sources, body, { label = 'Context budget', targetTokenBudget = 3000 } = {}) {
-    const sourceCount = Array.isArray(sources) ? sources.length : 0;
-    const chars = String(body || '').length;
-    const approxTokens = this.approximateTokenCount(body);
-    const status = approxTokens > targetTokenBudget ? 'large; narrow course/source scope if the answer feels slow' : 'focused';
-    return `=== ${label.toUpperCase()} ===\nSources: ${sourceCount}; approx context: ${chars} chars / ~${approxTokens} tokens; status: ${status}.\nUse this as a source ledger: cite only sources listed above, and mention when the answer uses general knowledge beyond them.\n\n`;
-  }
-
-  /**
-   * Compact citation contract for source-led study notes. Keeping it as a
-   * reusable string avoids divergent prompt shapes between Study Pack and Ask,
-   * and nudges models toward trustworthy page/quote grounding instead of long,
-   * generic summaries.
-   * @param {Array} sources
-   * @returns {string}
-   */
-  static citationFirstStudyNoteContract(sources = []) {
-    const hasPageMetadata = Array.isArray(sources) && sources.some(source => source && source.page);
-    const pageRule = hasPageMetadata
-      ? ' Include page/slide numbers from source metadata in each citation line.'
-      : ' If a source lacks page metadata, cite its [n] marker and use the shortest exact quote you can find.';
-    return 'Citation-first note contract: every Key Concept, Worked Example, Edge Case, Quiz Answer, and Lectra Handoff item must include at least one real [n] citation. Add a short Evidence line with an exact supporting quote or page phrase; if the provided sources do not support a claim, mark it "citation missing/uncertain" instead of inventing a source.' + pageRule;
-  }
-
-  /**
-   * Deterministic Markdown scaffold for handing course/PDF context into Lectra.
-   * Keeping this small and static avoids extra model prompt tokens while nudging
-   * generated answers toward actionable notebook cells instead of generic prose.
-   * @returns {string}
-   */
-  static lectraContextPackTemplate() {
-    return [
-      'Lectra context pack format: use Markdown headings exactly as follows when the student asks for a handoff.',
-      '# Project/Course Context Pack',
-      '## Objective — one sentence tied to the assignment/PDF goal and cited source.',
-      '## Deliverables — checkbox list; each item cites [n] and names the artifact to create.',
-      '## Sources — page/section ledger with the shortest useful quote.',
-      '## Commands or Checks — terminal commands, tests, or notebook cells to run; include expected signal.',
-      '## Edge Cases — boundary cases, pitfalls, or counterexamples to test.',
-      '## Citation Anchors — map each concept/example/check back to [n] plus page or quote.',
-      '## Performance / Lag Audit — name the largest PDF/page/notebook and one way to avoid re-parsing or re-rendering it.',
-      '## Paste into Lectra — 2-3 compact bullets ready for a Lectra notebook.'
-    ].join('\n');
-  }
-
-  /**
-   * Lightweight prompt-size guard for latency-sensitive Ask flows. The retriever
-   * already enforces a chunk budget, but active-page/PDF text is added outside
-   * that budget; this keeps the final prompt from ballooning when a PDF page and
-   * many course chunks are both relevant.
-   * @param {string} body
-   * @param {string} nextBlock
-   * @param {number} maxChars
-   * @returns {boolean}
-   */
-  static canAppendPromptBlock(body, nextBlock, maxChars = 12000) {
-    return String(body || '').length + String(nextBlock || '').length <= maxChars;
-  }
-
-  /**
-   * Bounds a source excerpt before it enters latency-sensitive prompts. Active
-   * pages and PDF snippets can dwarf the retrieved chunks; clipping at a stable
-   * boundary preserves citation usefulness while keeping Ask responsive.
-   * @param {string} text
-   * @param {number} maxChars
-   * @returns {string}
-   */
-  static capSourceText(text, maxChars = 4500) {
-    const value = String(text || '');
-    if (value.length <= maxChars) return value;
-    return `${value.slice(0, maxChars).trimEnd()}\n[Source excerpt truncated for speed; ask a narrower question or open the specific page for more context.]`;
-  }
-
-  /**
    * Builds the unified, normalized corpus of all local study assets
    * (synced assignments, custom to-dos, and dashboard notes).
    * @returns {Promise<Array>} Normalized corpus items
    */
   static async buildCorpus() {
-    const db = await chrome.storage.local.get(['indexedContent', 'customTodos', 'dashboardNotes']);
+    const db = await chrome.storage.local.get(['indexedContent', 'customTodos', 'dashboardNotes', 'syllabusMemory']);
     const indexedContent = Array.isArray(db.indexedContent) ? db.indexedContent : [];
     const customTodos = Array.isArray(db.customTodos) ? db.customTodos : [];
     const dashboardNotes = Array.isArray(db.dashboardNotes) ? db.dashboardNotes : [];
+    const syllabusMemory = (db.syllabusMemory && typeof db.syllabusMemory === 'object') ? db.syllabusMemory : {};
 
     const searchCorpus = [];
+
+    // Parsed syllabus memory → one searchable item per course (grading scheme,
+    // letter cutoffs, meeting days, no-class dates, policies). Lets the Course
+    // Brain answer "when do we not have class" / "what's the late policy" with
+    // a citation. renderForCorpus is deterministic for cache stability.
+    const SM = (typeof self !== 'undefined') ? self.CanvascopeSyllabusMemory : null;
+    Object.keys(syllabusMemory).forEach(courseId => {
+      const entry = syllabusMemory[courseId];
+      if (!entry) return;
+      const content = SM && SM.renderForCorpus ? SM.renderForCorpus(entry) : '';
+      if (!content || !content.trim()) return;
+      const courseName = entry.courseName || 'General';
+      const url = (entry.host && entry.courseId)
+        ? `https://${entry.host}/courses/${entry.courseId}/assignments/syllabus`
+        : '';
+      searchCorpus.push({
+        title: `${courseName} Syllabus`,
+        courseName,
+        dueAt: null,
+        url,
+        type: 'syllabus',
+        content,
+        pages: null,
+        done: false
+      });
+    });
 
     indexedContent.forEach(item => {
       if (item && item.title) {
@@ -307,8 +440,20 @@ class RAGCore {
           type: item.type || 'assignment',
           content: item.content || '',
           pages: item.pages || null,
-          sourceRevision: item.sourceRevision || '',
-          textQuality: item.textQuality || null,
+          moduleName: item.moduleName || '',
+          folderPath: item.folderPath || '',
+          pathSegments: Array.isArray(item.pathSegments) ? item.pathSegments.slice() : [],
+          weekHints: Array.isArray(item.weekHints) ? item.weekHints.slice() : [],
+          weekStart: item.weekStart || null,
+          weekEnd: item.weekEnd || null,
+          searchAliases: item.searchAliases || '',
+          searchPathNormalized: item.searchPathNormalized || '',
+          containerUrl: item.containerUrl || '',
+          courseId: item.courseId || null,
+          scannedAt: item.scannedAt || null,
+          indexedAt: item.indexedAt || null,
+          createdAt: item.createdAt || null,
+          updatedAt: item.updatedAt || null,
           done: false
         });
       }
@@ -322,6 +467,9 @@ class RAGCore {
           dueAt: todo.dueDate || todo.dueAt || null,
           url: '',
           type: 'to-do',
+          content: todo.content || todo.notes || '',
+          createdAt: todo.createdAt || null,
+          updatedAt: todo.updatedAt || null,
           done: !!todo.done
         });
       }
@@ -336,58 +484,14 @@ class RAGCore {
           url: '',
           type: 'note',
           content: note.content || '',
+          createdAt: note.createdAt || null,
+          updatedAt: note.updatedAt || null,
           done: false
         });
       }
     });
 
     return searchCorpus;
-  }
-
-  /**
-   * Scores one corpus item for lexical retrieval without doing unnecessary
-   * document-body work. Title/course checks are cheap and often decisive for
-   * CS workflows (assignment names, repo names, PDF titles); large PDF bodies
-   * are lower priority and scanned only once per item.
-   * @param {object} item
-   * @param {Array<string>} tokens
-   * @returns {number}
-   */
-  static scoreCorpusItem(item, tokens) {
-    let score = 0;
-    const titleLower = String(item.title || '').toLowerCase();
-    const courseLower = String(item.courseName || '').toLowerCase();
-    let contentLower = null;
-
-    for (const token of tokens) {
-      if (titleLower.includes(token)) {
-        score += 10; // Exact match in title gets major priority
-      }
-      if (courseLower.includes(token)) {
-        score += 4;  // Match in course name gets secondary priority
-      }
-      if (item.content) {
-        contentLower = contentLower || String(item.content).toLowerCase();
-        if (contentLower.includes(token)) {
-          score += 2;  // Match in document body gets moderate priority
-        }
-      }
-    }
-    return score;
-  }
-
-  /**
-   * Compact text used for semantic matching. Full PDF/page bodies can be many
-   * thousands of characters; vectorizing all of them on every keystroke makes Ask
-   * feel laggy. A short, stable preview keeps title/course/type context plus the
-   * start of the body where LMS pages usually put the topic and learning goal.
-   * @param {object} item
-   * @param {number} maxContentChars
-   * @returns {string}
-   */
-  static semanticPreviewText(item, maxContentChars = 600) {
-    const content = item && item.content ? String(item.content).slice(0, maxContentChars) : '';
-    return `${item?.title || ''} ${item?.courseName || ''} ${item?.type || ''} ${content}`.trim();
   }
 
   /**
@@ -402,20 +506,29 @@ class RAGCore {
       const searchCorpus = await this.buildCorpus();
       if (searchCorpus.length === 0) return [];
 
-      const tokens = this.queryTokens(promptText);
-
-      // Queries like "what do I do next?" intentionally tokenize to almost
-      // nothing after filler-word removal. Skip expensive lexical/semantic body
-      // scans in that case and jump directly to the agenda fallback when useful.
-      if (tokens.length === 0) {
-        return this.hasScheduleIntent(promptText) ? this.getUpcomingItems(searchCorpus) : [];
-      }
+      // Tokenize prompt, removing standard punctuation and filtering out short helper words
+      const tokens = this.tokenize(promptText);
 
       // 1. Lexical keyword scoring (precise matches for specific questions)
-      const scoredItems = searchCorpus.map(item => ({
-        item,
-        score: this.scoreCorpusItem(item, tokens)
-      }));
+      const scoredItems = searchCorpus.map(item => {
+        let score = 0;
+        const titleLower = item.title.toLowerCase();
+        const courseLower = item.courseName.toLowerCase();
+        const contentLower = this.sourceTextForItem(item, item.content || '').toLowerCase();
+
+        for (const token of tokens) {
+          if (titleLower.includes(token)) {
+            score += 10; // Exact match in title gets major priority
+          }
+          if (courseLower.includes(token)) {
+            score += 4;  // Match in course name gets secondary priority
+          }
+          if (contentLower.includes(token)) {
+            score += 2;  // Match in document body gets moderate priority
+          }
+        }
+        return { item, score };
+      });
 
       const strongMatches = scoredItems
         .filter(x => x.score > 0)
@@ -431,7 +544,8 @@ class RAGCore {
         
         if (hasConcepts) {
           const scoredSemantic = searchCorpus.map(item => {
-            const itemVector = SemanticMatcher.vectorize(this.semanticPreviewText(item));
+            const itemText = `${item.title} ${item.courseName} ${item.type} ${item.content || ''}`;
+            const itemVector = SemanticMatcher.vectorize(itemText);
             const similarity = SemanticMatcher.cosineSimilarity(queryVector, itemVector);
             return { item, similarity };
           });
@@ -521,15 +635,12 @@ class RAGCore {
 
     let compiledPrompt = '';
 
-    // 1. Inject Active tab scraped RAG context. Bound the hot-path prompt
-    // just like the unified Ask flow so giant LMS pages/PDF viewers do not
-    // make classic RAG requests feel laggy before the model even answers.
+    // 1. Inject Active tab scraped RAG context
     if (pageContext) {
-      const boundedPageContext = this.capSourceText(pageContext, 5000);
-      if (boundedPageContext.startsWith('=== ACTIVE PDF DOCUMENT PAGES ===')) {
-        compiledPrompt += `${boundedPageContext}\n\n`;
+      if (pageContext.startsWith('=== ACTIVE PDF DOCUMENT PAGES ===')) {
+        compiledPrompt += `${pageContext}\n\n`;
       } else {
-        compiledPrompt += `=== CONTEXT FROM THE ACTIVE PAGE ===\n${boundedPageContext}\n\n`;
+        compiledPrompt += `=== CONTEXT FROM THE ACTIVE PAGE ===\n${pageContext}\n\n`;
       }
     }
 
@@ -592,13 +703,6 @@ class RAGCore {
    */
   static async buildChunkIndex(courseName = '') {
     const corpus = await this.buildCorpus();
-    const cacheKey = this.chunkIndexCacheKey(corpus, courseName);
-    const cached = this.chunkIndexCache.get(cacheKey);
-    if (cached) {
-      this.touchChunkIndexCache(cacheKey, cached);
-      return cached;
-    }
-
     const scope = courseName
       ? corpus.filter(i => (i.courseName || '').toLowerCase() === courseName.toLowerCase())
       : corpus;
@@ -610,116 +714,32 @@ class RAGCore {
         courseName: item.courseName,
         type: item.type,
         url: item.url || '',
-        dueAt: item.dueAt || null
+        dueAt: item.dueAt || null,
+        moduleName: item.moduleName || '',
+        folderPath: item.folderPath || '',
+        pathSegments: Array.isArray(item.pathSegments) ? item.pathSegments.slice() : [],
+        weekHints: Array.isArray(item.weekHints) ? item.weekHints.slice() : [],
+        weekStart: item.weekStart || null,
+        weekEnd: item.weekEnd || null,
+        courseId: item.courseId || null,
+        scannedAt: item.scannedAt || null,
+        indexedAt: item.indexedAt || null,
+        createdAt: item.createdAt || null,
+        updatedAt: item.updatedAt || null
       };
       if (Array.isArray(item.pages) && item.pages.length > 0) {
-        item.pages.forEach((page, index) => {
-          const text = typeof page === 'string'
-            ? page
-            : (page && page.text) ? String(page.text) : '';
+        item.pages.forEach(page => {
+          const text = typeof page === 'string' ? page : ((page && page.text) ? String(page.text) : '');
           if (!text.trim()) return;
-          const pageNumber = typeof page === 'string' ? index + 1 : (page.pageNum || index + 1);
-          chunks.push({ ...base, page: pageNumber, text: this.chunkTextWindow(text) });
+          const pageNum = typeof page === 'string' ? null : (page.pageNum || null);
+          chunks.push({ ...base, page: pageNum, text: this.sourceTextForItem(item, text).substring(0, 1500) });
         });
       } else {
-        const text = this.chunkTextWindow(item.content || '');
+        const text = this.sourceTextForItem(item, item.content || '').substring(0, 1500);
         chunks.push({ ...base, page: null, text });
       }
     });
-    this.rememberChunkIndex(cacheKey, chunks);
     return chunks;
-  }
-
-  /**
-   * Records chunk indexes with tiny LRU eviction instead of clearing every cached
-   * course at once. Students often switch between two or three courses while
-   * building study packs; preserving hot indexes avoids re-splitting large PDFs
-   * while still bounding service-worker memory.
-   * @param {string} cacheKey
-   * @param {Array} chunks
-   */
-  static rememberChunkIndex(cacheKey, chunks) {
-    this.touchChunkIndexCache(cacheKey, chunks);
-    while (this.chunkIndexCache.size > this.chunkIndexCacheLimit) {
-      const oldestKey = this.chunkIndexCache.keys().next().value;
-      if (!oldestKey) break;
-      this.chunkIndexCache.delete(oldestKey);
-    }
-  }
-
-  /**
-   * Moves a cache entry to the back of the Map so iteration order acts as LRU.
-   * @param {string} cacheKey
-   * @param {Array} chunks
-   */
-  static touchChunkIndexCache(cacheKey, chunks) {
-    if (this.chunkIndexCache.has(cacheKey)) this.chunkIndexCache.delete(cacheKey);
-    this.chunkIndexCache.set(cacheKey, chunks);
-  }
-
-  /**
-   * Keeps indexed-course chunks prompt-budget bounded while preserving the page
-   * tail where conclusions, edge cases, and assignment requirements often live.
-   * The returned window stays roughly the same size as the former substring cap,
-   * so retrieval quality improves without increasing Ask/Study Pack latency.
-   * @param {string} text
-   * @param {number} maxChars
-   * @returns {string}
-   */
-  static chunkTextWindow(text, maxChars = 1500) {
-    const value = String(text || '');
-    if (value.length <= maxChars) return value;
-    const head = Math.floor(maxChars * 0.65);
-    const tail = maxChars - head;
-    return `${value.slice(0, head).trimEnd()}\n…\n${value.slice(-tail).trimStart()}`;
-  }
-
-  /**
-   * Lightweight signature for chunk-cache invalidation. New PDF indexes carry a
-   * precomputed sourceRevision so Ask/Brain follow-ups do not have to walk every
-   * stored page just to decide whether cached chunks are still valid. Older
-   * indexes fall back to the previous page-count/length signature.
-   * @param {object} item
-   * @returns {string}
-   */
-  static corpusItemRevision(item) {
-    if (item.sourceRevision) return String(item.sourceRevision);
-    if (Array.isArray(item.pages)) {
-      return item.pages.map(page => {
-        const text = typeof page === 'string'
-          ? page
-          : (page && page.text) ? String(page.text) : '';
-        const pageNum = typeof page === 'string' ? '' : (page && page.pageNum) || '';
-        return `${pageNum}:${text.length}`;
-      }).join(',');
-    }
-    return String(item.content ? String(item.content).length : 0);
-  }
-
-  /**
-   * Lightweight signature for chunk-cache invalidation. It intentionally uses
-   * stable metadata plus text lengths/page counts instead of full PDF bodies, so
-   * a cache check is O(items) rather than O(total indexed characters).
-   * @param {Array} corpus
-   * @param {string} courseName
-   * @returns {string}
-   */
-  static chunkIndexCacheKey(corpus, courseName = '') {
-    const scope = String(courseName || '').toLowerCase();
-    const parts = corpus.map(item => {
-      const pages = Array.isArray(item.pages) ? item.pages.length : 0;
-      const revision = this.corpusItemRevision(item);
-      return [
-        item.type || '',
-        item.courseName || '',
-        item.title || '',
-        item.url || '',
-        item.dueAt || '',
-        pages,
-        revision
-      ].join('\u001f');
-    }).join('\u001e');
-    return `${scope}\u001d${corpus.length}\u001d${parts}`;
   }
 
   /**
@@ -727,31 +747,49 @@ class RAGCore {
    * as retrieveLocalContext, but at chunk granularity so answers can cite the
    * exact PDF page or item they came from.
    * @param {string} question
-   * @param {{courseName?: string, limit?: number, charBudget?: number}} opts
+   * @param {{courseName?: string, courseId?: string, limit?: number, charBudget?: number}} opts
    * @returns {Promise<Array>} top chunks with provenance
    */
-  static async retrieveBrainChunks(question, { courseName = '', limit = 6, charBudget = 6000 } = {}) {
+  static async retrieveBrainChunks(question, { courseName = '', courseId = '', limit = 6, charBudget = 6000 } = {}) {
     const chunks = await this.buildChunkIndex(courseName);
-    if (chunks.length === 0) return [];
-
-    const tokens = this.queryTokens(question);
-    if (tokens.length === 0) return [];
-
-    const preparedChunks = chunks.map(chunk => ({
-      chunk,
-      titleLower: String(chunk.title || '').toLowerCase(),
-      courseLower: String(chunk.courseName || '').toLowerCase(),
-      textLower: String(chunk.text || '').toLowerCase()
-    }));
-
-    const lexical = preparedChunks.map(prepared => {
-      let score = 0;
-      for (const token of tokens) {
-        if (prepared.titleLower.includes(token)) score += 10;
-        if (prepared.courseLower.includes(token)) score += 4;
-        if (prepared.textLower.includes(token)) score += 2;
+    let courseMaterialChunks = [];
+    let courseMaterialStatus = null;
+    const courseMaterials = (typeof self !== 'undefined' && self.CanvascopeCourseMaterials)
+      || (typeof window !== 'undefined' && window.CanvascopeCourseMaterials)
+      || null;
+    if (courseMaterials && (typeof courseMaterials.search === 'function' || typeof courseMaterials.searchLocal === 'function')) {
+      try {
+        const searchFn = typeof courseMaterials.search === 'function'
+          ? courseMaterials.search.bind(courseMaterials)
+          : courseMaterials.searchLocal.bind(courseMaterials);
+        const result = await searchFn(question, {
+          courseName,
+          courseId,
+          limit: Math.max(limit, 10),
+          charBudget
+        });
+        courseMaterialChunks = Array.isArray(result?.chunks) ? result.chunks : [];
+        courseMaterialStatus = result?.status || null;
+      } catch (error) {
+        console.warn('[Canvascope RAG] Course material search failed:', error);
       }
-      return { chunk: prepared.chunk, score };
+    }
+    this.lastCourseMaterialStatus = courseMaterialStatus;
+    if (chunks.length === 0 && courseMaterialChunks.length === 0) return [];
+
+    const tokens = this.tokenize(question);
+
+    const lexical = chunks.map(chunk => {
+      let score = 0;
+      const titleLower = String(chunk.title || '').toLowerCase();
+      const courseLower = String(chunk.courseName || '').toLowerCase();
+      const textLower = String(chunk.text || '').toLowerCase();
+      for (const token of tokens) {
+        if (titleLower.includes(token)) score += 10;
+        if (courseLower.includes(token)) score += 4;
+        if (textLower.includes(token)) score += 2;
+      }
+      return { chunk, score };
     });
 
     const strongMatches = lexical
@@ -790,9 +828,16 @@ class RAGCore {
 
     // RRF now reranks within the lexically-relevant set; with semanticMatches
     // drawn only from strongMatches, no off-topic chunk can enter the result.
-    const merged = (typeof SemanticMatcher !== 'undefined')
+    let merged = (typeof SemanticMatcher !== 'undefined')
       ? SemanticMatcher.rrfMerge(strongMatches, semanticMatches)
       : strongMatches;
+
+    if (this.hasStudySummaryIntent(question)) {
+      const overview = this.materialOverviewChunks(chunks, question, Math.max(limit, 8));
+      merged = this.mergeUniqueChunks(overview, merged);
+    }
+
+    merged = this.mergeUniqueChunks(courseMaterialChunks, merged);
 
     // Enforce both the chunk limit and a total character budget so the
     // compiled prompt stays inside the on-device model's small window.
@@ -806,48 +851,6 @@ class RAGCore {
       used += cost;
     }
     return out;
-  }
-
-  /**
-   * Compiles a citation-grounded Study Pack prompt from ranked course chunks.
-   * The output is intentionally structured for copy/paste into Lectra, Obsidian,
-   * Notion, or a Markdown doc, with every study action tied back to source
-   * numbers/pages. This gives students an actionable alternative to generic PDF
-   * chat without requiring a new retrieval path.
-   * @param {string} goal
-   * @param {{courseName?: string, limit?: number, charBudget?: number}} opts
-   * @returns {Promise<{prompt: string, sources: Array}>} sources are 1-indexed
-   *   {n, title, courseName, type, url, page} matching the [n] cite markers.
-   */
-  static async compileStudyPackPrompt(goal = 'Create a cited study pack for this material.', { courseName = '', limit = 8, charBudget = 7000 } = {}) {
-    const chunks = await this.retrieveBrainChunks(goal, { courseName, limit, charBudget });
-
-    const sources = chunks.map((chunk, i) => ({
-      n: i + 1,
-      title: chunk.title,
-      courseName: chunk.courseName,
-      type: chunk.type,
-      url: chunk.url,
-      page: chunk.page
-    }));
-
-    let prompt = '';
-    if (chunks.length > 0) {
-      prompt += `=== COURSE SOURCES (cite as [n]) ===\n`;
-      chunks.forEach((chunk, i) => {
-        const loc = chunk.page ? ` — page ${chunk.page}` : '';
-        const due = chunk.dueAt ? ` — due ${new Date(chunk.dueAt).toLocaleDateString()}` : '';
-        prompt += `[${i + 1}] ${chunk.title} (${chunk.courseName}${loc}${due})\n${chunk.text}\n\n`;
-      });
-    } else {
-      prompt += `=== COURSE SOURCES ===\n(No indexed course content matched this study-pack request${courseName ? ` in ${courseName}` : ''}. Say that Canvascope needs opened/indexed course files before it can make a cited pack.)\n\n`;
-    }
-
-    prompt += this.contextBudgetSection(sources, prompt, { label: 'Study pack source ledger', targetTokenBudget: 2200 });
-
-    prompt += `=== STUDY PACK REQUEST ===\nBuild a concise Markdown study pack for the student. Use the exact sections below:\n# Study Pack\n## Key Concepts\n- 5 bullets max; each bullet must include an inline source citation like [1].\n## Worked Examples & Edge Cases\n- 2 tiny examples or counterexamples the student can test; cite the source that motivates each one.\n## Likely Quiz Questions\n- 3 question/answer pairs; cite the source used for each answer.\n## Flashcards\n- 4 compact Q/A cards; include a Source: [n] line.\n## Lectra Handoff\n- 2 bullets that say exactly what to paste into a Lectra notebook, including the source number and the runnable check/example to create.\n## Review Checklist\n- 3 actionable checkbox items tied to the student's course material.\n## Confusing Points to Revisit\n- 2 items the student should ask about or re-read.\nRules: preserve citation fidelity, include page/slide numbers when the source metadata has them, quote a short evidence phrase when helpful, do not fabricate citations, and keep it easy to copy into Lectra or any Markdown notes app. ${this.citationFirstStudyNoteContract(sources)} Student goal: ${goal}`;
-
-    return { prompt, sources };
   }
 
   /**
@@ -869,7 +872,7 @@ class RAGCore {
       page: chunk.page
     }));
 
-    let prompt = '';
+    let prompt = this.currentGroundingBlock();
     if (chunks.length > 0) {
       prompt += `=== COURSE SOURCES (cite as [n]) ===\n`;
       chunks.forEach((chunk, i) => {
@@ -881,13 +884,7 @@ class RAGCore {
       prompt += `=== COURSE SOURCES ===\n(No indexed course content matched this question${courseName ? ` in ${courseName}` : ''}. Answer from your general knowledge, and mention that nothing in their indexed course materials covered it — opening the course files once lets Canvascope index them.)\n\n`;
     }
 
-    const programmingInstructions = this.hasProgrammingStudyIntent(question)
-      ? ' For programming/CS questions, include a tiny runnable example or pseudocode when useful, name at least one edge case or test, and call out Big-O/performance implications without over-explaining.'
-      : '';
-    const assignmentBriefInstructions = this.hasAssignmentBriefIntent(question)
-      ? ' For assignment/lab pre-brief requests, structure the answer as: Objective, Deliverables, Constraints/Rubric, Files or commands to inspect/run, Edge cases/traps, and a Lectra handoff checklist. Keep every course-specific item cited.'
-      : '';
-    prompt += `=== QUESTION ===\nAnswer the student's question. Ground claims in the numbered sources when they cover it, citing inline like [1] or [2]. When the sources only partially cover the topic (or are merely related, e.g. labs on the concept), fill the gaps from your general knowledge — clearly grounded teaching is better than refusing — and connect the explanation back to the course materials where helpful. Only attach [n] citations to claims actually drawn from the sources; never fabricate a citation. For facts specific to this course (due dates, grading, instructions), rely strictly on the sources and say so if they're missing.${programmingInstructions}${assignmentBriefInstructions} Be concise (2-5 sentences or a short list). Question: ${question}`;
+    prompt += `=== QUESTION ===\nAnswer the student's question. Ground claims in the numbered sources when they cover it, citing inline like [1] or [2]. When the sources only partially cover the topic (or are merely related, e.g. labs on the concept), fill the gaps from your general knowledge — clearly grounded teaching is better than refusing — and connect the explanation back to the course materials where helpful. For material-summary questions such as "what did we study this week", use source titles, folders, module names, dates, and week labels to summarize what the available materials indicate, even when body text is sparse. Only attach [n] citations to claims actually drawn from the sources; never fabricate a citation. For facts specific to this course (due dates, grading, instructions), rely strictly on the sources and say so if they're missing. Be concise (2-5 sentences or a short list). Question: ${question}`;
 
     return { prompt, sources };
   }
@@ -903,11 +900,23 @@ class RAGCore {
    * @returns {Promise<{prompt: string, sources: Array}>} sources are 1-indexed
    *   {n, title, courseName, type, url, page} matching the [n] cite markers.
    */
-  static async compileUnifiedPrompt(question, { courseName = '' } = {}) {
-    // Active-page scrape and whole-corpus chunk retrieval run concurrently.
+  static async compileUnifiedPrompt(question, { courseName = '', courseId = '' } = {}) {
+    const activeContext = await this.inferActiveCanvasContext();
+    if (activeContext) this.triggerActiveCourseMaterialDiscovery(activeContext);
+    const effectiveCourseName = courseName || activeContext?.courseName || '';
+    const activeMatchesRequestedCourse = !courseName
+      || String(activeContext?.courseName || '').toLowerCase() === String(courseName || '').toLowerCase();
+    const effectiveCourseId = courseId || (activeMatchesRequestedCourse ? (activeContext?.courseId || '') : '');
+
+    // Active-page scrape and course-scoped chunk retrieval run concurrently.
     const [pageContext, chunks, tab] = await Promise.all([
       this.scrapeActiveTab(question),
-      this.retrieveBrainChunks(question, { courseName, limit: 10, charBudget: 9000 }),
+      this.retrieveBrainChunks(question, {
+        courseName: effectiveCourseName,
+        courseId: effectiveCourseId,
+        limit: 10,
+        charBudget: 9000
+      }),
       chrome.tabs.query({ active: true, currentWindow: true }).then(r => r[0]).catch(() => null)
     ]);
 
@@ -918,112 +927,57 @@ class RAGCore {
     if (pageContext) {
       const n = sources.length + 1;
       const title = (tab && tab.title) ? (tab.title.split(':').pop().trim() || tab.title) : 'Active page';
-      const boundedPageContext = this.capSourceText(pageContext);
-      sources.push({ n, title, courseName: 'This page', type: 'page', url: (tab && tab.url) || '', page: null });
-      body += `[${n}] ${title} (the page the student is viewing right now)\n${boundedPageContext}\n\n`;
+      sources.push({ n, title, courseName: effectiveCourseName || 'This page', courseId: effectiveCourseId || null, type: 'page', url: (tab && tab.url) || '', page: null });
+      body += `[${n}] ${title} (the page the student is viewing right now)\n${pageContext}\n\n`;
     }
 
     // Ranked chunks from across the indexed corpus carry their own provenance.
-    // If the active page is also indexed, skip the duplicate chunk to keep Ask
-    // prompts smaller, faster, and less confusing (one source number per page).
-    const seenSourceKeys = new Set(sources.map(source => this.normalizedSourceKey(source)));
-    const activeDocumentKeys = new Set(
-      sources
-        .filter(source => source.type === 'page' && source.url)
-        .map(source => this.normalizedDocumentSourceKey(source))
-        .filter(Boolean)
-    );
     chunks.forEach((chunk) => {
-      const key = this.normalizedSourceKey(chunk);
-      if (key && seenSourceKeys.has(key)) return;
-      const documentKey = this.normalizedDocumentSourceKey(chunk);
-      if (documentKey && activeDocumentKeys.has(documentKey)) return;
-      seenSourceKeys.add(key);
-
       const n = sources.length + 1;
       const loc = chunk.page ? ` — page ${chunk.page}` : '';
       const due = chunk.dueAt ? ` — due ${new Date(chunk.dueAt).toLocaleDateString()}` : '';
-      const block = `[${n}] ${chunk.title} (${chunk.courseName}${loc}${due})\n${chunk.text}\n\n`;
-      if (!this.canAppendPromptBlock(body, block) && sources.length > 0) return;
-      body += block;
-      sources.push({ n, title: chunk.title, courseName: chunk.courseName, type: chunk.type, url: chunk.url, page: chunk.page });
+      const week = chunk.weekStart && chunk.weekEnd ? ` — ${chunk.weekStart} to ${chunk.weekEnd}` : '';
+      body += `[${n}] ${chunk.title} (${chunk.courseName}${loc}${due}${week})\n${chunk.text}\n\n`;
+      sources.push({
+        n,
+        title: chunk.title,
+        courseName: chunk.courseName,
+        courseId: chunk.courseId || null,
+        type: chunk.type,
+        url: chunk.url,
+        page: chunk.page,
+        weekStart: chunk.weekStart || null,
+        weekEnd: chunk.weekEnd || null
+      });
     });
 
-    let prompt = '';
+    let prompt = this.currentGroundingBlock();
     if (sources.length > 0) {
       prompt += `=== SOURCES (cite as [n]) ===\n${body}`;
     } else {
-      prompt += `=== SOURCES ===\n(Nothing in the student's indexed course materials or active page matched this question. Answer from your general knowledge and mention that nothing in their indexed materials covered it — opening the relevant course files once lets Canvascope index them.)\n\n`;
+      prompt += `=== SOURCES ===\n(Nothing in the student's indexed course materials or active page matched this question${effectiveCourseName ? ` for ${effectiveCourseName}` : ''}. Answer from your general knowledge and mention that Canvascope is still indexing or has not indexed the relevant files yet when course-specific materials are missing.)\n\n`;
     }
 
-    prompt += this.contextBudgetSection(sources, body, { label: 'Ask source ledger', targetTokenBudget: 3000 });
-
-    const programmingInstructions = this.hasProgrammingStudyIntent(question)
-      ? ' For programming/CS questions, include a tiny runnable example or pseudocode when useful, name at least one edge case/test, and call out Big-O or performance implications without over-explaining.'
-      : '';
-    const assignmentBriefInstructions = this.hasAssignmentBriefIntent(question)
-      ? ` For assignment/lab pre-brief requests, structure the answer as: Objective, Deliverables, Constraints/Rubric, Files or commands to inspect/run, Edge cases/traps, and a Lectra handoff checklist. Keep every course-specific item cited. ${this.lectraContextPackTemplate()}`
-      : '';
-    const studyNotesInstructions = this.hasStudyNotesIntent(question)
-      ? ` For study-note requests, output portable Markdown with: Key Concepts, Worked Example or Edge Case, Evidence/Citations, and Lectra Handoff. Keep bullets short so they paste cleanly into a notebook. ${this.citationFirstStudyNoteContract(sources)} ${this.lectraContextPackTemplate()}`
-      : '';
-    prompt += `=== QUESTION ===\nAnswer the student's question. Ground claims in the numbered sources when they cover it, citing inline like [1] or [2] (source [1] is the page they are viewing, when present). When the sources only partially cover the topic — or are merely related — fill the gaps from your general knowledge (clear teaching beats refusing) and connect the explanation back to the sources and the student's goals where helpful. Only attach an [n] citation to a claim actually drawn from that source; never fabricate a citation. For facts specific to this course (due dates, grading, instructions) rely strictly on the sources and say so plainly if they are missing.${programmingInstructions}${assignmentBriefInstructions}${studyNotesInstructions} Be concise (2-5 sentences or a short list). Question: ${question}`;
-
-    return { prompt, sources };
-  }
-
-  /**
-   * Stable de-duplication key for prompt sources. Uses URL without query/hash
-   * plus page when available; falls back to course/title/type for local notes.
-   * @param {{url?: string, page?: number|null, title?: string, courseName?: string, type?: string}} source
-   * @returns {string}
-   */
-  static normalizedSourceKey(source) {
-    if (!source) return '';
-    const page = source.page || '';
-    if (source.url) {
-      try {
-        const url = new URL(source.url);
-        url.hash = '';
-        url.search = '';
-        return `url:${url.toString().toLowerCase()}#${page}`;
-      } catch (_) {
-        const clean = String(source.url).split('#')[0].split('?')[0].toLowerCase();
-        return `url:${clean}#${page}`;
-      }
+    const currentWeek = this.lastCourseMaterialStatus?.currentWeek;
+    if (currentWeek?.weekStart && currentWeek?.weekEnd) {
+      prompt += `=== CURRENT COURSE WEEK ===\nFor this active course, the indexed folder dates indicate this week is ${currentWeek.weekStart} to ${currentWeek.weekEnd}.\n\n`;
     }
-    const title = String(source.title || '').trim().toLowerCase();
-    if (!title) return '';
-    const course = String(source.courseName || '').trim().toLowerCase();
-    const type = String(source.type || '').trim().toLowerCase();
-    return `local:${type}|${course}|${title}#${page}`;
-  }
 
-  /**
-   * Coarser de-duplication key for active-page/PDF prompts. An opened PDF may
-   * scrape several pages into source [1] while the indexed corpus has one chunk
-   * per page; comparing without page keeps those chunks from duplicating the
-   * active document and inflating Ask latency.
-   * @param {{url?: string, title?: string, courseName?: string, type?: string}} source
-   * @returns {string}
-   */
-  static normalizedDocumentSourceKey(source) {
-    if (!source) return '';
-    if (source.url) {
-      try {
-        const url = new URL(source.url);
-        url.hash = '';
-        url.search = '';
-        return `url:${url.toString().toLowerCase()}`;
-      } catch (_) {
-        return `url:${String(source.url).split('#')[0].split('?')[0].toLowerCase()}`;
-      }
-    }
-    const title = String(source.title || '').trim().toLowerCase();
-    if (!title) return '';
-    const course = String(source.courseName || '').trim().toLowerCase();
-    const type = String(source.type || '').trim().toLowerCase();
-    return `local:${type}|${course}|${title}`;
+    prompt += `=== QUESTION ===\nAnswer the student's question. Use the active course scope first${effectiveCourseName ? ` (${effectiveCourseName})` : ''}; do not pull supporting links or materials from other courses unless the student explicitly asks for them. For material-summary questions such as "what am I learning this week?", explain the actual topics in plain language rather than summarizing source numbers. Prefer parsed PDF/OCR content over title-only metadata; when only titles/folders are available, say "based on the indexed file list" and avoid inventing slide details. Do not include a bibliography or source list in the answer. Use citations sparingly only when a specific claim needs verification; never fabricate a citation. For facts specific to this course (due dates, grading, instructions) rely strictly on the sources and say so plainly if they are missing. Be concise: 3-5 bullets or 2-5 sentences. Question: ${question}`;
+
+    return {
+      prompt,
+      sources,
+      presentation: {
+        decorateCitations: !this.hasStudySummaryIntent(question),
+        sourceDisplay: 'disclosure'
+      },
+      indexingStatus: this.lastCourseMaterialStatus || null,
+      activeCourse: activeContext ? {
+        courseId: effectiveCourseId,
+        courseName: effectiveCourseName
+      } : null
+    };
   }
 
   /**
@@ -1051,21 +1005,24 @@ class RAGCore {
         courseName: item.courseName || '',
         type: item.type,
         url: item.url || '',
-        dueAt: item.dueAt || null
+        dueAt: item.dueAt || null,
+        moduleName: item.moduleName || '',
+        folderPath: item.folderPath || '',
+        pathSegments: Array.isArray(item.pathSegments) ? item.pathSegments.slice() : [],
+        weekHints: Array.isArray(item.weekHints) ? item.weekHints.slice() : [],
+        scannedAt: item.scannedAt || null,
+        indexedAt: item.indexedAt || null,
+        createdAt: item.createdAt || null,
+        updatedAt: item.updatedAt || null
       };
       if (Array.isArray(item.pages) && item.pages.length > 0) {
-        item.pages.forEach((page, index) => {
-          const text = typeof page === 'string'
-            ? page
-            : (page && page.text) ? String(page.text) : '';
+        item.pages.forEach(page => {
+          const text = (page && page.text) ? String(page.text) : '';
           if (!text.trim()) return;
-          const pageNumber = typeof page === 'string'
-            ? index + 1
-            : (page.pageNum || index + 1);
-          chunks.push({ ...base, page: pageNumber, text });
+          chunks.push({ ...base, page: page.pageNum || null, text: this.sourceTextForItem(item, text) });
         });
       } else {
-        const text = (item.content || '').trim();
+        const text = this.sourceTextForItem(item, item.content || '').trim();
         chunks.push({ ...base, page: null, text: text || base.title });
       }
     });

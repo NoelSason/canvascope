@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Canvascope",
-  "version": "10.1.0",
+  "version": "10.2.0",
   "minimum_chrome_version": "116",
   "default_locale": "en",
   "description": "Turn Canvas into an AI study hub: cited course answers, instant PDF search, deadline insights, and smarter planning for every class.",
@@ -30,7 +30,10 @@
     "identity",
     "downloads",
     "notifications",
-    "sidePanel"
+    "sidePanel",
+    "webNavigation",
+    "history",
+    "clipboardRead"
   ],
   "oauth2": {
     "client_id": "961806200943-6deqch1r87uthbarmr7te483u4h7fn9m.apps.googleusercontent.com",
@@ -52,7 +55,10 @@
     "*://bruinlearn.ucla.edu/*",
     "*://canvas.ucsd.edu/*",
     "*://canvas.asu.edu/*",
-    "*://canvas.mit.edu/*"
+    "*://canvas.mit.edu/*",
+    "*://kaf.berkeley.edu/*",
+    "*://*.kaf.kaltura.com/*",
+    "*://*.mediaspace.kaltura.com/*"
   ],
   "content_scripts": [
     {
@@ -69,6 +75,7 @@
       "js": [
         "src/content/skin-early.js"
       ],
+      "all_frames": true,
       "run_at": "document_start"
     },
     {
@@ -88,9 +95,7 @@
         "src/content/content.js",
         "src/content/canvas-skin.js",
         "src/content/academic-tools.js",
-        "src/core/semantic-matcher.js",
-        "src/content/slash-overlay.js",
-        "src/content/slash-commands-pack.js"
+        "src/core/semantic-matcher.js"
       ],
       "run_at": "document_idle"
     },
@@ -121,6 +126,31 @@
         "src/content/attach-from-lectra.js",
         "src/content/gradescope.js"
       ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "*://kaf.berkeley.edu/*",
+        "*://*.kaf.kaltura.com/*",
+        "*://*.mediaspace.kaltura.com/*"
+      ],
+      "js": [
+        "src/content/kaltura-skin-early.js"
+      ],
+      "all_frames": true,
+      "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "*://kaf.berkeley.edu/*",
+        "*://*.kaf.kaltura.com/*",
+        "*://*.mediaspace.kaltura.com/*"
+      ],
+      "js": [
+        "src/lib/skin-themes.js",
+        "src/content/kaltura-skin.js"
+      ],
+      "all_frames": true,
       "run_at": "document_idle"
     }
   ],

@@ -2470,7 +2470,85 @@ ${themesApi.buildCssVariables(merged)}
 }
 `;
 
-    ensureStyle(STYLE_RULES_ID).textContent = fontRule + bgRule + sharedSurfaceRules + darkExtras + chromeRules + artifactResetRules;
+    // Instructor-authored content (front page, syllabus, wiki pages) should
+    // read as text on the themed page, not float inside a pale surface card.
+    // On light themes --cs-skin-surface is lighter than --cs-skin-bg, so the
+    // earlier surface paint shows as a "weird" off-white box around prose and
+    // banded rows in syllabus/content tables. Blend these prose surfaces into
+    // the page and drop the zebra striping. Appended last so it overrides the
+    // shared surface rules above. Genuine widget/list surfaces (modules,
+    // assignment groups, panels, the right sidebar) are intentionally left as
+    // cards and not matched here.
+    const contentBlendRules = `
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .user_content,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .user_content .enhanceable_content,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .user_content .content-box,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .user_content .pad-box,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .user_content > div,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .user_content section,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .user_content table,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .user_content thead,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .user_content tbody,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .user_content tr,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .user_content td,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .user_content th,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .course_home_content,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .course-content,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .wiki-page-body,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .show-content,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .page-content,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain #syllabusContainer,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .syllabus,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain table.ic-Table.syllabus,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain table.ic-Table.syllabus thead,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain table.ic-Table.syllabus tbody,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain table.ic-Table.syllabus tr,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain table.ic-Table.syllabus td,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain table.ic-Table.syllabus th {
+  background-color: transparent !important;
+  background-image: none !important;
+}
+/* Keep table structure legible with hairline borders now that the fill is
+   transparent (no zebra banding to lean on). */
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .user_content tr:nth-child(even) td,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain table.ic-Table.syllabus tr:nth-child(even) td {
+  background-color: transparent !important;
+}
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .user_content td,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .user_content th,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain table.ic-Table.syllabus td,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain table.ic-Table.syllabus th {
+  border-color: var(--cs-skin-border) !important;
+}
+/* These wrappers pick up a card shadow/radius from the "modern polish" block
+   above; with a transparent fill that would leave a floating shadow, so drop
+   the elevation for blended prose surfaces. */
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .show-content,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .page-content,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .wiki-page-body,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .course_home_content,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain .course-content,
+.${BODY_ROOT_CLASS} .ic-Layout-contentMain table.ic-Table.syllabus {
+  box-shadow: none !important;
+}
+/* Full-page LTI tools (e.g. the Kaltura Media Gallery) load in a tool_launch
+   iframe that is NOT under .ic-Layout-contentMain, so the content-area iframe
+   rule misses it and Canvas's stock white iframe/wrapper shows for the whole
+   network load before the tool's own document paints. Paint the wrapper + the
+   iframe element with the theme background so that load gap reads as the theme,
+   not white. (The tool's document itself is themed by kaltura-skin.js.) */
+.${BODY_ROOT_CLASS} .tool_content_wrapper,
+.${BODY_ROOT_CLASS} [class*="tool_content_wrapper"],
+.${BODY_ROOT_CLASS} iframe.tool_launch,
+.${BODY_ROOT_CLASS} iframe[data-lti-launch],
+.${BODY_ROOT_CLASS} iframe[id^="tool_content"],
+.${BODY_ROOT_CLASS} iframe[name^="tool_content"],
+.${BODY_ROOT_CLASS} iframe[src*="/external_tools/"] {
+  background-color: var(--cs-skin-bg) !important;
+}
+`;
+
+    ensureStyle(STYLE_RULES_ID).textContent = fontRule + bgRule + sharedSurfaceRules + darkExtras + chromeRules + artifactResetRules + contentBlendRules;
   }
 
   function cleanupPageTitleMarkers() {
@@ -2615,8 +2693,9 @@ ${themesApi.buildCssVariables(merged)}
 .cs-skin-grade-pill {
   position: absolute;
   top: 8px;
-  right: 8px;
-  z-index: 5;
+  left: 8px;
+  right: auto;
+  z-index: 20;
   padding: 3px 8px;
   border-radius: 6px;
   background: rgba(7, 9, 15, 0.78);
@@ -3078,8 +3157,19 @@ ${themesApi.buildCssVariables(merged)}
       if (!res.ok) throw new Error('Bad status ' + res.status);
       const html = await res.text();
       const doc = new DOMParser().parseFromString(html, 'text/html');
-      const title = doc.querySelector('h1, .assignment-title, .discussion-title')?.textContent?.trim() || 'Untitled';
-      const body = doc.querySelector('.user_content, .description, .discussion-section .message')?.innerHTML || '';
+      // Drop chrome that can leak boilerplate (e.g. the <noscript> "JavaScript
+      // enabled" shell) into a broad `.description` match.
+      doc.querySelectorAll('noscript, script, style, template').forEach(n => n.remove());
+      const title = doc.querySelector('h1.title, .assignment-title, .discussion-title, h1')?.textContent?.trim() || 'Untitled';
+      // Prefer the real assignment/announcement body. `.user_content` is the
+      // Canvas-rendered rich text; generic `.description` is a last resort.
+      const bodyEl = doc.querySelector(
+        '.description.user_content, #assignment_show .description, .show-content.user_content, ' +
+        '.discussion-section .message .user_content, .discussion-section .message, .user_content, .description'
+      );
+      let body = bodyEl?.innerHTML || '';
+      // Guard against the JS-required shell or other non-content boilerplate.
+      if (/you need to have javascript enabled/i.test(bodyEl?.textContent || '')) body = '';
       const due = doc.querySelector('.assignment_dates, .due_at, .assignment-date-due')?.textContent?.trim() || '';
       return { kind, title, due, body: sanitizePreviewHtml(body) };
     } finally {
@@ -3093,7 +3183,9 @@ ${themesApi.buildCssVariables(merged)}
     try {
       const wrap = document.createElement('div');
       wrap.innerHTML = html;
-      wrap.querySelectorAll('script, iframe, object, embed, link, style').forEach(n => n.remove());
+      wrap.querySelectorAll('script, iframe, object, embed, link, style, noscript').forEach(n => n.remove());
+      // Markup with no real text (e.g. an empty <p>) should read as no description.
+      if (!(wrap.textContent || '').trim()) return '';
       wrap.querySelectorAll('*').forEach(n => {
         for (const a of Array.from(n.attributes)) {
           if (/^on/i.test(a.name)) n.removeAttribute(a.name);

@@ -21,6 +21,7 @@ coverage/
 canvascope-*.json
 
 # AI / assistant tooling (local dev only)
+characterProfile/
 .claude/
 .antigravity/
 .antigravitycli/

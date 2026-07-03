@@ -84,6 +84,8 @@ const CUSTOM_ALGORITHM_WARNING = 'Custom Algorithm is experimental. It changes h
 const MAX_RESULTS = 20;
 const SEARCH_DEBOUNCE_MS = 150;
 const OVERLAY_SEARCH_DEBOUNCE_MS = 220;
+const OVERLAY_FAST_PREVIEW_FALLBACK_DELAY_MS = 48;
+const OVERLAY_FAST_PREVIEW_IDLE_TIMEOUT_MS = 90;
 const SEARCH_SIDE_EFFECT_DEBOUNCE_MS = 900;
 const PDF_BODY_SEARCH_LIMIT = 12000;
 const BODY_RECALL_MIN_TOKEN_LENGTH = 5;
@@ -300,14 +302,32 @@ function detectTemporalIntent(normalizedQuery) {
   return { kind, strippedQuery };
 }
 
+function getLocalDayRange(dayOffset = 0) {
+  const start = new Date(Date.now());
+  start.setHours(0, 0, 0, 0);
+  start.setDate(start.getDate() + dayOffset);
+  const end = new Date(start.getTime());
+  end.setHours(23, 59, 59, 999);
+  return { startTs: start.getTime(), endTs: end.getTime() };
+}
+
+function getLocalWeekRange(weekOffset = 0) {
+  const start = new Date(Date.now());
+  start.setHours(0, 0, 0, 0);
+  const mondayOffset = (start.getDay() + 6) % 7;
+  start.setDate(start.getDate() - mondayOffset + (weekOffset * 7));
+  const end = new Date(start.getTime());
+  end.setDate(start.getDate() + 6);
+  end.setHours(23, 59, 59, 999);
+  return { startTs: start.getTime(), endTs: end.getTime() };
+}
+
 function getTemporalWindow(kind) {
-  const now = Date.now();
-  const DAY_MS = 24 * 60 * 60 * 1000;
-  if (kind === 'today') return { anchorTs: now, radiusMs: 2 * DAY_MS };
-  if (kind === 'yesterday') return { anchorTs: now - DAY_MS, radiusMs: 2 * DAY_MS };
-  if (kind === 'last_week') return { anchorTs: now - (7 * DAY_MS), radiusMs: 7 * DAY_MS };
+  if (kind === 'today') return getLocalDayRange(0);
+  if (kind === 'yesterday') return getLocalDayRange(-1);
+  if (kind === 'last_week') return getLocalWeekRange(-1);
   // this_week (default)
-  return { anchorTs: now, radiusMs: 7 * DAY_MS };
+  return getLocalWeekRange(0);
 }
 
 function isTemporalTask(item) {
@@ -315,40 +335,164 @@ function isTemporalTask(item) {
   return t === 'assignment' || t === 'quiz' || t === 'discussion';
 }
 
+// ---------------------------------------------------------------------------
+// Name-based dates. Canvas file/folder names carry the *real* date the material
+// belongs to (e.g. "Jun 29 - Lecture 1.4", folder "Week 2: Jun. 29 - Jul. 1"),
+// while the upload timestamp (createdAt/updatedAt) is just when the instructor
+// happened to post the file. Temporal queries ("today", "this week", ...) mean
+// the labelled date, not the upload time, so we parse dates out of the name and
+// treat a multi-date name as a span that a query window can overlap.
+// ---------------------------------------------------------------------------
+const TEMPORAL_MONTHS = {
+  jan: 0, january: 0, feb: 1, february: 1, mar: 2, march: 2, apr: 3, april: 3,
+  may: 4, jun: 5, june: 5, jul: 6, july: 6, aug: 7, august: 7,
+  sep: 8, sept: 8, september: 8, oct: 9, october: 9, nov: 10, november: 10,
+  dec: 11, december: 11
+};
+
+function collectDatesFromText(text, refYear) {
+  const out = [];
+  if (!text) return out;
+  const lower = String(text).toLowerCase();
+
+  // "jun 29", "jun. 29", "june 29", optionally ", 2026"
+  const monthDayRe = /\b(jan|january|feb|february|mar|march|apr|april|may|jun|june|jul|july|aug|august|sep|sept|september|oct|october|nov|november|dec|december)\.?\s+(\d{1,2})(?:\s*,?\s*(\d{4}))?/g;
+  let m;
+  while ((m = monthDayRe.exec(lower)) !== null) {
+    const mo = TEMPORAL_MONTHS[m[1]];
+    const day = parseInt(m[2], 10);
+    const yr = m[3] ? parseInt(m[3], 10) : refYear;
+    if (mo != null && day >= 1 && day <= 31) {
+      const d = new Date(yr, mo, day, 0, 0, 0, 0).getTime();
+      if (Number.isFinite(d)) out.push(d);
+    }
+  }
+
+  // ISO "2026-06-29"
+  const isoRe = /\b(\d{4})-(\d{1,2})-(\d{1,2})\b/g;
+  while ((m = isoRe.exec(lower)) !== null) {
+    const d = new Date(parseInt(m[1], 10), parseInt(m[2], 10) - 1, parseInt(m[3], 10), 0, 0, 0, 0).getTime();
+    if (Number.isFinite(d)) out.push(d);
+  }
+
+  // Numeric "6/29" or "06/29/2026" (slash only — avoids clashing with "1.4")
+  const numRe = /\b(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\b/g;
+  while ((m = numRe.exec(lower)) !== null) {
+    const mo = parseInt(m[1], 10) - 1;
+    const day = parseInt(m[2], 10);
+    let yr = m[3] ? parseInt(m[3], 10) : refYear;
+    if (yr < 100) yr += 2000;
+    if (mo >= 0 && mo <= 11 && day >= 1 && day <= 31) {
+      const d = new Date(yr, mo, day, 0, 0, 0, 0).getTime();
+      if (Number.isFinite(d)) out.push(d);
+    }
+  }
+
+  return out;
+}
+
+// Returns { startTs, endTs } spanning the dates named in the item, or null.
+const NAME_DATE_SPAN_CACHE = new WeakMap();
+function getItemNameDateSpan(item) {
+  if (!item || typeof item !== "object") return null;
+  if (NAME_DATE_SPAN_CACHE.has(item)) return NAME_DATE_SPAN_CACHE.get(item);
+
+  const refYear = new Date(Date.now()).getFullYear();
+  const texts = [item.title, item.folderPath];
+  if (Array.isArray(item.pathSegments)) texts.push(item.pathSegments.join(' '));
+  if (item.moduleName) texts.push(item.moduleName);
+
+  const dates = [];
+  for (const t of texts) {
+    for (const ts of collectDatesFromText(t, refYear)) dates.push(ts);
+  }
+
+  let span = null;
+  if (dates.length > 0) {
+    const startTs = Math.min(...dates);
+    const endDay = new Date(Math.max(...dates));
+    endDay.setHours(23, 59, 59, 999);
+    span = { startTs, endTs: endDay.getTime() };
+  }
+  NAME_DATE_SPAN_CACHE.set(item, span);
+  return span;
+}
+
+function getItemTemporalTs(item) {
+  if (!item) return 0;
+  // Tasks: the due date is authoritative.
+  if (isTemporalTask(item) && item.dueAt) {
+    const ts = new Date(item.dueAt).getTime();
+    return Number.isFinite(ts) && ts > 0 ? ts : 0;
+  }
+  // Content files: prefer the date named in the title/folder over upload time.
+  const span = getItemNameDateSpan(item);
+  if (span && span.startTs > 0) return span.startTs;
+
+  const value = item.updatedAt || item.createdAt || item.dueAt || null;
+  if (!value) return 0;
+  const ts = new Date(value).getTime();
+  return Number.isFinite(ts) && ts > 0 ? ts : 0;
+}
+
+function itemMatchesTemporalWindow(item, temporalKind) {
+  if (!temporalKind) return true;
+  const { startTs, endTs } = getTemporalWindow(temporalKind);
+
+  // A named date span matches when it overlaps the query window — so a file in
+  // folder "Week 2: Jun. 29 - Jul. 1" is found by "today" on Jun 30 and by
+  // "this week" for the whole week.
+  const span = getItemNameDateSpan(item);
+  if (span) {
+    return span.startTs <= endTs && span.endTs >= startTs;
+  }
+
+  const ts = getItemTemporalTs(item);
+  if (!ts) return false;
+  return ts >= startTs && ts <= endTs;
+}
+
 function applyTemporalFilter(results, temporalKind) {
   if (!temporalKind) return results;
-  const { anchorTs, radiusMs } = getTemporalWindow(temporalKind);
+  return results.filter(r => itemMatchesTemporalWindow(r?.item, temporalKind));
+}
 
-  return results.filter(r => {
-    const item = r?.item;
-    if (!item) return false;
-    
-    let ts = null;
-    if (isTemporalTask(item) && item.dueAt) {
-      ts = new Date(item.dueAt).getTime();
-    } else if (item.createdAt || item.updatedAt) {
-      ts = new Date(item.updatedAt || item.createdAt).getTime();
-    }
-    
-    if (!ts || !Number.isFinite(ts) || ts <= 0) return false;
-    return Math.abs(ts - anchorTs) <= radiusMs;
-  });
+function applyTemporalFilterWithFallback(results, temporalKind) {
+  const primary = applyTemporalFilter(results, temporalKind);
+  if (primary.length > 0 || temporalKind !== 'today') return primary;
+  return applyTemporalFilter(results, 'this_week');
 }
 
 function filterItemsByTemporalWindow(items, temporalKind) {
   if (!temporalKind) return items;
-  const { anchorTs, radiusMs } = getTemporalWindow(temporalKind);
-  return (items || []).filter(item => {
-    let ts = null;
-    if (isTemporalTask(item) && item.dueAt) {
-      ts = new Date(item.dueAt).getTime();
-    } else if (item.createdAt || item.updatedAt) {
-      ts = new Date(item.updatedAt || item.createdAt).getTime();
+  return (items || []).filter(item => itemMatchesTemporalWindow(item, temporalKind));
+}
+
+function itemMatchesTemporalFallbackQuery(item, queryMeta) {
+  const tokens = queryMeta?.searchTokens || [];
+  if (!Array.isArray(tokens) || tokens.length === 0) return true;
+  const runtime = getItemSearchRuntime(item);
+  return countMatchedQueryTokens(
+    runtime.searchableText,
+    tokens,
+    queryMeta?.searchTokenMatchers || new Map()
+  ) > 0;
+}
+
+function filterItemsByTemporalWindowWithFallback(items, temporalKind, queryMeta = null) {
+  const primary = filterItemsByTemporalWindow(items, temporalKind);
+  if (primary.length > 0) {
+    if (temporalKind === 'today'
+      && Array.isArray(queryMeta?.searchTokens)
+      && queryMeta.searchTokens.length > 0
+      && !primary.some(item => itemMatchesTemporalFallbackQuery(item, queryMeta))) {
+      const currentWeek = filterItemsByTemporalWindow(items, 'this_week');
+      if (currentWeek.length > 0) return currentWeek;
     }
-    
-    if (!ts || !Number.isFinite(ts) || ts <= 0) return false;
-    return Math.abs(ts - anchorTs) <= radiusMs;
-  });
+    return primary;
+  }
+  if (temporalKind !== 'today') return primary;
+  return filterItemsByTemporalWindow(items, 'this_week');
 }
 
 // ============================================
@@ -1306,37 +1450,16 @@ function renderHomeSections() {
   const primaryRecent = state.recentlyOpened[0];
   const additionalRecents = state.recentlyOpened.slice(1, MAX_RECENTS);
 
-  // v10: pressure radar — course × urgency grid over dated work (radar.js).
+  // Pressure radar / targeting grid removed from the home page by request —
+  // the home view keeps "Continue where you left off" + Recents only. (The
+  // radar still exists in the Hero "Radar" tab via renderRadarPanel.)
   const radarSection = document.getElementById('radar-section');
-  let hasRadar = false;
-  if (radarSection && window.CanvascopeRadar) {
-    const now = Date.now();
-    const datedItems = (state.indexedContent || []).filter((item) => {
-      if (!item || !item.dueAt || item.completed) return false;
-      const ts = new Date(item.dueAt).getTime();
-      return Number.isFinite(ts) && ts > now - 14 * 24 * 60 * 60 * 1000 && ts < now + 14 * 24 * 60 * 60 * 1000;
-    });
-    if (datedItems.length > 0) {
-      radarSection.innerHTML = '';
-      const title = document.createElement('div');
-      title.className = 'home-section-title';
-      title.textContent = 'Pressure radar';
-      radarSection.appendChild(title);
-      const mount = document.createElement('div');
-      radarSection.appendChild(mount);
-      window.CanvascopeRadar.render(mount, {
-        items: datedItems,
-        now,
-        onOpen: (item, event) => openResult(item, event)
-      });
-      radarSection.classList.remove('hidden');
-      hasRadar = true;
-    } else {
-      radarSection.classList.add('hidden');
-    }
+  if (radarSection) {
+    radarSection.innerHTML = '';
+    radarSection.classList.add('hidden');
   }
 
-  const hasHomeContent = Boolean(primaryRecent || additionalRecents.length > 0 || hasRadar);
+  const hasHomeContent = Boolean(primaryRecent || additionalRecents.length > 0);
 
   elements.continueSection.innerHTML = '';
   elements.recentlyOpenedSection.innerHTML = '';
@@ -1702,6 +1825,25 @@ function clearScheduledSearch() {
     cancelAnimationFrame(state.searchFrame);
     state.searchFrame = 0;
   }
+
+  clearScheduledFastOverlayPreview();
+}
+
+function clearScheduledFastOverlayPreview() {
+  if (state.fastPreviewFrame && typeof cancelAnimationFrame === 'function') {
+    cancelAnimationFrame(state.fastPreviewFrame);
+    state.fastPreviewFrame = 0;
+  }
+
+  if (state.fastPreviewIdleCallback !== null && typeof cancelIdleCallback === 'function') {
+    cancelIdleCallback(state.fastPreviewIdleCallback);
+    state.fastPreviewIdleCallback = null;
+  }
+
+  if (state.fastPreviewTimeout !== null) {
+    clearTimeout(state.fastPreviewTimeout);
+    state.fastPreviewTimeout = null;
+  }
 }
 
 function clearScheduledSearchSideEffects() {
@@ -1954,11 +2096,24 @@ function buildBreadcrumbAliases(item) {
 function buildSearchFields(item) {
   const normalized = expandAbbreviations(item.title || '');
   const aliases = new Set([numberVariants(normalized)]);
-  const normalizedCourse = expandAbbreviations(item.courseName || '');
+  const normalizedCourseName = expandAbbreviations(item.courseName || '');
+  const normalizedCourseCode = expandAbbreviations(item.courseCode || '');
+  const courseAliases = getCourseScopeAliases(item.courseName || '', item.courseCode || '');
+  const normalizedCourse = [
+    normalizedCourseName,
+    normalizedCourseCode,
+    ...courseAliases
+  ].map(value => normalizeText(value)).filter(Boolean).join(' ');
   const pathInfo = buildBreadcrumbAliases(item);
 
   for (const alias of pathInfo.aliases) {
     aliases.add(alias);
+  }
+  for (const alias of courseAliases) {
+    aliases.add(alias);
+  }
+  if (normalizedCourseCode) {
+    aliases.add(numberVariants(normalizeText(normalizedCourseCode)));
   }
 
   if (item.folderPath) {
@@ -1989,7 +2144,12 @@ function buildSearchFields(item) {
 
 function buildItemSearchRuntime(item, fields = {}) {
   const titleText = String(fields.searchTitleNormalized || expandAbbreviations(item?.title || '')).toLowerCase();
-  const courseText = String(fields.searchCourseNormalized || expandAbbreviations(item?.courseName || '')).toLowerCase();
+  const courseText = String(fields.searchCourseNormalized || [
+    expandAbbreviations(item?.courseName || ''),
+    expandAbbreviations(item?.courseCode || ''),
+    ...getCourseScopeAliases(item?.courseName || '', item?.courseCode || '')
+  ].join(' ')).toLowerCase();
+  const courseCodeText = normalizeText(item?.courseCode || '');
   const pathText = normalizeText([
     fields.searchPathNormalized || '',
     item?.folderPath || ''
@@ -1999,11 +2159,13 @@ function buildItemSearchRuntime(item, fields = {}) {
   const contextText = normalizeText([
     fields.searchPathNormalized || item?.folderPath || '',
     item?.moduleName || '',
-    item?.courseName || ''
+    item?.courseName || '',
+    item?.courseCode || ''
   ].join(' '));
   const searchableText = [
     titleText,
     courseText,
+    courseCodeText,
     pathText,
     moduleText,
     aliasText
@@ -2037,6 +2199,7 @@ function getItemSearchRuntime(item) {
     return {
       titleText: '',
       courseText: '',
+      courseCodeText: '',
       pathText: '',
       moduleText: '',
       aliasText: '',
@@ -2058,7 +2221,11 @@ function getItemSearchRuntime(item) {
     searchTitleNormalized: item.searchTitleNormalized || expandAbbreviations(item.title || ''),
     searchAliases: item.searchAliases || '',
     searchPathNormalized: item.searchPathNormalized || normalizeText(item.folderPath || ''),
-    searchCourseNormalized: item.searchCourseNormalized || expandAbbreviations(item.courseName || '')
+    searchCourseNormalized: item.searchCourseNormalized || [
+      expandAbbreviations(item.courseName || ''),
+      expandAbbreviations(item.courseCode || ''),
+      ...getCourseScopeAliases(item.courseName || '', item.courseCode || '')
+    ].join(' ')
   });
 
   return item.searchRuntime;
@@ -2234,7 +2401,11 @@ function getSubjectKeywordIndex() {
     seen.add(courseKey);
 
     // Expand abbreviations so "phys" in a course name becomes "physics", etc.
-    const expanded = expandAbbreviations(item.courseName);
+    const expanded = [
+      expandAbbreviations(item.courseName),
+      expandAbbreviations(item.courseCode || ''),
+      ...getCourseScopeAliases(item.courseName || '', item.courseCode || '')
+    ].join(' ');
     const tokens = expanded.split(/\s+/).filter(Boolean);
 
     for (const token of tokens) {
@@ -2298,9 +2469,26 @@ function itemMatchesCourseHints(item, hintSignals) {
 
 function itemMatchesCourseScope(item, courseScope) {
   if (!courseScope?.coursePrefix) return false;
+  if (courseScope.courseId != null && courseScope.courseId !== '') {
+    if (String(item?.courseId ?? '') === String(courseScope.courseId)) return true;
+  }
+
   const itemCourse = normalizeText(item?.courseName || '');
-  if (!itemCourse) return false;
-  return new RegExp(`^${courseScope.coursePrefix}(\\s|$)`).test(itemCourse);
+  const scopedCourse = normalizeText(courseScope.courseName || '');
+  if (itemCourse && scopedCourse && itemCourse === scopedCourse) return true;
+
+  const itemAliases = getItemCourseAliasSet(item);
+  const scopedAliases = new Set([
+    courseScope.coursePrefix,
+    courseScope.courseCode,
+    ...(Array.isArray(courseScope.aliases) ? courseScope.aliases : [])
+  ].map(value => normalizeText(value || '')).filter(Boolean));
+
+  for (const alias of scopedAliases) {
+    if (itemAliases.has(alias)) return true;
+  }
+
+  return false;
 }
 
 function itemMatchesCourseContext(item, courseScope, courseHintSignals) {
@@ -2783,27 +2971,49 @@ function applyImplicitCurrentWeekOrdering(results, implicitContext) {
 }
 
 /**
- * Build course-scope aliases from a course name.
- * Example: "Chem 3AL: Organic Chemistry Laboratory" -> ["chem 3al"]
+ * Build course-scope aliases from a course name and/or LMS course code.
+ * Example: "Chem 3AL: Organic Chemistry Laboratory" -> ["chem 3al", "chem3al"]
+ * Example: courseCode "MCB 102" -> ["mcb 102", "mcb102"]
  */
-function getCourseScopeAliases(courseName) {
-  const aliases = [];
-  const norm = normalizeText(courseName || '');
-  if (!norm) return aliases;
+function addCourseCodeAliasVariants(aliasSet, value) {
+  const norm = normalizeText(value || '');
+  if (!norm) return;
 
-  // "chem 3al ..." form
+  aliasSet.add(norm);
   const spacedCode = norm.match(/^([a-z]{2,8})\s+(\d{1,4}[a-z]{0,4})(?:\s|$)/i);
   if (spacedCode) {
-    aliases.push(`${spacedCode[1]} ${spacedCode[2]}`.toLowerCase());
+    aliasSet.add(`${spacedCode[1]} ${spacedCode[2]}`.toLowerCase());
+    aliasSet.add(`${spacedCode[1]}${spacedCode[2]}`.toLowerCase());
   }
 
-  // "chem3al ..." form
   const compactCode = norm.match(/^([a-z]{2,8})(\d{1,4}[a-z]{0,4})(?:\s|$)/i);
   if (compactCode) {
-    aliases.push(`${compactCode[1]} ${compactCode[2]}`.toLowerCase());
+    aliasSet.add(`${compactCode[1]} ${compactCode[2]}`.toLowerCase());
+    aliasSet.add(`${compactCode[1]}${compactCode[2]}`.toLowerCase());
   }
+}
 
+function getCourseScopeAliases(courseName, courseCode = '') {
+  const aliases = new Set();
+  const norm = normalizeText(courseName || '');
+
+  addCourseCodeAliasVariants(aliases, courseCode);
+  addCourseCodeAliasVariants(aliases, norm);
+
+  return Array.from(aliases).filter(alias => alias.length >= 3);
+}
+
+function getItemCourseAliasSet(item) {
+  const aliases = new Set(getCourseScopeAliases(item?.courseName || '', item?.courseCode || ''));
+  const courseName = normalizeText(item?.courseName || '');
+  const courseCode = normalizeText(item?.courseCode || '');
+  if (courseName) aliases.add(courseName);
+  if (courseCode) aliases.add(courseCode);
   return aliases;
+}
+
+function buildCourseScopeCandidateKey(courseId, alias) {
+  return `${courseId || ''}|${alias}`;
 }
 
 /**
@@ -2821,27 +3031,32 @@ function detectCourseScope(query) {
   for (const item of state.indexedContent) {
     if (!item.courseName) continue;
     const original = item.courseName.trim();
+    const courseId = item.courseId != null ? String(item.courseId) : '';
+    const courseCode = String(item.courseCode || '').trim();
     const full = normalizeText(original);
 
     // Short form: strip parenthetical suffix like "(Fall 2025)"
     const short = normalizeText(original.replace(/\s*\(.*\)\s*$/, ''));
 
     // Code aliases: "chem 3al", "math 1a", etc.
-    const codeAliases = getCourseScopeAliases(original);
+    const codeAliases = getCourseScopeAliases(original, courseCode);
 
-    if (short && short.length >= 3 && !seen.has(short)) {
-      seen.add(short);
-      candidates.push({ norm: short, original });
+    const addCandidate = (norm) => {
+      if (!norm || norm.length < 3) return;
+      const key = buildCourseScopeCandidateKey(courseId, norm);
+      if (seen.has(key)) return;
+      seen.add(key);
+      candidates.push({ norm, original, courseId, courseCode, aliases: codeAliases });
+    };
+
+    if (short && short.length >= 3) {
+      addCandidate(short);
     }
-    if (full && !seen.has(full)) {
-      seen.add(full);
-      candidates.push({ norm: full, original });
+    if (full) {
+      addCandidate(full);
     }
     for (const alias of codeAliases) {
-      if (alias.length >= 3 && !seen.has(alias)) {
-        seen.add(alias);
-        candidates.push({ norm: alias, original });
-      }
+      addCandidate(alias);
     }
   }
 
@@ -2852,21 +3067,21 @@ function detectCourseScope(query) {
   const finalCandidates = state._courseCandidatesCache;
 
   // Pass 1: Check if query STARTS with a course name (prefix)
-  for (const { norm, original } of finalCandidates) {
+  for (const { norm, original, courseId, courseCode, aliases } of finalCandidates) {
     if (normQuery.startsWith(norm + ' ') && normQuery.length > norm.length + 1) {
       const remaining = normQuery.slice(norm.length + 1).trim();
       if (remaining.length >= 1) {
-        return { coursePrefix: norm, courseName: original, remainingQuery: remaining };
+        return { coursePrefix: norm, courseName: original, courseId, courseCode, aliases, remainingQuery: remaining };
       }
     }
   }
 
   // Pass 2: Check if query ENDS with a course name (suffix)
-  for (const { norm, original } of finalCandidates) {
+  for (const { norm, original, courseId, courseCode, aliases } of finalCandidates) {
     if (normQuery.endsWith(' ' + norm) && normQuery.length > norm.length + 1) {
       const remaining = normQuery.slice(0, normQuery.length - norm.length - 1).trim();
       if (remaining.length >= 1) {
-        return { coursePrefix: norm, courseName: original, remainingQuery: remaining };
+        return { coursePrefix: norm, courseName: original, courseId, courseCode, aliases, remainingQuery: remaining };
       }
     }
   }
@@ -2905,12 +3120,14 @@ function getCourseRegistry() {
     if (!courseId || !origin || byCourse.has(courseId)) continue;
 
     const courseName = item.courseName.trim();
+    const courseCode = String(item.courseCode || '').trim();
     byCourse.set(courseId, {
       courseId,
       courseName,
+      courseCode,
       normName: normalizeText(courseName),
       origin,
-      aliases: getCourseScopeAliases(courseName)
+      aliases: getCourseScopeAliases(courseName, courseCode)
     });
   }
 
@@ -2945,7 +3162,7 @@ function buildGradesShortcut(query) {
   // Primary resolution: subject-keyword hints ("chem" -> Chemistry course key).
   const hint = getCourseHintSignals(expandAbbreviations(restQuery));
   let candidates = hint.hasHint
-    ? registry.filter(c => hint.matchedCourseKeys.has(c.normName))
+    ? registry.filter(c => hint.matchedCourseKeys.has(c.normName) || c.aliases.some(alias => hint.matchedCourseKeys.has(alias)))
     : [];
 
   // Fallback: fuzzy match over course names + code aliases.
@@ -2954,7 +3171,7 @@ function buildGradesShortcut(query) {
       includeScore: true,
       threshold: 0.5,
       ignoreLocation: true,
-      keys: ['courseName', 'normName', 'aliases']
+      keys: ['courseName', 'courseCode', 'normName', 'aliases']
     });
     const hits = fuse.search(restQuery);
     if (hits.length > 0 && (hits[0].score ?? 1) <= 0.5) {
@@ -2968,7 +3185,7 @@ function buildGradesShortcut(query) {
   let best = candidates[0];
   let bestScore = -1;
   for (const c of candidates) {
-    const nameTokens = c.normName.split(' ').filter(Boolean);
+    const nameTokens = [c.normName, c.courseCode, ...(c.aliases || [])].join(' ').split(' ').filter(Boolean);
     let overlap = 0;
     for (const t of restTokens) {
       const variants = expandAbbreviations(t).split(' ').filter(Boolean);
@@ -2991,6 +3208,7 @@ function buildGradesShortcut(query) {
     item: {
       title: `${best.courseName} — Grades`,
       courseName: best.courseName,
+      courseCode: best.courseCode || '',
       courseId: best.courseId,
       type: 'grades',
       url
@@ -3332,8 +3550,10 @@ const PDF_VIEWER_DEBUG = true;
 const POPUP_UI_STORAGE_KEY = 'popupUi';
 const DEFAULT_EXTENSION_SETTINGS = Object.freeze({
   enableSendToLectra: false,
+  autopilotAutoPrompt: true,
   enableAdaptiveLearning: true,
   notificationsEnabled: false,
+  courseMaterialSupabaseSync: false,
   selectedCourseFilters: [],
   customAlgorithm: DEFAULT_CUSTOM_ALGORITHM
 });
@@ -3347,6 +3567,9 @@ let state = {
   filteredContent: [],
   searchTimeout: null,
   searchFrame: 0,
+  fastPreviewFrame: 0,
+  fastPreviewIdleCallback: null,
+  fastPreviewTimeout: null,
   searchGeneration: 0,
   searchSideEffectTimeout: null,
   isScanning: false,
@@ -3358,6 +3581,10 @@ let state = {
   courses: [],
   isOverlayMode: false,
   overlayHighlightIndex: 0,
+  askMode: false,      // Cmd+K is showing a streamed RAG answer
+  askBusy: false,      // an answer is currently streaming
+  askRouteInited: false,
+  askConversation: [], // multi-turn chat history [{ role, content }] for follow-ups
   lastSearchTimeMs: 0,
   lastResultCount: 0,
   recentlyOpened: [],
@@ -3395,8 +3622,10 @@ function normalizeExtensionSettings(rawSettings) {
     ...DEFAULT_EXTENSION_SETTINGS,
     ...source,
     enableSendToLectra: Boolean(source.enableSendToLectra),
+    autopilotAutoPrompt: source.autopilotAutoPrompt !== false,
     enableAdaptiveLearning: source.enableAdaptiveLearning !== false,
     notificationsEnabled: source.notificationsEnabled === true,
+    courseMaterialSupabaseSync: source.courseMaterialSupabaseSync === true,
     selectedCourseFilters,
     customAlgorithm: normalizeCustomAlgorithm(source.customAlgorithm)
   };
@@ -3408,6 +3637,10 @@ function normalizePopupUi(rawPopupUi) {
     ...DEFAULT_POPUP_UI,
     walkthroughSeen: Boolean(source.walkthroughSeen)
   };
+}
+
+function isLectraFeatureEnabled() {
+  return Boolean(state.extensionSettings?.enableSendToLectra);
 }
 
 async function loadExtensionSettings() {
@@ -3446,7 +3679,15 @@ async function updatePopupUiState(patch) {
 
 function applyExtensionSettingsUi() {
   if (elements.enableSendToLectraToggle) {
-    elements.enableSendToLectraToggle.checked = Boolean(state.extensionSettings.enableSendToLectra);
+    elements.enableSendToLectraToggle.checked = isLectraFeatureEnabled();
+  }
+
+  if (elements.autopilotAutoPromptToggle) {
+    elements.autopilotAutoPromptToggle.checked = state.extensionSettings.autopilotAutoPrompt !== false;
+  }
+
+  if (elements.courseMaterialSupabaseSyncToggle) {
+    elements.courseMaterialSupabaseSyncToggle.checked = Boolean(state.extensionSettings.courseMaterialSupabaseSync);
   }
 
   if (elements.enableAdaptiveLearningToggle) {
@@ -3466,6 +3707,8 @@ function applyExtensionSettingsUi() {
   if (elements.customAlgorithmPanel) {
     elements.customAlgorithmPanel.classList.toggle('hidden', !customAlgorithm.enabled);
   }
+
+  refreshLectraActionVisibility();
 
   if (elements.customAlgorithmSliders) {
     for (const slider of elements.customAlgorithmSliders) {
@@ -3540,6 +3783,10 @@ function getAllowedFileSchemeAccess() {
 }
 
 async function warmDropBridgeReceiver(reason = 'popup-open') {
+  if (!isLectraFeatureEnabled()) {
+    return;
+  }
+
   try {
     await chrome.runtime.sendMessage({
       action: 'ensureDropBridgeReceiver',
@@ -3548,6 +3795,22 @@ async function warmDropBridgeReceiver(reason = 'popup-open') {
   } catch (error) {
     console.warn('[Canvascope] Failed to warm DropBridge receiver:', error?.message || error);
   }
+}
+
+function refreshLectraActionVisibility() {
+  const enabled = isLectraFeatureEnabled();
+  const overflowSendPdf = document.getElementById('cs-overflow-send-pdf');
+  if (overflowSendPdf) {
+    overflowSendPdf.hidden = state.isOverlayMode || !enabled;
+  }
+
+  if (!enabled && elements.sendPdfBtn) {
+    state.activePdfContext = null;
+    elements.sendPdfBtn.classList.add('hidden');
+    elements.sendPdfBtn.title = '';
+  }
+
+  void refreshImportToLectraAvailability();
 }
 
 async function syncPdfViewerOverlayRegistration(reason = 'popup') {
@@ -4604,6 +4867,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   elements.dropBridgeStatus = document.getElementById('dropbridge-status');
   elements.dropBridgeText = document.getElementById('dropbridge-text');
   elements.dropBridgeDot = document.getElementById('dropbridge-dot');
+  elements.settingsDropBridgeStatus = document.getElementById('settings-dropbridge-status');
+  elements.settingsDropBridgeLabel = document.getElementById('settings-dropbridge-label');
+  elements.settingsDropBridgeDetail = document.getElementById('settings-dropbridge-detail');
   elements.refreshBtn = document.getElementById('refresh-btn');
   elements.settingsBtn = document.getElementById('settings-btn');
   elements.loadingShell = document.getElementById('loading-shell');
@@ -4637,7 +4903,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Request status from background
   getBackgroundStatus();
-  void warmDropBridgeReceiver('popup-open');
+  if (isLectraFeatureEnabled()) {
+    void warmDropBridgeReceiver('popup-open');
+  }
 
   // Check auth status
   chrome.runtime.sendMessage({ type: 'checkAuthStatus' }, (response) => {
@@ -4754,9 +5022,25 @@ function checkOverlayMode() {
 
     // Handle Escape key to close overlay (capture phase to ensure it fires first)
     document.addEventListener('keydown', (e) => {
+      // Tab jumps into the follow-up composer so the answer becomes a chat.
+      if (e.key === 'Tab' && !e.shiftKey && state.askMode) {
+        const composer = document.getElementById('overlay-ask-input');
+        if (composer && e.target !== composer) {
+          e.preventDefault();
+          e.stopPropagation();
+          focusAskComposer();
+          return;
+        }
+      }
+
       if (e.key === 'Escape') {
         e.preventDefault();
         e.stopPropagation();
+        // While an inline answer is showing, Escape returns to the search list.
+        if (state.askMode) {
+          exitAskMode();
+          return;
+        }
         // Clear the search input before closing
         if (elements.searchInput) {
           elements.searchInput.value = '';
@@ -4800,6 +5084,17 @@ function initializeElements() {
   elements.accountModal = document.getElementById('account-modal');
   elements.closeAccountModalBtn = document.getElementById('close-account-modal');
   elements.settingsProfile = document.getElementById('settings-profile');
+  elements.settingsStudentProfilePanel = document.getElementById('settings-student-profile-panel');
+  elements.settingsProfileHint = document.getElementById('settings-profile-hint');
+  elements.settingsProfileNameInput = document.getElementById('settings-pf-name');
+  elements.settingsProfileSchoolInput = document.getElementById('settings-pf-school');
+  elements.settingsProfileGradeInput = document.getElementById('settings-pf-grade');
+  elements.settingsProfileMajorsInput = document.getElementById('settings-pf-majors');
+  elements.settingsProfileCareerInput = document.getElementById('settings-pf-career');
+  elements.settingsProfileOtherInput = document.getElementById('settings-pf-other');
+  elements.settingsProfileStatus = document.getElementById('settings-profile-status');
+  elements.settingsProfileClearBtn = document.getElementById('settings-profile-clear');
+  elements.settingsProfileSaveBtn = document.getElementById('settings-profile-save');
   elements.settingsAccountState = document.getElementById('settings-account-state');
   elements.settingsSigninBtn = document.getElementById('settings-signin-btn');
   elements.settingsModalFooter = document.getElementById('settings-modal-footer');
@@ -4807,8 +5102,21 @@ function initializeElements() {
   elements.accountEmailDisplay = document.getElementById('account-email-display');
   elements.accountAvatarPlaceholder = document.getElementById('account-avatar-placeholder');
   elements.enableSendToLectraToggle = document.getElementById('enable-send-to-lectra');
+  elements.autopilotAutoPromptToggle = document.getElementById('enable-autopilot-prompt');
+  elements.courseMaterialSupabaseSyncToggle = document.getElementById('enable-course-material-sync');
   elements.enableAdaptiveLearningToggle = document.getElementById('enable-adaptive-learning');
   elements.enableNotificationsToggle = document.getElementById('enable-notifications');
+  // Canvas Appearance (skin config migrated from the slash menu).
+  elements.canvasThemeSelect = document.getElementById('canvas-theme-select');
+  elements.canvasDensitySelect = document.getElementById('canvas-density-select');
+  elements.canvasFontRow = document.getElementById('canvas-font-row');
+  elements.canvasFontSelect = document.getElementById('canvas-font-select');
+  elements.canvasGradePills = document.getElementById('canvas-grade-pills');
+  elements.canvasPreviews = document.getElementById('canvas-previews');
+  elements.canvasCardGradient = document.getElementById('canvas-card-gradient');
+  elements.canvasHideFeedback = document.getElementById('canvas-hide-feedback');
+  elements.canvasHideHelp = document.getElementById('canvas-hide-help');
+  elements.canvasSkinResetBtn = document.getElementById('canvas-skin-reset');
   elements.adaptiveLearningPanel = document.getElementById('adaptive-learning-panel');
   elements.clearSearchHabitsBtn = document.getElementById('clear-search-habits');
   elements.enableCustomAlgorithmToggle = document.getElementById('enable-custom-algorithm');
@@ -4831,6 +5139,9 @@ function initializeElements() {
   elements.dropBridgeStatus = document.getElementById('dropbridge-status');
   elements.dropBridgeText = document.getElementById('dropbridge-text');
   elements.dropBridgeDot = document.getElementById('dropbridge-dot');
+  elements.settingsDropBridgeStatus = document.getElementById('settings-dropbridge-status');
+  elements.settingsDropBridgeLabel = document.getElementById('settings-dropbridge-label');
+  elements.settingsDropBridgeDetail = document.getElementById('settings-dropbridge-detail');
 
   // Custom Dropdown Elements
   elements.courseWrapper = document.getElementById('course-select-wrapper');
@@ -4967,17 +5278,7 @@ function bindImportToLectra() {
   const confirmBtn = document.getElementById('import-lectra-confirm');
   if (!overflowItem || !modal) return;
 
-  // Show the action only on a Canvas course files page.
-  detectActiveCourseFilesContext().then((ctx) => {
-    if (ctx) {
-      overflowItem.hidden = false;
-      importLectra.baseUrl = ctx.baseUrl;
-      importLectra.courseId = ctx.courseId;
-      importLectra.courseName = ctx.courseName;
-    } else {
-      overflowItem.hidden = true;
-    }
-  });
+  void refreshImportToLectraAvailability();
 
   overflowItem.addEventListener('click', () => {
     const menu = document.getElementById('cs-overflow-menu');
@@ -4989,6 +5290,41 @@ function bindImportToLectra() {
   }
   if (confirmBtn) {
     confirmBtn.addEventListener('click', runImportToLectra);
+  }
+}
+
+async function refreshImportToLectraAvailability() {
+  const overflowItem = document.getElementById('cs-overflow-import-course');
+  const modal = document.getElementById('import-lectra-modal');
+  if (!overflowItem) return;
+
+  if (!isLectraFeatureEnabled()) {
+    overflowItem.hidden = true;
+    importLectra.baseUrl = null;
+    importLectra.courseId = null;
+    importLectra.courseName = '';
+    if (state.importLectraOpen && modal) {
+      closePopupModal('importLectraOpen', modal);
+    }
+    return;
+  }
+
+  const ctx = await detectActiveCourseFilesContext();
+  if (!isLectraFeatureEnabled()) {
+    overflowItem.hidden = true;
+    return;
+  }
+
+  if (ctx) {
+    overflowItem.hidden = false;
+    importLectra.baseUrl = ctx.baseUrl;
+    importLectra.courseId = ctx.courseId;
+    importLectra.courseName = ctx.courseName;
+  } else {
+    overflowItem.hidden = true;
+    importLectra.baseUrl = null;
+    importLectra.courseId = null;
+    importLectra.courseName = '';
   }
 }
 
@@ -5116,10 +5452,257 @@ function showHelpModal(trigger = null, { autoOpen = false } = {}) {
   }
 }
 
+// ===========================================================================
+// Canvas Appearance — skin config migrated out of the slash menu into Settings.
+// Writes go directly to chrome.storage.local.canvasSkin; open Canvas tabs
+// re-skin via canvas-skin.js's storage watcher. The full theme catalog is
+// dev-gated; the public list is paper + Canvas default (parity with /theme).
+// ===========================================================================
+const CS_DEV_EMAIL = 'noel_sason@berkeley.edu';
+const CS_PUBLIC_THEME_IDS = new Set(['canvas-default', 'paper']);
+let canvasSkinCache = null;
+
+function isPopupDevUser() {
+  return String(state.user?.email || '').trim().toLowerCase() === CS_DEV_EMAIL;
+}
+
+async function readCanvasSkin() {
+  try {
+    const { canvasSkin } = await chrome.storage.local.get('canvasSkin');
+    canvasSkinCache = (canvasSkin && typeof canvasSkin === 'object') ? canvasSkin : {};
+  } catch (_) {
+    canvasSkinCache = {};
+  }
+  return canvasSkinCache;
+}
+
+/** Merge a patch into the stored skin and write the full object back. */
+async function writeCanvasSkin(patch) {
+  const current = canvasSkinCache || (await readCanvasSkin());
+  const next = { ...current, ...patch, __updatedAt: Date.now() };
+  canvasSkinCache = next;
+  try {
+    await chrome.storage.local.set({ canvasSkin: next });
+    // Best-effort cloud push (mirrors CanvascopeSkin.apply on the content side).
+    try { chrome.runtime.sendMessage({ action: 'csSkin.push', skin: next }, () => void chrome.runtime.lastError); } catch (_) { /* ignore */ }
+    showSyncedStatus('Canvas appearance updated');
+  } catch (err) {
+    console.error('[Canvascope] Failed to write canvasSkin:', err);
+  }
+}
+
+/** Populate selects + reflect the current skin into the Settings controls. */
+async function populateCanvasAppearance() {
+  if (!elements.canvasThemeSelect) return;
+  const skin = await readCanvasSkin();
+  const catalog = window.CanvascopeSkinThemes;
+  const dev = isPopupDevUser();
+
+  // Theme picker — full catalog for dev, paper + default otherwise.
+  if (catalog?.listThemes) {
+    const themes = catalog.listThemes()
+      .filter((t) => dev || CS_PUBLIC_THEME_IDS.has(t.id));
+    elements.canvasThemeSelect.replaceChildren(
+      ...themes.map((t) => {
+        const opt = document.createElement('option');
+        opt.value = t.id;
+        opt.textContent = t.name;
+        return opt;
+      })
+    );
+    elements.canvasThemeSelect.value = skin.themeId || 'canvas-default';
+  }
+
+  // Font — dev-only, hidden for public.
+  if (elements.canvasFontRow) elements.canvasFontRow.hidden = !dev;
+  if (dev && catalog?.listFonts && elements.canvasFontSelect) {
+    elements.canvasFontSelect.replaceChildren(
+      ...catalog.listFonts().map((f) => {
+        const opt = document.createElement('option');
+        opt.value = f.id;
+        opt.textContent = f.name;
+        return opt;
+      })
+    );
+    elements.canvasFontSelect.value = skin.font || 'system';
+  }
+
+  if (elements.canvasDensitySelect) elements.canvasDensitySelect.value = skin.cardDensity || 'canvas';
+  if (elements.canvasGradePills) elements.canvasGradePills.checked = !!skin.showGradePills;
+  if (elements.canvasPreviews) elements.canvasPreviews.checked = !!skin.previewsEnabled;
+  if (elements.canvasCardGradient) elements.canvasCardGradient.checked = !!skin.cardGradient;
+  if (elements.canvasHideFeedback) elements.canvasHideFeedback.checked = !!skin.hideRecentFeedback;
+  if (elements.canvasHideHelp) elements.canvasHideHelp.checked = !!skin.hideSidebarHelp;
+}
+
+function bindCanvasAppearance() {
+  if (elements.canvasThemeSelect) {
+    elements.canvasThemeSelect.addEventListener('change', (e) => {
+      const id = e.target.value;
+      const theme = window.CanvascopeSkinThemes?.getTheme?.(id);
+      if (id === 'canvas-default') {
+        void writeCanvasSkin({ themeId: 'canvas-default', mode: 'auto' });
+      } else {
+        void writeCanvasSkin({ themeId: id, mode: theme?.mode || 'auto' });
+      }
+    });
+  }
+  if (elements.canvasFontSelect) {
+    elements.canvasFontSelect.addEventListener('change', (e) => writeCanvasSkin({ font: e.target.value }));
+  }
+  if (elements.canvasDensitySelect) {
+    elements.canvasDensitySelect.addEventListener('change', (e) => writeCanvasSkin({ cardDensity: e.target.value }));
+  }
+  const toggle = (el, key) => {
+    if (!el) return;
+    el.addEventListener('change', (e) => writeCanvasSkin({ [key]: !!e.target.checked }));
+  };
+  toggle(elements.canvasGradePills, 'showGradePills');
+  toggle(elements.canvasPreviews, 'previewsEnabled');
+  toggle(elements.canvasCardGradient, 'cardGradient');
+  toggle(elements.canvasHideFeedback, 'hideRecentFeedback');
+  toggle(elements.canvasHideHelp, 'hideSidebarHelp');
+  if (elements.canvasSkinResetBtn) {
+    elements.canvasSkinResetBtn.addEventListener('click', async () => {
+      // Reset to Canvas-default look, then re-reflect the controls.
+      await writeCanvasSkin({
+        themeId: 'canvas-default', mode: 'auto', font: 'system', cardDensity: 'canvas',
+        cardGradient: false, showGradePills: false, previewsEnabled: false,
+        hideRecentFeedback: false, hideSidebarHelp: false, hideSidebarLogo: false
+      });
+      await populateCanvasAppearance();
+    });
+  }
+}
+
+function splitProfileList(value) {
+  return String(value || '')
+    .split(',')
+    .map(item => item.trim())
+    .filter(Boolean);
+}
+
+function setSettingsProfileStatus(message = '') {
+  if (elements.settingsProfileStatus) {
+    elements.settingsProfileStatus.textContent = message;
+  }
+}
+
+function fillSettingsStudentProfile(profile) {
+  const facts = profile?.facts || {};
+  const who = facts.who || {};
+  const how = facts.how || {};
+
+  if (elements.settingsProfileNameInput) elements.settingsProfileNameInput.value = who.fullName || '';
+  if (elements.settingsProfileSchoolInput) elements.settingsProfileSchoolInput.value = who.school || '';
+  if (elements.settingsProfileGradeInput) elements.settingsProfileGradeInput.value = who.year || '';
+  if (elements.settingsProfileMajorsInput) {
+    elements.settingsProfileMajorsInput.value = Array.isArray(who.majors) ? who.majors.join(', ') : '';
+  }
+  if (elements.settingsProfileCareerInput) {
+    elements.settingsProfileCareerInput.value = Array.isArray(who.goals) ? who.goals.join(', ') : '';
+  }
+  if (elements.settingsProfileOtherInput) {
+    elements.settingsProfileOtherInput.value = how.studyStyle || how.tone || '';
+  }
+
+  if (elements.settingsProfileHint) {
+    elements.settingsProfileHint.textContent = profile?.manualEmpty ? 'Add student profile' : 'Edit student profile';
+  }
+}
+
+async function loadSettingsStudentProfile({ autoCapture = true } = {}) {
+  if (!window.StudentProfile?.load) return null;
+
+  try {
+    let profile = await window.StudentProfile.load();
+    if (autoCapture && window.StudentProfile.autoCapture) {
+      await window.StudentProfile.autoCapture();
+      profile = window.StudentProfile.get ? window.StudentProfile.get() : await window.StudentProfile.load();
+    }
+    fillSettingsStudentProfile(profile);
+    return profile;
+  } catch (error) {
+    console.warn('[Canvascope] Could not load student profile:', error);
+    setSettingsProfileStatus('Could not load profile');
+    return null;
+  }
+}
+
+function toggleSettingsStudentProfilePanel(forceOpen = null) {
+  if (!elements.settingsStudentProfilePanel || !elements.settingsProfile) return;
+
+  const shouldOpen = forceOpen == null
+    ? elements.settingsStudentProfilePanel.classList.contains('hidden')
+    : Boolean(forceOpen);
+  elements.settingsStudentProfilePanel.classList.toggle('hidden', !shouldOpen);
+  elements.settingsProfile.setAttribute('aria-expanded', shouldOpen ? 'true' : 'false');
+  if (shouldOpen) {
+    setSettingsProfileStatus('');
+    void loadSettingsStudentProfile();
+    window.requestAnimationFrame(() => {
+      elements.settingsProfileNameInput?.focus?.();
+    });
+  }
+}
+
+async function saveSettingsStudentProfile() {
+  if (!window.StudentProfile?.save) return;
+
+  const saveBtn = elements.settingsProfileSaveBtn;
+  if (saveBtn) saveBtn.disabled = true;
+  setSettingsProfileStatus('Saving...');
+
+  try {
+    const profile = await window.StudentProfile.save({
+      who: {
+        fullName: elements.settingsProfileNameInput?.value?.trim() || '',
+        school: elements.settingsProfileSchoolInput?.value?.trim() || '',
+        year: elements.settingsProfileGradeInput?.value?.trim() || '',
+        majors: splitProfileList(elements.settingsProfileMajorsInput?.value),
+        goals: splitProfileList(elements.settingsProfileCareerInput?.value)
+      },
+      how: {
+        studyStyle: elements.settingsProfileOtherInput?.value?.trim() || ''
+      }
+    });
+    fillSettingsStudentProfile(profile);
+    setSettingsProfileStatus('Saved');
+    showSyncedStatus('Student profile saved');
+  } catch (error) {
+    console.error('[Canvascope] Failed to save student profile:', error);
+    setSettingsProfileStatus('Save failed');
+  } finally {
+    if (saveBtn) saveBtn.disabled = false;
+  }
+}
+
+async function clearSettingsStudentProfile() {
+  if (!window.StudentProfile?.clear) return;
+  if (!window.confirm('Clear your saved student profile?')) return;
+
+  const clearBtn = elements.settingsProfileClearBtn;
+  if (clearBtn) clearBtn.disabled = true;
+  setSettingsProfileStatus('Clearing...');
+
+  try {
+    await window.StudentProfile.clear();
+    fillSettingsStudentProfile(window.StudentProfile.get ? window.StudentProfile.get() : null);
+    setSettingsProfileStatus('Cleared');
+    showSyncedStatus('Student profile cleared');
+  } catch (error) {
+    console.error('[Canvascope] Failed to clear student profile:', error);
+    setSettingsProfileStatus('Clear failed');
+  } finally {
+    if (clearBtn) clearBtn.disabled = false;
+  }
+}
+
 function updateSettingsModalContent() {
   updateSettingsAccountUi();
 
   if (!state.isSignedIn) {
+    toggleSettingsStudentProfilePanel(false);
     return;
   }
 
@@ -5139,12 +5722,15 @@ function updateSettingsModalContent() {
       elements.accountAvatarPlaceholder.style.backgroundColor = 'var(--glass-border)';
     }
   }
+
+  void loadSettingsStudentProfile({ autoCapture: false });
 }
 
 function showSettingsModal(trigger = null) {
   if (!elements.accountModal) return;
   updateSettingsModalContent();
   applyExtensionSettingsUi();
+  void populateCanvasAppearance();
   openPopupModal('settingsModalOpen', elements.accountModal, trigger, elements.closeAccountModalBtn);
 }
 
@@ -6087,6 +6673,8 @@ function handleResultsContainerClick(event) {
   const row = event.target.closest('.result-item');
   if (!row || !elements.resultsContainer.contains(row)) return;
   if (event.target.closest('.cs-pin-toggle, button, a, input, select, textarea')) return;
+  if (row.__csAction) { runOverlayCommand(row.__csAction); return; }
+  if (row.__csAsk != null) { void startOverlayAsk(row.__csAsk); return; }
   if (row.__csItem) openResult(row.__csItem, event);
 }
 
@@ -6094,6 +6682,8 @@ function handleResultsContainerKeydown(event) {
   if (event.key !== 'Enter' && event.key !== ' ') return;
   const row = event.target.closest('.result-item');
   if (!row || !elements.resultsContainer.contains(row)) return;
+  if (row.__csAction) { event.preventDefault(); runOverlayCommand(row.__csAction); return; }
+  if (row.__csAsk != null) { event.preventDefault(); void startOverlayAsk(row.__csAsk); return; }
   if (!row.__csItem) return;
   event.preventDefault();
   openResult(row.__csItem, event);
@@ -6172,6 +6762,24 @@ function setupEventListeners() {
     });
   }
 
+  if (elements.settingsProfile) {
+    elements.settingsProfile.addEventListener('click', () => {
+      toggleSettingsStudentProfilePanel();
+    });
+  }
+
+  if (elements.settingsProfileSaveBtn) {
+    elements.settingsProfileSaveBtn.addEventListener('click', () => {
+      void saveSettingsStudentProfile();
+    });
+  }
+
+  if (elements.settingsProfileClearBtn) {
+    elements.settingsProfileClearBtn.addEventListener('click', () => {
+      void clearSettingsStudentProfile();
+    });
+  }
+
   if (elements.enableSendToLectraToggle) {
     elements.enableSendToLectraToggle.addEventListener('change', async (event) => {
       const toggle = event.currentTarget;
@@ -6188,6 +6796,11 @@ function setupEventListeners() {
         await updateExtensionSettings({ enableSendToLectra: enabled });
         const syncResult = await syncPdfViewerOverlayRegistration(enabled ? 'popup-send-to-lectra-enabled' : 'popup-send-to-lectra-disabled');
         await refreshPdfFallbackAvailability();
+        refreshLectraActionVisibility();
+        if (enabled) {
+          void warmDropBridgeReceiver('popup-send-to-lectra-enabled');
+        }
+        getBackgroundStatus();
 
         if (enabled) {
           if (syncResult?.enabled) {
@@ -6206,6 +6819,53 @@ function setupEventListeners() {
         }
       } catch (error) {
         console.error('[Canvascope] Failed to update settings:', error);
+        applyExtensionSettingsUi();
+      } finally {
+        toggle.disabled = false;
+      }
+    });
+  }
+
+  if (elements.autopilotAutoPromptToggle) {
+    elements.autopilotAutoPromptToggle.addEventListener('change', async (event) => {
+      const toggle = event.currentTarget;
+      const enabled = Boolean(toggle.checked);
+      toggle.disabled = true;
+
+      try {
+        await updateExtensionSettings({ autopilotAutoPrompt: enabled });
+        showSyncedStatus(enabled ? 'Syllabus detection enabled' : 'Syllabus detection turned off');
+      } catch (error) {
+        console.error('[Canvascope] Failed to update syllabus autopilot setting:', error);
+        applyExtensionSettingsUi();
+      } finally {
+        toggle.disabled = false;
+      }
+    });
+  }
+
+  if (elements.courseMaterialSupabaseSyncToggle) {
+    elements.courseMaterialSupabaseSyncToggle.addEventListener('change', async (event) => {
+      const toggle = event.currentTarget;
+      const enabled = Boolean(toggle.checked);
+      toggle.disabled = true;
+
+      try {
+        await updateExtensionSettings({ courseMaterialSupabaseSync: enabled });
+        if (enabled) {
+          chrome.runtime.sendMessage({ action: 'syncCourseMaterialsToSupabase' }, (response) => {
+            void chrome.runtime.lastError;
+            if (response?.success) {
+              showSyncedStatus('Course material cloud sync enabled');
+            } else {
+              showErrorStatus(response?.error || 'Sign in to sync course materials');
+            }
+          });
+        } else {
+          showSyncedStatus('Course material cloud sync off');
+        }
+      } catch (error) {
+        console.error('[Canvascope] Failed to update course-material sync setting:', error);
         applyExtensionSettingsUi();
       } finally {
         toggle.disabled = false;
@@ -6253,6 +6913,8 @@ function setupEventListeners() {
       }
     });
   }
+
+  bindCanvasAppearance();
 
   if (elements.clearSearchHabitsBtn) {
     elements.clearSearchHabitsBtn.addEventListener('click', async (event) => {
@@ -6743,20 +7405,24 @@ function setSendPdfButtonStatus(text, status = 'idle') {
 
 async function refreshPdfFallbackAvailability() {
   if (!elements.sendPdfBtn) return;
+  const overflowSendPdf = document.getElementById('cs-overflow-send-pdf');
   if (state.isOverlayMode) {
     elements.sendPdfBtn.classList.add('hidden');
+    if (overflowSendPdf) overflowSendPdf.hidden = true;
     return;
   }
 
-  if (!state.extensionSettings.enableSendToLectra) {
+  if (!isLectraFeatureEnabled()) {
     state.activePdfContext = null;
     elements.sendPdfBtn.classList.add('hidden');
     elements.sendPdfBtn.title = '';
+    if (overflowSendPdf) overflowSendPdf.hidden = true;
     resetSendPdfButtonState();
     return;
   }
 
   elements.sendPdfBtn.classList.remove('hidden');
+  if (overflowSendPdf) overflowSendPdf.hidden = false;
 
   try {
     const response = await chrome.runtime.sendMessage({
@@ -6786,7 +7452,7 @@ async function refreshPdfFallbackAvailability() {
 
 async function handleSendPdfFallback() {
   if (!elements.sendPdfBtn) return;
-  if (!state.extensionSettings.enableSendToLectra) return;
+  if (!isLectraFeatureEnabled()) return;
 
   let context = state.activePdfContext;
   const confidence = String(context?.confidence || 'none').toLowerCase();
@@ -6934,19 +7600,36 @@ function normalizeDropBridgeHealthClass(health) {
 function formatDropBridgeLatestEvent(dropBridge) {
   const event = dropBridge?.latestEvent;
   if (!event) return dropBridge?.detail || '';
-  const type = String(event.type || 'event').replace(/_/g, ' ');
+  const type = String(event.stage || event.status || event.type || 'event').replace(/_/g, ' ');
   const uploadSuffix = event.uploadId ? ` · ${String(event.uploadId).slice(0, 8)}` : '';
-  return `${type}${uploadSuffix}`;
+  const detail = dropBridge?.detail ? ` — ${dropBridge.detail}` : '';
+  return `${type}${uploadSuffix}${detail}`;
 }
 
 function updateDropBridgeStatus(dropBridge) {
-  if (!elements.dropBridgeStatus || !elements.dropBridgeText) return;
   const health = dropBridge?.health || 'signed_out';
-  const label = dropBridge?.label || 'Signed out';
+  const label = dropBridge?.label || 'DropBridge signed out';
+  const detail = formatDropBridgeLatestEvent(dropBridge)
+    || dropBridge?.detail
+    || 'Sign in to enable realtime file delivery.';
   const className = normalizeDropBridgeHealthClass(health);
-  elements.dropBridgeStatus.className = `dropbridge-status ${className}`;
-  elements.dropBridgeText.textContent = label;
-  elements.dropBridgeStatus.title = formatDropBridgeLatestEvent(dropBridge) || label;
+
+  if (elements.dropBridgeStatus && elements.dropBridgeText) {
+    elements.dropBridgeStatus.className = `dropbridge-status ${className}`;
+    elements.dropBridgeText.textContent = label;
+    elements.dropBridgeStatus.title = detail || label;
+  }
+
+  if (elements.settingsDropBridgeStatus) {
+    elements.settingsDropBridgeStatus.className = `settings-dropbridge-status ${className}`;
+    elements.settingsDropBridgeStatus.title = detail || label;
+  }
+  if (elements.settingsDropBridgeLabel) {
+    elements.settingsDropBridgeLabel.textContent = label;
+  }
+  if (elements.settingsDropBridgeDetail) {
+    elements.settingsDropBridgeDetail.textContent = detail;
+  }
 }
 
 function showScanningStatus() {
@@ -7122,7 +7805,7 @@ function populateCourseFilter() {
   updateCourseFilterTriggerText();
 }
 
-function getFastOverlayScore(item, tokens, query) {
+function getFastOverlayScore(item, tokens, query, meta = {}) {
   const runtime = getItemSearchRuntime(item);
   const title = runtime.titleText || '';
   const context = `${runtime.courseText || ''} ${runtime.pathText || ''} ${runtime.moduleText || ''} ${runtime.aliasText || ''}`.trim();
@@ -7146,24 +7829,91 @@ function getFastOverlayScore(item, tokens, query) {
   if (hits === 0) return 0;
   if (title === query) score += 8;
   if (title.startsWith(query)) score += 4;
+  if (meta.temporalKind && getItemTemporalTs(item) > 0) score += 1.2;
+  if (meta.temporalKind && /\blecture\b/.test(query) && /\blecture\b/.test(`${title} ${context}`)) score += 2.5;
+  if (String(item?.type || '').toLowerCase() === 'syllabus' && !isSyllabusQuery(query)) score -= 8;
   score += hits / tokens.length;
   score -= Math.min(title.length, 120) / 600;
   return score;
+}
+
+function scheduleOverlayWorkAfterInputPaint(callback) {
+  const scheduleIdleWork = () => {
+    if (typeof requestIdleCallback === 'function') {
+      state.fastPreviewIdleCallback = requestIdleCallback(() => {
+        state.fastPreviewIdleCallback = null;
+        callback();
+      }, { timeout: OVERLAY_FAST_PREVIEW_IDLE_TIMEOUT_MS });
+      return;
+    }
+
+    state.fastPreviewTimeout = setTimeout(() => {
+      state.fastPreviewTimeout = null;
+      callback();
+    }, OVERLAY_FAST_PREVIEW_FALLBACK_DELAY_MS);
+  };
+
+  if (typeof requestAnimationFrame === 'function') {
+    state.fastPreviewFrame = requestAnimationFrame(() => {
+      state.fastPreviewFrame = 0;
+      scheduleIdleWork();
+    });
+    return;
+  }
+
+  scheduleIdleWork();
+}
+
+// Run the instant fast preview after the keystroke has had a paint opportunity.
+// Scoring the corpus and rebuilding results before that paint is what makes the
+// typed character feel one frame late in the Cmd+K iframe.
+function scheduleFastOverlayPreview(query) {
+  if (!state.isOverlayMode) return;
+
+  clearScheduledFastOverlayPreview();
+
+  const generation = state.searchGeneration;
+  const run = () => {
+    if (generation !== state.searchGeneration) return;
+    if (String(elements.searchInput?.value || '').trim() !== query) return;
+    runFastOverlayPreview(query);
+  };
+
+  scheduleOverlayWorkAfterInputPaint(run);
 }
 
 function runFastOverlayPreview(query) {
   if (!state.isOverlayMode || !state.filteredContent.length) return false;
 
   const start = performance.now();
-  const normalized = normalizeText(expandAbbreviations(query)).toLowerCase();
+  const courseScope = detectCourseScope(query);
+  let effectiveQuery = courseScope ? courseScope.remainingQuery : query;
+  let normalized = normalizeText(expandAbbreviations(effectiveQuery)).toLowerCase();
+  const temporalIntent = detectTemporalIntent(normalized);
+  if (temporalIntent.kind && temporalIntent.strippedQuery) {
+    effectiveQuery = temporalIntent.strippedQuery;
+    normalized = normalizeText(expandAbbreviations(effectiveQuery)).toLowerCase();
+  }
   const tokens = normalized
     .split(/\s+/)
     .filter(token => token.length > 0 && (token.length > 1 || !STOP_TOKENS.has(token)));
   if (tokens.length === 0) return false;
+  const previewQueryMeta = {
+    searchTokens: tokens,
+    searchTokenMatchers: buildTokenMatcherMap(tokens.filter(token => token.length === 1 || /^\d+$/.test(token)))
+  };
+
+  const courseCorpus = courseScope
+    ? state.filteredContent.filter(item => itemMatchesCourseScope(item, courseScope))
+    : state.filteredContent;
+  const temporalPreviewCorpus = temporalIntent.kind
+    ? filterItemsByTemporalWindowWithFallback(courseCorpus, temporalIntent.kind, previewQueryMeta)
+    : courseCorpus;
+  const searchCorpus = temporalPreviewCorpus.length > 0 ? temporalPreviewCorpus : courseCorpus;
 
   const scored = [];
-  for (const item of state.filteredContent) {
-    const score = getFastOverlayScore(item, tokens, normalized);
+  for (const item of searchCorpus) {
+    const score = getFastOverlayScore(item, tokens, normalized, { temporalKind: temporalIntent.kind });
     if (score > 0) scored.push({ item, score, prePass: false, fastPreview: true });
   }
 
@@ -7215,10 +7965,15 @@ function scheduleFullSearch(query) {
 function handleSearchInput(event) {
   const rawValue = String(event.target.value || '');
 
+  // Typing while an answer is shown returns to the search list.
+  if (state.askMode) exitAskMode();
+
   const query = rawValue.trim();
   state.searchGeneration += 1;
   updateSearchFieldAffordances();
-  hideSearchHistory();
+  if (!state.isOverlayMode) {
+    hideSearchHistory();
+  }
   if (state.isOverlayMode) {
     hideQuerySuggestions();
   } else {
@@ -7236,7 +7991,7 @@ function handleSearchInput(event) {
   }
 
   if (state.isOverlayMode) {
-    runFastOverlayPreview(query);
+    scheduleFastOverlayPreview(query);
     if (query.length < 2) {
       return;
     }
@@ -7389,6 +8144,7 @@ function performSearch(query, options = {}) {
     rankingQuery,
     weeklyHabitBoostQuery
   });
+  queryMeta.temporalKind = temporalIntent.kind || null;
   if (typoTolerantQuery.corrections.length > 0) {
     const correctionSummary = typoTolerantQuery.corrections.map(c => `${c.from}->${c.to}`).join(', ');
     console.log(`[Canvascope] Typo-tolerant query rewrite: "${normalizedQuery}" => "${rankingQuery}" (${correctionSummary})`);
@@ -7406,20 +8162,20 @@ function performSearch(query, options = {}) {
     temporalIntent.kind
   );
 
-  // Temporal-first retrieval: when query has a time intent, scope the corpus
-  // before lexical ranking so relevant due items are never dropped by early truncation.
-  // Fall back to the full corpus if temporal pre-filtering yields nothing, so the
-  // subsequent temporal fallback paths at applyTemporalFilter still have items to work with.
-  let temporalCorpus;
+  const courseCorpus = courseScope
+    ? state.filteredContent.filter(item => itemMatchesCourseScope(item, courseScope))
+    : state.filteredContent;
+
+  // Temporal-first retrieval: when query has a time intent, scope the course
+  // first, then date-filter. "today" can fall back to current-week material for
+  // the scoped course when no same-day file exists.
+  let searchCorpus;
   if (temporalIntent.kind) {
-    const filtered = filterItemsByTemporalWindow(state.filteredContent, temporalIntent.kind);
-    temporalCorpus = filtered.length > 0 ? filtered : state.filteredContent;
+    const filtered = filterItemsByTemporalWindowWithFallback(courseCorpus, temporalIntent.kind, queryMeta);
+    searchCorpus = filtered.length > 0 ? filtered : courseCorpus;
   } else {
-    temporalCorpus = state.filteredContent;
+    searchCorpus = courseCorpus;
   }
-  const searchCorpus = courseScope
-    ? temporalCorpus.filter(item => itemMatchesCourseScope(item, courseScope))
-    : temporalCorpus;
 
   if (searchCorpus.length === 0) {
     if (gradesShortcut) {
@@ -7601,9 +8357,7 @@ function performSearch(query, options = {}) {
 
   // If course-scoped, ensure items from the target course are in the pool
   if (courseScope) {
-    const prefix = courseScope.coursePrefix;
     const seenUrls = new Set(results.map(r => r.item.url));
-    const coursePrefixMatcher = new RegExp(`^${prefix}(\\s|$)`);
 
     // Secondary recall: scan target course items for query token matches
     // in title + folderPath + moduleName (catches folder-name matches)
@@ -7611,9 +8365,7 @@ function performSearch(query, options = {}) {
       for (const item of searchCorpus) {
         if (seenUrls.has(item.url)) continue;
         const runtime = getItemSearchRuntime(item);
-        const itemCourse = runtime.courseText;
-        // Require word boundary after prefix to prevent "chem 3al" matching "chem 3a"
-        if (!coursePrefixMatcher.test(itemCourse)) continue;
+        if (!itemMatchesCourseScope(item, courseScope)) continue;
 
         const hits = countMatchedQueryTokens(
           runtime.searchableText,
@@ -7630,8 +8382,7 @@ function performSearch(query, options = {}) {
 
     // Now filter to only course-scoped results
     const scopedResults = results.filter(r => {
-      const itemCourse = getItemSearchRuntime(r.item).courseText;
-      return coursePrefixMatcher.test(itemCourse);
+      return itemMatchesCourseScope(r.item, courseScope);
     });
     if (scopedResults.length > 0) {
       results = scopedResults;
@@ -7654,7 +8405,7 @@ function performSearch(query, options = {}) {
   }
 
   if (temporalIntent.kind) {
-    let temporalResults = applyTemporalFilter(results, temporalIntent.kind);
+    let temporalResults = applyTemporalFilterWithFallback(results, temporalIntent.kind);
 
     // Ensure broad temporal queries (e.g. "lab this week") don't lose relevant items
     // due to retrieval/ranking truncation.
@@ -7684,7 +8435,7 @@ function performSearch(query, options = {}) {
     // have little/no lexical signal. Fall back to all indexed items, then filter by time.
     if (temporalResults.length === 0 && (!normalizedQuery || normalizedQuery.length === 0)) {
       const temporalSeed = searchCorpus.map(item => ({ item, score: 0.5, prePass: false }));
-      temporalResults = applyTemporalFilter(temporalSeed, temporalIntent.kind);
+      temporalResults = applyTemporalFilterWithFallback(temporalSeed, temporalIntent.kind);
     }
 
     temporalResults = expandTemporalLabSiblings(temporalResults, queryMeta.rankingQuery, courseScope);
@@ -7749,6 +8500,17 @@ function performSearch(query, options = {}) {
 
       // both overdue: less overdue first
       return b.dueTs - a.dueTs;
+    });
+
+    noDue.sort((a, b) => {
+      const scoreDelta = (b.finalScore || 0) - (a.finalScore || 0);
+      if (Math.abs(scoreDelta) >= 0.25) return scoreDelta;
+
+      const aTs = getItemTemporalTs(a.item);
+      const bTs = getItemTemporalTs(b.item);
+      if (aTs !== bTs) return bTs - aTs;
+
+      return scoreDelta || String(a.item?.title || '').localeCompare(String(b.item?.title || ''));
     });
 
     results = [...withDue.map(x => x.r), ...noDue];
@@ -8001,6 +8763,15 @@ function calculateScore(item, fuseScore, queryMeta, intent, isPrePass, algorithm
     } else if (item.type === 'course' || item.type === 'navigation' || item.type === 'page') {
       score -= 0.18;
     }
+  } else if (item.type === 'syllabus') {
+    score -= queryMeta?.temporalKind ? 0.75 : 0.35;
+  }
+
+  if (queryMeta?.temporalKind && getItemTemporalTs(item) > 0) {
+    score += 0.18;
+    if (/\blecture\b/.test(normalizedQuery) && /\blecture\b/.test(`${runtime.titleText} ${runtime.contextText}`)) {
+      score += 0.28;
+    }
   }
 
   // ── Un-clicked Files/Folders Penalty ────────────
@@ -8252,6 +9023,509 @@ async function clearSearchHistory() {
   hideSearchHistory();
 }
 
+// ============================================
+// CMD+K INLINE ASK (RAG answers, shared with the sidepanel)
+// Question detection + an "Ask Canvascope" result row that streams an answer
+// inline using the same RAGCore retrieval + AIRouter inference the sidepanel
+// uses. Cloud answers ride claude-proxy (Haiku); on-device Nano is used when
+// available in this context.
+// ============================================
+
+const OVERLAY_ASK_SYSTEM = `You are the Canvascope study assistant running inside a Chrome extension. You are a knowledgeable tutor first and a personal-records lookup second. Below each question you receive context drawn from the student's own saved data and the page they are viewing, and (when known) an "ABOUT THE STUDENT" profile.
+
+How to use the context:
+- The sections "THE STUDENT'S TASKS & DEADLINES", "RELEVANT COURSE DETAILS", and "ACTIVE PDF DOCUMENT PAGES" are the student's authoritative personal records. Answer directly and confidently from them.
+- For questions about tasks, readings, assignments, exams, or deadlines, answer from the tasks/deadlines list. Match items by topic and keywords — e.g. "cs reading" or "next reading" matches a task titled "Finish reading RAG paper". Do NOT require the course code to match the page being viewed, and never refuse just because a course number (e.g. CS 101 vs CS 61B) differs from the active page.
+- If one listed item plausibly matches the question, give its title, course, and due date. If several match, briefly list them.
+- For conceptual, academic, or "explain/teach me X" questions, ANSWER from your own general knowledge — the course sections are supporting context, not a limit on what you can teach. Never refuse a concept question just because it isn't in the provided sections. Only the student's private specifics (their due dates, grades, instructions) are limited to what the sections contain; say so if those are missing.
+- When an "ABOUT THE STUDENT" profile is present, use it silently to shape tone and examples. NEVER restate, summarize, or list the student's profile back to them — no "ABOUT THE STUDENT" section, no recap of their major/goals/courses. Personalization should be invisible.
+- When answering from an ACTIVE PDF DOCUMENT, ground your answer in the page text provided and cite page numbers when useful.
+
+Style: concise (2-4 sentences or a short list). Use bold text, inline code backticks, and lists where appropriate. Answer in natural prose — do NOT reproduce the provided context as labeled sections or echo back headers like "RELEVANT COURSE DETAILS" or "ABOUT THE STUDENT"; weave the relevant facts into your answer. Do not add a source list; Canvascope shows sources separately.`;
+
+// Leading words that signal a natural-language question/request rather than a
+// keyword search. Used together with a trailing "?" to decide when to surface
+// the Ask row and default Enter to asking instead of navigating.
+const ASK_LEAD_RE = /^(what|whats|what's|how|why|when|where|who|whose|whom|which|can|could|should|would|will|is|are|am|do|does|did|explain|summar(?:y|ise|ize)|describe|define|compare|list|give|tell|help|teach|when's|whens)\b/i;
+
+function looksLikeQuestion(query) {
+  const q = String(query || '').trim();
+  if (q.length < 3) return false;
+  if (q.endsWith('?')) return true;
+  return ASK_LEAD_RE.test(q);
+}
+
+/**
+ * Current-date grounding. Without it the model reasons about "this week" and
+ * term names (e.g. "Summer 2026") against its own training cutoff, decides a
+ * present-day term "hasn't started yet", and wrongly refuses — even when the
+ * student's materials for that term are indexed and cited. Rides the system
+ * block (not the cached corpus) so it never busts the proxy's prompt cache.
+ */
+function currentDateGroundingBlock() {
+  const today = new Date().toLocaleDateString('en-US', {
+    weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
+  });
+  return `\n\nToday's date is ${today}. Treat this as the current date when answering any time-relative question ("this week", "so far", "recently"). The student's indexed course materials and active page reflect their ACTUAL, current enrollment. Never claim a course "hasn't started", "isn't active yet", or that no information is available based on its term name or your own sense of what year it is — if sources or indexed materials are present, summarize what they contain.`;
+}
+
+/** System prompt + (optional) student profile — profile rides cloud only. */
+function askSystemWithProfile() {
+  let block = '';
+  try {
+    block = (window.StudentProfile && window.StudentProfile.compileContextBlock()) || '';
+  } catch (_) { block = ''; }
+  return OVERLAY_ASK_SYSTEM + currentDateGroundingBlock() + block;
+}
+
+/** Lazily init the shared AI route (local Nano → cloud) for the overlay. */
+async function ensureAskRouteReady(onProgress) {
+  if (typeof AIRouter === 'undefined') return false;
+  if (!state.askRouteInited) {
+    try { await AIRouter.init(OVERLAY_ASK_SYSTEM + currentDateGroundingBlock()); } catch (_) { /* fall through */ }
+    state.askRouteInited = true;
+    // Best-effort profile load so cloud answers stay personalized.
+    if (window.StudentProfile?.load) {
+      try { await window.StudentProfile.load(); } catch (_) { /* optional */ }
+    }
+  }
+  const st = AIRouter.getState();
+  if (st.ready || st.cloudAvailable) return true;
+  try {
+    const res = await AIRouter.ensureReady({ onDownloadProgress: onProgress || null });
+    return !!res.ok;
+  } catch (_) {
+    return false;
+  }
+}
+
+/** Lazily build the inline answer panel (sibling of the results list). */
+function getAskPanel() {
+  let panel = document.getElementById('overlay-ask-panel');
+  if (panel) return panel;
+  panel = document.createElement('div');
+  panel.id = 'overlay-ask-panel';
+  panel.className = 'overlay-ask-panel hidden';
+  panel.innerHTML =
+    '<div class="overlay-ask-thread" id="overlay-ask-thread"></div>' +
+    '<div class="overlay-ask-composer">' +
+      '<textarea id="overlay-ask-input" class="overlay-ask-input" rows="1" ' +
+        'placeholder="Ask a follow-up…" autocomplete="off" spellcheck="false"></textarea>' +
+      '<div class="overlay-ask-hint">' +
+        '<span><kbd>↵</kbd> send</span>' +
+        '<span><kbd>Tab</kbd> follow-up</span>' +
+        '<span><kbd>Esc</kbd> back</span>' +
+      '</div>' +
+    '</div>';
+  elements.resultsContainer.insertAdjacentElement('afterend', panel);
+
+  // The follow-up composer keeps the thread alive across turns.
+  const input = panel.querySelector('#overlay-ask-input');
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      const q = input.value.trim();
+      if (!q || state.askBusy) return;
+      input.value = '';
+      autoSizeAskInput(input);
+      void startOverlayAsk(q, { followUp: true });
+      return;
+    }
+    // Esc from the composer returns to the search list (handled globally too,
+    // but stop it from just blurring the textarea first).
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      exitAskMode();
+    }
+  });
+  input.addEventListener('input', () => autoSizeAskInput(input));
+  return panel;
+}
+
+/** Grow the follow-up textarea with its content (single line → a few lines). */
+function autoSizeAskInput(input) {
+  if (!input) return;
+  input.style.height = 'auto';
+  input.style.height = `${Math.min(input.scrollHeight, 120)}px`;
+}
+
+function askThreadScroll() {
+  const thread = document.getElementById('overlay-ask-thread');
+  if (thread) thread.scrollTop = thread.scrollHeight;
+}
+
+function renderCourseMaterialIndexStatus(container, status) {
+  if (!container || !status) return;
+  const queued = Number(status.queuedDocuments || 0);
+  const indexed = Number(status.indexedDocuments || 0);
+  const failed = Number(status.failedDocuments || 0);
+  if (queued <= 0 && failed <= 0) return;
+  const line = document.createElement('div');
+  line.className = 'cs-indexing-status';
+  const parts = [];
+  if (queued > 0) parts.push(`${queued} course file${queued === 1 ? '' : 's'} indexing`);
+  if (indexed > 0) parts.push(`${indexed} indexed`);
+  if (failed > 0) parts.push(`${failed} failed`);
+  line.textContent = parts.join(' · ');
+  container.appendChild(line);
+}
+
+/** Append a question/answer bubble; returns the content element for streaming. */
+function appendAskBubble(role, text) {
+  const thread = document.getElementById('overlay-ask-thread');
+  const bubble = document.createElement('div');
+  bubble.className = `cs-ask-bubble cs-ask-${role}`;
+  const label = document.createElement('div');
+  label.className = 'cs-ask-label';
+  label.textContent = role === 'q' ? 'You' : 'Canvascope';
+  const content = document.createElement('div');
+  content.className = 'cs-ask-content bubble-content';
+  content.innerHTML = window.CanvascopeAnswerRender.parseSimpleMarkdown(text || '');
+  bubble.appendChild(label);
+  bubble.appendChild(content);
+  thread.appendChild(bubble);
+  askThreadScroll();
+  return { bubble, content };
+}
+
+/** Tell the in-page overlay host whether an answer is showing (suppresses
+ *  outside-click close while a conversation is active). */
+function postAskActive(active) {
+  if (window.self === window.top) return;
+  try { window.parent.postMessage({ type: 'CS_ASK_ACTIVE', active: !!active }, '*'); } catch (_) { /* noop */ }
+}
+
+function enterAskMode() {
+  state.askMode = true;
+  postAskActive(true);
+  hideSearchHistory();
+  if (elements.resultsContainer) elements.resultsContainer.classList.add('hidden');
+  if (elements.emptyState) elements.emptyState.classList.add('hidden');
+  if (elements.homeSections) elements.homeSections.classList.add('hidden');
+  if (elements.duePlanner) elements.duePlanner.classList.add('hidden');
+  const panel = getAskPanel();
+  panel.classList.remove('hidden');
+}
+
+function exitAskMode() {
+  if (!state.askMode) return;
+  state.askMode = false;
+  state.askConversation = [];
+  postAskActive(false);
+  const panel = document.getElementById('overlay-ask-panel');
+  if (panel) panel.classList.add('hidden');
+  const input = document.getElementById('overlay-ask-input');
+  if (input) input.value = '';
+  if (elements.resultsContainer) elements.resultsContainer.classList.remove('hidden');
+  if (elements.searchInput) elements.searchInput.focus();
+}
+
+/** Move focus into the follow-up composer so the user can keep the chat going. */
+function focusAskComposer() {
+  const input = document.getElementById('overlay-ask-input');
+  if (!input) return;
+  input.focus();
+  const len = input.value.length;
+  try { input.setSelectionRange(len, len); } catch (_) { /* noop */ }
+}
+
+/**
+ * Fold prior conversation turns into the compiled prompt so a follow-up
+ * ("what about the second one?", "explain that more") carries context. The
+ * stream API is single-string, so we prepend a transcript block ahead of the
+ * freshly retrieved SOURCES + QUESTION for the current turn.
+ */
+function withConversationContext(compiledPrompt, history) {
+  if (!Array.isArray(history) || history.length === 0) return compiledPrompt;
+  const transcript = history
+    .map((turn) => `${turn.role === 'user' ? 'Student' : 'Canvascope'}: ${turn.content}`)
+    .join('\n\n');
+  return `=== CONVERSATION SO FAR ===\nUse this prior exchange to resolve references in the new question (e.g. "that", "the second one"). Do not repeat earlier answers verbatim.\n\n${transcript}\n\n${compiledPrompt}`;
+}
+
+/**
+ * Run a question through the shared RAG + inference path and stream it inline.
+ * `followUp` keeps the existing thread and conversation so the overlay behaves
+ * as a full multi-turn chat; a fresh ask resets both.
+ */
+async function startOverlayAsk(question, { followUp = false } = {}) {
+  const prompt = String(question || '').trim();
+  if (!prompt || state.askBusy) return;
+  if (typeof RAGCore === 'undefined' || typeof AIRouter === 'undefined') {
+    console.warn('[Canvascope Ask] RAG stack unavailable in this context.');
+    return;
+  }
+  state.askBusy = true;
+  enterAskMode();
+
+  const thread = document.getElementById('overlay-ask-thread');
+  // A fresh ask starts a new conversation; a follow-up appends to the thread.
+  if (!followUp) {
+    state.askConversation = [];
+    if (thread) thread.replaceChildren();
+  }
+  const priorTurns = state.askConversation.slice();
+  appendAskBubble('q', prompt);
+  const { content } = appendAskBubble('a', '');
+  const loader = document.createElement('div');
+  loader.className = 'cs-ask-loader';
+  loader.innerHTML = '<span></span><span></span><span></span>';
+  content.appendChild(loader);
+  askThreadScroll();
+
+  const render = window.CanvascopeAnswerRender;
+
+  try {
+    // Deterministic grade-target answers never hit the LLM.
+    try {
+      const gradeAnswer = await self.CanvascopeGradeTargetAnswer?.(prompt, '');
+      if (gradeAnswer) {
+        content.innerHTML = render.parseSimpleMarkdown(gradeAnswer);
+        state.askConversation.push({ role: 'user', content: prompt });
+        state.askConversation.push({ role: 'assistant', content: gradeAnswer });
+        askThreadScroll();
+        focusAskComposer();
+        return;
+      }
+    } catch (e) {
+      console.warn('[Canvascope Ask] Grade-target path failed, falling back to LLM:', e);
+    }
+
+    const ready = await ensureAskRouteReady((pct) => {
+      content.innerHTML = render.parseSimpleMarkdown(
+        `**Getting the local model ready…** ${pct > 0 ? `${pct}%` : ''}`);
+    });
+    if (!ready) {
+      content.innerHTML = render.parseSimpleMarkdown(
+        '*Sign in to ask questions here — answers need the cloud model when on-device AI is unavailable.*');
+      return;
+    }
+
+    // Unified retrieval: active page (source [1]) + ranked corpus chunks.
+    let fullPrompt = prompt;
+    let sources = [];
+    let presentation = { decorateCitations: true, sourceDisplay: 'rail' };
+    let indexingStatus = null;
+    try {
+      const compiled = await RAGCore.compileUnifiedPrompt(prompt, { courseName: '' });
+      fullPrompt = compiled.prompt;
+      sources = compiled.sources || [];
+      presentation = compiled.presentation || presentation;
+      indexingStatus = compiled.indexingStatus || null;
+    } catch (e) {
+      console.warn('[Canvascope Ask] Unified retrieval failed, using raw prompt:', e);
+    }
+
+    // Follow-ups carry the earlier turns so references ("that", "the second
+    // one") resolve against the prior answer.
+    fullPrompt = withConversationContext(fullPrompt, priorTurns);
+
+    let full = '';
+    for await (const delta of AIRouter.stream(fullPrompt, { system: askSystemWithProfile() })) {
+      if (content.querySelector('.cs-ask-loader')) content.innerHTML = '';
+      full += delta;
+      const visible = presentation.decorateCitations === false && render.stripCitationMarkers
+        ? render.stripCitationMarkers(full)
+        : full;
+      const html = render.parseSimpleMarkdown(visible);
+      content.innerHTML = presentation.decorateCitations === false
+        ? html
+        : render.decorateCitations(html, sources);
+      askThreadScroll();
+    }
+    if (full.trim()) {
+      render.renderSourceChips(content.parentElement, sources, {
+        bubbleContent: content,
+        mode: presentation.sourceDisplay === 'disclosure' ? 'disclosure' : 'rail',
+        maxSources: 4,
+        onScroll: askThreadScroll
+      });
+      renderCourseMaterialIndexStatus(content.parentElement, indexingStatus);
+      // Record the turn so the next follow-up has the full thread as context.
+      state.askConversation.push({ role: 'user', content: prompt });
+      state.askConversation.push({ role: 'assistant', content: full.trim() });
+    } else {
+      content.innerHTML = render.parseSimpleMarkdown('*No answer was generated. Try rephrasing the question.*');
+    }
+  } catch (err) {
+    console.error('[Canvascope Ask] Streaming error:', err);
+    if (content.querySelector('.cs-ask-loader')) content.innerHTML = '';
+    content.innerHTML = render.parseSimpleMarkdown(`*Something went wrong: ${err?.message || err}*`);
+  } finally {
+    state.askBusy = false;
+    askThreadScroll();
+    // Ready the composer for a follow-up as soon as the answer settles.
+    if (state.askMode) focusAskComposer();
+  }
+}
+
+/**
+ * Prepend the "Ask Canvascope" row to the overlay results when the query reads
+ * like a question, and move the keyboard highlight onto it so Enter asks.
+ */
+function injectAskRowIfQuestion(query) {
+  if (!state.isOverlayMode) return;
+  const q = String(query || '').trim();
+  if (!looksLikeQuestion(q)) return;
+
+  const row = document.createElement('div');
+  row.className = 'result-item cs-ask-row';
+  row.tabIndex = 0;
+  row.setAttribute('role', 'button');
+  row.setAttribute('aria-label', `Ask Canvascope: ${q}`);
+  row.__csAsk = q;
+
+  const textCol = document.createElement('div');
+  textCol.className = 'overlay-result-text';
+  const title = document.createElement('div');
+  title.className = 'result-title';
+  title.textContent = `Ask Canvascope`;
+  const sub = document.createElement('div');
+  sub.className = 'overlay-result-course cs-ask-row-query';
+  sub.textContent = q;
+  textCol.appendChild(title);
+  textCol.appendChild(sub);
+  row.appendChild(textCol);
+
+  const right = document.createElement('div');
+  right.className = 'overlay-result-right';
+  const badge = document.createElement('span');
+  badge.className = 'overlay-type-badge type-ask';
+  badge.textContent = 'ASK';
+  right.appendChild(badge);
+  row.appendChild(right);
+
+  elements.resultsContainer.insertBefore(row, elements.resultsContainer.firstChild);
+
+  // The Ask row becomes the default-highlighted entry so Enter asks.
+  elements.resultsContainer.querySelectorAll('.result-item.overlay-highlighted')
+    .forEach((el) => el.classList.remove('overlay-highlighted'));
+  row.classList.add('overlay-highlighted');
+  state.overlayHighlightIndex = 0;
+}
+
+// ===========================================================================
+// Cmd+K command palette — the slash-menu *actions* migrated into the overlay.
+// Config (themes/fonts/density/skin) lives in Settings now; these are the verbs.
+// A command surfaces only on a near-exact alias match (exact or Levenshtein ≤1)
+// so "gpa", "grades", "timer" reliably resolve and nothing fuzzier hijacks them.
+// `action` entries bridge to the page's content script (CanvascopeAcademicTools);
+// `ask` entries route a seeded question into the same inline RAG flow as Phase 1.
+// ===========================================================================
+const OVERLAY_COMMANDS = [
+  { id: 'gpa',       aliases: ['gpa', 'gpacalc'],                 title: 'GPA calculator',     sub: 'Live GPA and saved scenarios',     badge: 'OPEN', action: 'gpa',       takesArg: true },
+  { id: 'grades',    aliases: ['grades', 'grade'],                title: 'Grades summary',     sub: 'One screen of current grades',     badge: 'OPEN', action: 'grades' },
+  { id: 'timer',     aliases: ['timer', 'zen', 'focus', 'pomodoro', 'study'], title: 'Focus timer', sub: 'Pomodoro and soundscape',   badge: 'OPEN', action: 'zen' },
+  { id: 'notes',     aliases: ['notes'],                          title: 'Browse notes',       sub: 'Everything you have captured',      badge: 'OPEN', action: 'notes' },
+  { id: 'note',      aliases: ['note'],                           title: 'Quick note',         sub: 'Capture a note from this page',     badge: 'SAVE', action: 'note',     takesArg: true },
+  { id: 'todo',      aliases: ['todo', 'task'],                   title: 'Add to-do',          sub: 'Drop an item on your Up Next list', badge: 'ADD',  action: 'todo',     takesArg: true },
+  { id: 'remind',    aliases: ['remind', 'reminder'],             title: 'Set reminder',       sub: 'e.g. "remind midterm in 1h"',       badge: 'SET',  action: 'remind',   takesArg: true },
+  { id: 'sync',      aliases: ['sync', 'cloud'],                  title: 'Force cloud sync',   sub: 'Push and pull via your account',    badge: 'SYNC', action: 'sync' },
+  { id: 'autopilot', aliases: ['autopilot', 'syllabus', 'scheduler'], title: 'Syllabus Autopilot', sub: 'Extract events to your calendar', badge: 'RUN', action: 'autopilot' },
+  // AI verbs — routed into the inline ask flow with a seeded question.
+  { id: 'plan',      aliases: ['plan', 'planner', 'studyplan'],   title: 'Smart study plan',   sub: 'AI study blocks from your deadlines', badge: 'AI', ask: 'Draft a study plan for the next two weeks based on my upcoming deadlines and what I need to prioritize.' },
+  { id: 'quiz',      aliases: ['quiz', 'practice'],               title: 'Practice quiz',      sub: 'Quiz grounded in your materials',   badge: 'AI', ask: 'Generate a short practice quiz with answer key, drawn from my indexed course materials.' },
+  { id: 'briefing',  aliases: ['briefing', 'brief', 'today'],     title: 'Daily briefing',     sub: 'What matters today',                badge: 'AI', ask: "Give me a daily briefing: what's due soon, where I'm at on grades, and what I should focus on today." },
+  { id: 'ask',       aliases: ['ask', 'question'],                title: 'Ask Canvascope',     sub: 'Course-wide AI answer with sources', badge: 'AI', ask: '' }
+];
+
+/** Exact or single-edit (typo-tolerant) alias match. */
+function nearExactAlias(token, alias) {
+  if (token === alias) return true;
+  if (Math.abs(token.length - alias.length) > 1) return false;
+  return levenshteinDistance(token, alias) <= 1;
+}
+
+/** Return commands whose alias near-exactly matches the query (with parsed arg). */
+function matchOverlayCommands(query) {
+  const q = String(query || '').trim().toLowerCase();
+  if (!q) return [];
+  const tokens = q.split(/\s+/);
+  const first = tokens[0];
+  const rest = tokens.slice(1).join(' ');
+  const out = [];
+  for (const cmd of OVERLAY_COMMANDS) {
+    const acceptsArg = cmd.takesArg || cmd.ask !== undefined;
+    // Whole-query match (no argument): e.g. "grades", "gpa".
+    let matched = cmd.aliases.some((a) => nearExactAlias(q, a));
+    let arg = '';
+    // First-token match leaving a trailing argument: e.g. "note buy textbook".
+    if (!matched && acceptsArg && tokens.length > 1 && cmd.aliases.some((a) => nearExactAlias(first, a))) {
+      matched = true;
+      arg = rest;
+    }
+    if (matched) out.push({ ...cmd, arg });
+  }
+  return out;
+}
+
+/** Fire a selected command — AI verbs stay inline; actions bridge to content.js. */
+function runOverlayCommand(cmd) {
+  if (!cmd) return;
+  if (cmd.ask !== undefined) {
+    const question = cmd.ask || cmd.arg || '';
+    if (!question) { elements.searchInput?.focus(); return; }
+    void startOverlayAsk(question);
+    return;
+  }
+  // Content-script action: ask the in-page host to run it, then it closes the overlay.
+  try {
+    window.parent.postMessage(
+      { type: 'CANVASCOPE_RUN_ACTION', action: cmd.action, arg: cmd.arg || '' }, '*');
+  } catch (_) { /* noop */ }
+}
+
+/**
+ * Prepend command rows for any near-exact alias match, above the Ask row.
+ * The first command becomes the default highlight so Enter fires it.
+ */
+function injectCommandRowsIfMatch(query) {
+  if (!state.isOverlayMode) return;
+  const matches = matchOverlayCommands(query);
+  if (!matches.length) return;
+
+  // Insert in reverse so the first match ends up on top after each prepend.
+  for (let i = matches.length - 1; i >= 0; i--) {
+    const cmd = matches[i];
+    const row = document.createElement('div');
+    row.className = 'result-item cs-cmd-row';
+    row.tabIndex = 0;
+    row.setAttribute('role', 'button');
+    row.setAttribute('aria-label', `${cmd.title}${cmd.arg ? ': ' + cmd.arg : ''}`);
+    row.__csAction = cmd;
+
+    const textCol = document.createElement('div');
+    textCol.className = 'overlay-result-text';
+    const title = document.createElement('div');
+    title.className = 'result-title';
+    title.textContent = cmd.title;
+    const sub = document.createElement('div');
+    sub.className = 'overlay-result-course';
+    sub.textContent = cmd.arg ? `"${cmd.arg}"` : cmd.sub;
+    textCol.appendChild(title);
+    textCol.appendChild(sub);
+    row.appendChild(textCol);
+
+    const right = document.createElement('div');
+    right.className = 'overlay-result-right';
+    const badge = document.createElement('span');
+    badge.className = `overlay-type-badge type-${cmd.badge === 'AI' ? 'ask' : 'cmd'}`;
+    badge.textContent = cmd.badge;
+    right.appendChild(badge);
+    row.appendChild(right);
+
+    elements.resultsContainer.insertBefore(row, elements.resultsContainer.firstChild);
+  }
+
+  // Top command is the default-highlighted entry.
+  elements.resultsContainer.querySelectorAll('.result-item.overlay-highlighted')
+    .forEach((el) => el.classList.remove('overlay-highlighted'));
+  const top = elements.resultsContainer.querySelector('.result-item');
+  if (top) top.classList.add('overlay-highlighted');
+  state.overlayHighlightIndex = 0;
+}
+
 function displayResults(results) {
   clearResultsContainer();
   elements.emptyState.classList.add('hidden');
@@ -8405,6 +9679,11 @@ function displayResults(results) {
 
   // One reflow instead of N
   elements.resultsContainer.appendChild(fragment);
+
+  // Offer an inline "Ask Canvascope" row for question-shaped queries.
+  injectAskRowIfQuestion(elements.searchInput?.value || '');
+  // Surface command rows (gpa, grades, timer, …) on near-exact alias match.
+  injectCommandRowsIfMatch(elements.searchInput?.value || '');
 }
 
 /**
@@ -8703,9 +9982,23 @@ function showNoResults(message) {
 
   if (state.isOverlayMode) {
     const noResultsElement = document.createElement('div');
-    noResultsElement.className = 'no-results';
-    noResultsElement.textContent = message;
+    noResultsElement.className = 'no-results overlay-no-results';
+
+    const icon = document.createElement('div');
+    icon.className = 'overlay-no-results-icon';
+    icon.innerHTML = '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>';
+    noResultsElement.appendChild(icon);
+
+    const text = document.createElement('div');
+    text.className = 'overlay-no-results-text';
+    text.textContent = message;
+    noResultsElement.appendChild(text);
+
     elements.resultsContainer.appendChild(noResultsElement);
+    // A question with no content matches can still be asked.
+    injectAskRowIfQuestion(elements.searchInput?.value || '');
+    // …and a command like "gpa" still resolves even with no content hits.
+    injectCommandRowsIfMatch(elements.searchInput?.value || '');
     return;
   }
 
@@ -8781,13 +10074,65 @@ function clearResultsContainer() {
 // DATA MANAGEMENT
 // ============================================
 
+function normalizeCourseLookupId(value) {
+  if (value === undefined || value === null || value === '') return '';
+  return String(value);
+}
+
+function buildCourseCodeLookup(courseCatalog, courseSnapshots) {
+  const byId = new Map();
+  const byName = new Map();
+
+  const add = (courseId, courseName, courseCode) => {
+    const code = String(courseCode || '').trim();
+    if (!code) return;
+
+    const id = normalizeCourseLookupId(courseId);
+    if (id && !byId.has(id)) byId.set(id, code);
+
+    const name = normalizeText(courseName || '');
+    if (name && !byName.has(name)) byName.set(name, code);
+  };
+
+  for (const entry of Array.isArray(courseCatalog) ? courseCatalog : []) {
+    add(entry?.courseId, entry?.courseName, entry?.courseCode);
+  }
+
+  for (const snapshot of Array.isArray(courseSnapshots) ? courseSnapshots : []) {
+    add(snapshot?.course?.courseId, snapshot?.course?.courseName, snapshot?.course?.courseCode);
+  }
+
+  return { byId, byName };
+}
+
+function enrichContentWithCourseCodes(content, courseCatalog, courseSnapshots) {
+  const items = Array.isArray(content) ? content : [];
+  const lookup = buildCourseCodeLookup(courseCatalog, courseSnapshots);
+
+  for (const item of items) {
+    if (!item || typeof item !== 'object' || item.courseCode) continue;
+
+    const byId = lookup.byId.get(normalizeCourseLookupId(item.courseId));
+    if (byId) {
+      item.courseCode = byId;
+      continue;
+    }
+
+    const byName = lookup.byName.get(normalizeText(item.courseName || ''));
+    if (byName) item.courseCode = byName;
+  }
+
+  return items;
+}
+
 async function loadContent() {
   try {
     const result = await chrome.storage.local.get([
       'indexedContent', 'starredCourseIds', 'dismissedTasks',
-      'customTodos', 'dashboardNotes'
+      'customTodos', 'dashboardNotes', 'courseCatalog', 'courseSnapshots'
     ]);
     let content = result.indexedContent || [];
+    content = enrichContentWithCourseCodes(content, result.courseCatalog, result.courseSnapshots);
 
     // Deduplicate by normalizing URLs (strip module_item_id)
     content = deduplicateCrossType(deduplicateContent(content));
@@ -8837,6 +10182,12 @@ async function loadContent() {
     // Invalidate course candidates
     state._courseCandidatesCache = null;
     state._courseCandidatesVersion = 0;
+    state._courseRegistryCache = null;
+    state._courseRegistryVersion = 0;
+    state._subjectKeywordsCache = null;
+    state._subjectKeywordsCacheVersion = 0;
+    state._searchVocabularyCache = null;
+    state._searchVocabularyCacheVersion = 0;
 
     console.log(`[Canvascope] Loaded ${state.indexedContent.length} items (after dedup), ${starredCourseIds.size} starred courses`);
 
@@ -8996,6 +10347,7 @@ function deduplicateContent(content) {
 
       // Merge due-date fields from either copy (prefer non-null)
       const loser = winner === item ? existing : item;
+      if (!winner.courseCode && loser.courseCode) winner.courseCode = loser.courseCode;
       if (!winner.dueAt && loser.dueAt) winner.dueAt = loser.dueAt;
       if (!winner.unlockAt && loser.unlockAt) winner.unlockAt = loser.unlockAt;
       if (!winner.lockAt && loser.lockAt) winner.lockAt = loser.lockAt;
@@ -9036,6 +10388,7 @@ function deduplicateCrossType(content) {
         groups.set(key, item);
       }
       const loser = winner === item ? existing : item;
+      if (!winner.courseCode && loser.courseCode) winner.courseCode = loser.courseCode;
       if (!winner.dueAt && loser.dueAt) winner.dueAt = loser.dueAt;
       if (!winner.unlockAt && loser.unlockAt) winner.unlockAt = loser.unlockAt;
       if (!winner.lockAt && loser.lockAt) winner.lockAt = loser.lockAt;
@@ -9113,13 +10466,13 @@ function updateStats() {
   if (count === 0) {
     elements.statsBtn.classList.add('empty');
     if (state.isScanning) {
-      elements.statsText.textContent = 'Syncing in progress...';
-      elements.statsHint.textContent = 'Please wait while we index your courses';
+      elements.statsText.textContent = 'Syncing...';
+      elements.statsHint.textContent = '';
       // Disable click to browse during early sync
       elements.statsBtn.style.pointerEvents = 'none';
     } else {
       elements.statsText.textContent = 'No content indexed';
-      elements.statsHint.textContent = 'Open Canvas or Brightspace to sync';
+      elements.statsHint.textContent = '';
       elements.statsBtn.style.pointerEvents = 'none';
     }
   } else {
@@ -9760,13 +11113,22 @@ function showBrowseCategory(type, items) {
     const btn = document.getElementById('cs-ai-btn');
     if (!btn) return;
     btn.addEventListener('click', async () => {
+      // Consolidated: open the Cmd+K palette on the active Canvas tab instead of
+      // the side panel. The in-page overlay is the single AI/search surface now.
       try {
-        const currentWindow = await chrome.windows.getCurrent();
-        await chrome.sidePanel.open({ windowId: currentWindow.id });
-        // Close the popup to draw full focus to the side panel
-        window.close();
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (!tab?.id) return;
+        chrome.tabs.sendMessage(tab.id, { action: 'openOverlay' }, (res) => {
+          void chrome.runtime.lastError;
+          if (res?.ok) {
+            window.close();
+          } else {
+            // Not on a supported LMS page — nudge instead of failing silently.
+            showErrorStatus('Open a Canvas page, then press Cmd+K.');
+          }
+        });
       } catch (err) {
-        console.error('[Canvascope] Failed to open AI side panel:', err);
+        console.error('[Canvascope] Failed to open Cmd+K overlay:', err);
       }
     });
   }
@@ -9848,6 +11210,8 @@ function showBrowseCategory(type, items) {
   if (isInOverlay() && typeof window.addEventListener === 'function') {
     window.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') {
+        // Inline answer open → go back to search instead of closing the overlay.
+        if (state.askMode) { try { exitAskMode(); } catch (_) { /* noop */ } return; }
         try { window.parent.postMessage({ type: 'CLOSE_OVERLAY' }, '*'); } catch (_) { /* noop */ }
       }
     }, true);

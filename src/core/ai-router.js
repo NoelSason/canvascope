@@ -108,9 +108,9 @@
    * Prompt API are normalized here so consumers can just append).
    * `system` only applies on the cloud route; the local session's system
    * prompt is fixed at init, so callers bake task framing into `prompt`.
-   * Passing `corpus` forces the Claude Fable 5 cloud route (1M context +
-   * prompt caching) even when the on-device route is active — it's the only
-   * route that can hold a whole course at once.
+   * Passing `corpus` forces the cloud claude-proxy route (Claude Haiku 4.5 —
+   * cheapest tool-capable model, with prompt caching) even when the on-device
+   * route is active — it's the route that holds the whole course corpus.
    */
   async function* stream(prompt, { system, corpus, maxTokens } = {}) {
     const wantClaude = !!corpus && state.cloudAvailable;

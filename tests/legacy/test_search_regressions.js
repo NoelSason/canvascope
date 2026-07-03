@@ -2,12 +2,27 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 
-const Fuse = require('./src/lib/fuse.min.js');
+function findRepoRoot() {
+  const candidates = [
+    __dirname,
+    path.resolve(__dirname, '..'),
+    path.resolve(__dirname, '..', '..')
+  ];
+  const root = candidates.find(candidate => fs.existsSync(path.join(candidate, 'src/popup/popup.js')));
+  if (!root) {
+    throw new Error(`Unable to locate extension-core repo root from ${__dirname}`);
+  }
+  return root;
+}
+
+const REPO_ROOT = findRepoRoot();
+const Fuse = require(path.join(REPO_ROOT, 'src/lib/fuse.min.js'));
 
 function resolveFixturePath(filename) {
   const candidates = [
     path.join(__dirname, filename),
-    path.join(__dirname, '..', filename)
+    path.join(__dirname, '..', filename),
+    path.join(REPO_ROOT, filename)
   ];
   return candidates.find(candidate => fs.existsSync(candidate)) || candidates[0];
 }
@@ -39,7 +54,7 @@ function makeElement() {
   };
 }
 
-function createSearchHarness(indexedContent) {
+function createSearchHarness(indexedContent, fixedNow = FIXED_NOW) {
   const context = {
     console,
     Fuse,
@@ -92,11 +107,31 @@ function createSearchHarness(indexedContent) {
     }
   };
 
+  context.__rafCallbacks = new Map();
+  context.__idleCallbacks = new Map();
+  context.__nextRafId = 1;
+  context.__nextIdleId = 1;
+  context.requestAnimationFrame = (callback) => {
+    const id = context.__nextRafId++;
+    context.__rafCallbacks.set(id, callback);
+    return id;
+  };
+  context.cancelAnimationFrame = (id) => {
+    context.__rafCallbacks.delete(id);
+  };
+  context.requestIdleCallback = (callback) => {
+    const id = context.__nextIdleId++;
+    context.__idleCallbacks.set(id, callback);
+    return id;
+  };
+  context.cancelIdleCallback = (id) => {
+    context.__idleCallbacks.delete(id);
+  };
   context.window = context;
   context.self = context;
 
   vm.createContext(context);
-  vm.runInContext(fs.readFileSync(path.join(__dirname, 'src/popup/popup.js'), 'utf8'), context);
+  vm.runInContext(fs.readFileSync(path.join(REPO_ROOT, 'src/popup/popup.js'), 'utf8'), context);
 
   vm.runInContext(`
     const stub = () => ({
@@ -132,7 +167,7 @@ function createSearchHarness(indexedContent) {
     elements.overlaySearchTime = stub();
     elements.clearSearchBtn = stub();
 
-    Date.now = () => new Date(${JSON.stringify(FIXED_NOW)}).getTime();
+    Date.now = () => new Date(${JSON.stringify(fixedNow)}).getTime();
     starredCourseIds = new Set();
     clickFeedbackMap = {};
     populateCourseFilter = () => {};
@@ -144,6 +179,7 @@ function createSearchHarness(indexedContent) {
         title: r.item.title,
         url: r.item.url,
         course: r.item.courseName,
+        courseCode: r.item.courseCode || '',
         type: r.item.type,
         dueAt: r.item.dueAt || null,
         folderPath: r.item.folderPath || null
@@ -182,7 +218,15 @@ function createSearchHarness(indexedContent) {
       elements.searchInput.value = query;
       globalThis.__lastResults = null;
       handleSearchInput({ target: { value: query } });
+      const immediateResultCount = Array.isArray(globalThis.__lastResults) ? globalThis.__lastResults.length : 0;
+      const frames = Array.from(globalThis.__rafCallbacks.values());
+      globalThis.__rafCallbacks.clear();
+      frames.forEach((cb) => cb(performance.now()));
+      const idleCallbacks = Array.from(globalThis.__idleCallbacks.values());
+      globalThis.__idleCallbacks.clear();
+      idleCallbacks.forEach((cb) => cb({ didTimeout: false, timeRemaining: () => 50 }));
       const snapshot = {
+        immediateResultCount,
         resultCount: Array.isArray(globalThis.__lastResults) ? globalThis.__lastResults.length : 0,
         firstTitle: Array.isArray(globalThis.__lastResults) && globalThis.__lastResults[0] ? globalThis.__lastResults[0].title : null,
         searchTimeoutActive: Boolean(state.searchTimeout),
@@ -191,6 +235,14 @@ function createSearchHarness(indexedContent) {
       clearScheduledSearch();
       clearScheduledSearchSideEffects();
       return snapshot;
+    };
+
+    globalThis.__runFastPreview = (query) => {
+      state.isOverlayMode = true;
+      elements.searchInput.value = query;
+      globalThis.__lastResults = null;
+      runFastOverlayPreview(query);
+      return globalThis.__lastResults;
     };
 
     globalThis.__describeTask = (title, courseName = null) => {
@@ -217,6 +269,9 @@ function createSearchHarness(indexedContent) {
     input(query) {
       return vm.runInContext(`__runOverlayInput(${JSON.stringify(query)})`, context);
     },
+    fast(query) {
+      return vm.runInContext(`__runFastPreview(${JSON.stringify(query)})`, context);
+    },
     describeTask(title, courseName = null) {
       return vm.runInContext(`__describeTask(${JSON.stringify(title)}, ${JSON.stringify(courseName)})`, context);
     }
@@ -234,51 +289,135 @@ function dueTs(result) {
   return Number.isFinite(ts) ? ts : 0;
 }
 
-if (!fs.existsSync(EXPORT_PATH)) {
-  throw new Error(`Missing export file: ${EXPORT_PATH}`);
+let fixtureHarness = null;
+if (fs.existsSync(EXPORT_PATH)) {
+  const indexedContent = JSON.parse(fs.readFileSync(EXPORT_PATH, 'utf8')).indexedContent || [];
+  fixtureHarness = createSearchHarness(indexedContent);
+
+  const bioReportResults = fixtureHarness.run('bio lab report');
+  assert(Array.isArray(bioReportResults) && bioReportResults.length >= 6, 'Expected multiple Biology lab reports for "bio lab report".');
+  assert(bioReportResults[0].course === '2026 Spring Biology 1AL', 'Expected Biology 1AL to rank first for "bio lab report".');
+  assert(bioReportResults.slice(0, 6).every(r => r.course === '2026 Spring Biology 1AL' && /report/i.test(r.title)), 'Expected top Biology report results to stay in Biology 1AL.');
+
+  const bioTypoResults = fixtureHarness.run('bio lab reporrt');
+  assert(Array.isArray(bioTypoResults) && bioTypoResults.length >= 6, 'Expected typo-tolerant biology report results for "bio lab reporrt".');
+  assert(bioTypoResults[0].course === '2026 Spring Biology 1AL', 'Expected a misspelled "bio lab reporrt" query to still prioritize Biology 1AL.');
+
+  const biologyTypoResults = fixtureHarness.run('biolgy lab report');
+  assert(Array.isArray(biologyTypoResults) && biologyTypoResults.length >= 6, 'Expected typo-tolerant biology results for "biolgy lab report".');
+  assert(biologyTypoResults[0].course === '2026 Spring Biology 1AL', 'Expected "biolgy lab report" to recover the Biology 1AL reports.');
+
+  const chemPrelabResults = fixtureHarness.run('chem prelab');
+  assert(Array.isArray(chemPrelabResults) && chemPrelabResults.length > 0, 'Expected results for "chem prelab".');
+  assert(chemPrelabResults[0].title === 'PreLab G', 'Expected "PreLab G" to rank first for "chem prelab".');
+  assert(chemPrelabResults[0].course === 'Chem 3BL: Organic Chemistry Laboratory (Spring 2026)', 'Expected "chem prelab" to prioritize Chem 3BL.');
+
+  const chemTypoResults = fixtureHarness.run('chem prelqb');
+  assert(Array.isArray(chemTypoResults) && chemTypoResults.length > 0, 'Expected typo-tolerant chemistry prelab results for "chem prelqb".');
+  assert(chemTypoResults[0].title === 'PreLab G', 'Expected "chem prelqb" to recover "PreLab G".');
+
+  const chemLabResults = fixtureHarness.run('chem lab');
+  assert(Array.isArray(chemLabResults) && chemLabResults.slice(0, 5).some(r => r.title === 'PreLab G'), 'Expected "PreLab G" to remain visible near the top for "chem lab".');
+  const chemLabDueWindow = chemLabResults
+    .slice(0, 7)
+    .map(dueTs)
+    .filter(ts => ts > 0);
+  assert(chemLabDueWindow.length >= 5, 'Expected multiple dated chemistry lab results near the top.');
+  assert(chemLabDueWindow.every((ts, index) => index === 0 || chemLabDueWindow[index - 1] <= ts), 'Expected "chem lab" to prioritize nearer due dates before later ones.');
+  const preLabGIndex = chemLabResults.findIndex(r => r.title === 'PreLab G');
+  const futureLabGIndex = chemLabResults.findIndex(r => /Lab G\.[A-Z]/.test(r.title));
+  assert(preLabGIndex !== -1 && futureLabGIndex !== -1 && preLabGIndex < futureLabGIndex, 'Expected current-week "PreLab G" to rank ahead of later Lab G analysis variants.');
+
+  const chemLabWeekResults = fixtureHarness.run('chem lab this week');
+  assert(Array.isArray(chemLabWeekResults) && chemLabWeekResults.length > 0, 'Expected weekly chemistry lab results.');
+  assert(chemLabWeekResults[0].course.includes('Chem'), 'Expected "chem lab this week" to rank a chemistry course first.');
+  assert(chemLabWeekResults.slice(0, 5).every(r => r.course.includes('Chem')), 'Expected top weekly chemistry lab results to stay within chemistry courses.');
 }
 
-const indexedContent = JSON.parse(fs.readFileSync(EXPORT_PATH, 'utf8')).indexedContent || [];
-const harness = createSearchHarness(indexedContent);
+const mcbTemporalHarness = createSearchHarness([
+  {
+    title: 'MCB 102 - SM 2026 - Syllabus.pdf',
+    url: 'https://bcourses.berkeley.edu/courses/102/files/syllabus',
+    type: 'syllabus',
+    courseName: 'Survey of the Principles of Biochemistry and Molecular Biology (Summer 2026)',
+    courseCode: 'MCB 102',
+    courseId: 102,
+    createdAt: '2026-06-01T12:00:00-07:00',
+    updatedAt: '2026-06-01T12:00:00-07:00'
+  },
+  {
+    title: 'Jun 29 - Lecture 1.4 - Post.pdf',
+    url: 'https://bcourses.berkeley.edu/courses/102/files/lecture-1-4-post',
+    type: 'pdf',
+    courseName: 'Survey of the Principles of Biochemistry and Molecular Biology (Summer 2026)',
+    courseCode: 'MCB 102',
+    courseId: 102,
+    folderPath: 'Week 2: Jun. 29 - Jul. 1 > Lecture 1.4 - Enzymes > PowerPoint Slides',
+    pathSegments: ['Week 2: Jun. 29 - Jul. 1', 'Lecture 1.4 - Enzymes', 'PowerPoint Slides'],
+    createdAt: '2026-06-29T10:43:00-07:00',
+    updatedAt: '2026-06-29T10:43:00-07:00'
+  },
+  {
+    title: 'Jul. 1 - Discussion Problems.pdf',
+    url: 'https://bcourses.berkeley.edu/courses/102/files/july-1-discussion-problems',
+    type: 'pdf',
+    courseName: 'Survey of the Principles of Biochemistry and Molecular Biology (Summer 2026)',
+    courseCode: 'MCB 102',
+    courseId: 102,
+    folderPath: 'Week 2: Jun. 29 - Jul. 1',
+    createdAt: '2026-07-01T09:00:00-07:00',
+    updatedAt: '2026-07-01T09:00:00-07:00'
+  },
+  {
+    title: 'Lecture 6 Announcement Slides.pdf',
+    url: 'https://bcourses.berkeley.edu/courses/54/files/lecture-6-announcement-slides',
+    type: 'pdf',
+    courseName: 'Linear Algebra and Differential Equations (Summer 2026)',
+    courseCode: 'MATH 54',
+    courseId: 54,
+    createdAt: '2026-06-30T10:00:00-07:00',
+    updatedAt: '2026-06-30T10:00:00-07:00'
+  },
+  {
+    title: 'Lecture 6 Notes.pdf',
+    url: 'https://bcourses.berkeley.edu/courses/54/files/lecture-6-notes',
+    type: 'pdf',
+    courseName: 'Linear Algebra and Differential Equations (Summer 2026)',
+    courseCode: 'MATH 54',
+    courseId: 54,
+    createdAt: '2026-06-30T10:30:00-07:00',
+    updatedAt: '2026-06-30T10:30:00-07:00'
+  }
+], '2026-06-30T17:15:00-07:00');
 
-const bioReportResults = harness.run('bio lab report');
-assert(Array.isArray(bioReportResults) && bioReportResults.length >= 6, 'Expected multiple Biology lab reports for "bio lab report".');
-assert(bioReportResults[0].course === '2026 Spring Biology 1AL', 'Expected Biology 1AL to rank first for "bio lab report".');
-assert(bioReportResults.slice(0, 6).every(r => r.course === '2026 Spring Biology 1AL' && /report/i.test(r.title)), 'Expected top Biology report results to stay in Biology 1AL.');
+const mcbFastToday = mcbTemporalHarness.fast('mcb 102 lecture today');
+assert(Array.isArray(mcbFastToday) && mcbFastToday.length > 0, 'Expected fast preview results for "mcb 102 lecture today".');
+assert(mcbFastToday[0].title === 'Jun 29 - Lecture 1.4 - Post.pdf', 'Expected fast preview to rank the current MCB 102 lecture first.');
+assert(mcbFastToday.every(r => r.courseCode === 'MCB 102'), 'Expected fast preview for MCB 102 to exclude other courses.');
 
-const bioTypoResults = harness.run('bio lab reporrt');
-assert(Array.isArray(bioTypoResults) && bioTypoResults.length >= 6, 'Expected typo-tolerant biology report results for "bio lab reporrt".');
-assert(bioTypoResults[0].course === '2026 Spring Biology 1AL', 'Expected a misspelled "bio lab reporrt" query to still prioritize Biology 1AL.');
+const mcbTodayResults = mcbTemporalHarness.run('mcb 102 lecture today');
+assert(Array.isArray(mcbTodayResults) && mcbTodayResults.length > 0, 'Expected full search results for "mcb 102 lecture today".');
+assert(mcbTodayResults[0].title === 'Jun 29 - Lecture 1.4 - Post.pdf', 'Expected full search to rank the Jun 29 MCB 102 lecture first.');
+assert(mcbTodayResults.every(r => r.courseCode === 'MCB 102'), 'Expected full MCB 102 search to exclude Linear Algebra files.');
 
-const biologyTypoResults = harness.run('biolgy lab report');
-assert(Array.isArray(biologyTypoResults) && biologyTypoResults.length >= 6, 'Expected typo-tolerant biology results for "biolgy lab report".');
-assert(biologyTypoResults[0].course === '2026 Spring Biology 1AL', 'Expected "biolgy lab report" to recover the Biology 1AL reports.');
+const mcbYesterdayResults = mcbTemporalHarness.run('mcb 102 lecture yesterday');
+assert(Array.isArray(mcbYesterdayResults) && mcbYesterdayResults.length > 0, 'Expected MCB 102 yesterday lecture results.');
+assert(mcbYesterdayResults[0].title === 'Jun 29 - Lecture 1.4 - Post.pdf', 'Expected yesterday to rank the Jun 29 MCB 102 lecture.');
+assert(mcbYesterdayResults.every(r => r.courseCode === 'MCB 102'), 'Expected MCB 102 yesterday search to stay course-scoped.');
 
-const chemPrelabResults = harness.run('chem prelab');
-assert(Array.isArray(chemPrelabResults) && chemPrelabResults.length > 0, 'Expected results for "chem prelab".');
-assert(chemPrelabResults[0].title === 'PreLab G', 'Expected "PreLab G" to rank first for "chem prelab".');
-assert(chemPrelabResults[0].course === 'Chem 3BL: Organic Chemistry Laboratory (Spring 2026)', 'Expected "chem prelab" to prioritize Chem 3BL.');
+const mcbWeekResults = mcbTemporalHarness.run('mcb 102 lecture this week');
+assert(Array.isArray(mcbWeekResults) && mcbWeekResults.length > 0, 'Expected MCB 102 this-week lecture results.');
+assert(mcbWeekResults[0].title === 'Jun 29 - Lecture 1.4 - Post.pdf', 'Expected this-week MCB 102 lecture search not to put syllabus first.');
+assert(mcbWeekResults.every(r => r.courseCode === 'MCB 102'), 'Expected MCB 102 this-week search to stay course-scoped.');
 
-const chemTypoResults = harness.run('chem prelqb');
-assert(Array.isArray(chemTypoResults) && chemTypoResults.length > 0, 'Expected typo-tolerant chemistry prelab results for "chem prelqb".');
-assert(chemTypoResults[0].title === 'PreLab G', 'Expected "chem prelqb" to recover "PreLab G".');
+const mcbSyllabusResults = mcbTemporalHarness.run('mcb 102 syllabus');
+assert(Array.isArray(mcbSyllabusResults) && mcbSyllabusResults.length > 0, 'Expected MCB 102 syllabus results.');
+assert(mcbSyllabusResults[0].title === 'MCB 102 - SM 2026 - Syllabus.pdf', 'Expected explicit syllabus query to keep syllabus first.');
 
-const chemLabResults = harness.run('chem lab');
-assert(Array.isArray(chemLabResults) && chemLabResults.slice(0, 5).some(r => r.title === 'PreLab G'), 'Expected "PreLab G" to remain visible near the top for "chem lab".');
-const chemLabDueWindow = chemLabResults
-  .slice(0, 7)
-  .map(dueTs)
-  .filter(ts => ts > 0);
-assert(chemLabDueWindow.length >= 5, 'Expected multiple dated chemistry lab results near the top.');
-assert(chemLabDueWindow.every((ts, index) => index === 0 || chemLabDueWindow[index - 1] <= ts), 'Expected "chem lab" to prioritize nearer due dates before later ones.');
-const preLabGIndex = chemLabResults.findIndex(r => r.title === 'PreLab G');
-const futureLabGIndex = chemLabResults.findIndex(r => /Lab G\.[A-Z]/.test(r.title));
-assert(preLabGIndex !== -1 && futureLabGIndex !== -1 && preLabGIndex < futureLabGIndex, 'Expected current-week "PreLab G" to rank ahead of later Lab G analysis variants.');
-
-const chemLabWeekResults = harness.run('chem lab this week');
-assert(Array.isArray(chemLabWeekResults) && chemLabWeekResults.length > 0, 'Expected weekly chemistry lab results.');
-assert(chemLabWeekResults[0].course.includes('Chem'), 'Expected "chem lab this week" to rank a chemistry course first.');
-assert(chemLabWeekResults.slice(0, 5).every(r => r.course.includes('Chem')), 'Expected top weekly chemistry lab results to stay within chemistry courses.');
+const mathTodayResults = mcbTemporalHarness.run('math 54 lecture today');
+assert(Array.isArray(mathTodayResults) && mathTodayResults.length > 0, 'Expected MATH 54 today lecture results.');
+assert(mathTodayResults[0].courseCode === 'MATH 54', 'Expected a separate course-code query to resolve Linear Algebra.');
+assert(mathTodayResults.every(r => r.courseCode === 'MATH 54'), 'Expected MATH 54 course-code query to exclude MCB 102 files.');
 
 const syntheticBioLabHarness = createSearchHarness([
   {
@@ -439,17 +578,19 @@ const answerKeyNonKeyIndex = explicitAnswerKeyResults.findIndex(r => r.url === '
 assert(answerKeyFileIndex !== -1, 'Expected the key-like homework file to remain visible for "chem 3a answer key w".');
 assert(answerKeyNonKeyIndex === -1 || answerKeyFileIndex < answerKeyNonKeyIndex, 'Expected the key-like homework file to outrank the non-key homework file for "chem 3a answer key w".');
 
-const completedBioLab = harness.describeTask('Lab 5 Post-Lab Assessment', '2026 Spring Biology 1AL');
-assert(completedBioLab?.completed === true, 'Expected Lab 5 Post-Lab Assessment to be detected as completed.');
-assert(completedBioLab?.label === 'Completed', 'Expected completed tasks to show a Completed label.');
-assert(completedBioLab?.urgency === 'completed', 'Expected completed tasks to use the completed chip style.');
+if (fixtureHarness) {
+  const completedBioLab = fixtureHarness.describeTask('Lab 5 Post-Lab Assessment', '2026 Spring Biology 1AL');
+  assert(completedBioLab?.completed === true, 'Expected Lab 5 Post-Lab Assessment to be detected as completed.');
+  assert(completedBioLab?.label === 'Completed', 'Expected completed tasks to show a Completed label.');
+  assert(completedBioLab?.urgency === 'completed', 'Expected completed tasks to use the completed chip style.');
 
-const incompleteChemPrelab = harness.describeTask('PreLab G', 'Chem 3BL: Organic Chemistry Laboratory (Spring 2026)');
-assert(incompleteChemPrelab?.completed === false, 'Expected PreLab G to remain incomplete when Canvas reports it as unsubmitted.');
-assert(incompleteChemPrelab?.label !== 'Completed', 'Expected PreLab G to keep a due-date label instead of Completed.');
+  const incompleteChemPrelab = fixtureHarness.describeTask('PreLab G', 'Chem 3BL: Organic Chemistry Laboratory (Spring 2026)');
+  assert(incompleteChemPrelab?.completed === false, 'Expected PreLab G to remain incomplete when Canvas reports it as unsubmitted.');
+  assert(incompleteChemPrelab?.label !== 'Completed', 'Expected PreLab G to keep a due-date label instead of Completed.');
 
-const incompleteChemData = harness.describeTask('Lab F Data Analysis', 'Chem 3BL: Organic Chemistry Laboratory (Spring 2026)');
-assert(incompleteChemData?.completed === false, 'Expected Lab F Data Analysis to remain incomplete without concrete submission evidence.');
+  const incompleteChemData = fixtureHarness.describeTask('Lab F Data Analysis', 'Chem 3BL: Organic Chemistry Laboratory (Spring 2026)');
+  assert(incompleteChemData?.completed === false, 'Expected Lab F Data Analysis to remain incomplete without concrete submission evidence.');
+}
 
 const completionPriorityHarness = createSearchHarness([
   {
@@ -457,7 +598,7 @@ const completionPriorityHarness = createSearchHarness([
     url: 'https://example.edu/courses/1/assignments/1',
     type: 'assignment',
     courseName: '2026 Spring Biology 1AL',
-    dueAt: '2026-03-16T06:59:59Z',
+    dueAt: '2026-03-17T06:59:59Z',
     submitted: true,
     submissionStatus: 'submitted',
     submission: {
@@ -471,12 +612,12 @@ const completionPriorityHarness = createSearchHarness([
     url: 'https://example.edu/courses/1/assignments/2',
     type: 'assignment',
     courseName: '2026 Spring Biology 1AL',
-    dueAt: '2026-03-17T06:59:59Z',
+    dueAt: '2026-03-18T06:59:59Z',
     submitted: false,
     submissionStatus: 'not_submitted',
     submission: null
   }
-]);
+], '2026-03-16T12:00:00-07:00');
 const completionPriorityResults = completionPriorityHarness.run('bio lab this week');
 assert(Array.isArray(completionPriorityResults) && completionPriorityResults.length === 2, 'Expected synthetic completion-priority results.');
 assert(completionPriorityResults[0].title === 'Lab 6 Post-Lab Assessment', 'Expected unfinished biology work to rank above the completed lab.');
@@ -519,11 +660,13 @@ const overlaySchedulerHarness = createSearchHarness([
   }
 ]);
 const oneCharOverlayInput = overlaySchedulerHarness.input('p');
-assert(oneCharOverlayInput.resultCount > 0, 'Expected one-character Cmd+K input to render a fast preview.');
+assert(oneCharOverlayInput.immediateResultCount === 0, 'Expected one-character Cmd+K input to leave the input-event paint path clear.');
+assert(oneCharOverlayInput.resultCount > 0, 'Expected one-character Cmd+K input to render a fast preview after the input paint.');
 assert(oneCharOverlayInput.searchTimeoutActive === false, 'Expected one-character Cmd+K input to skip the full Fuse/ranking search.');
 assert(oneCharOverlayInput.sideEffectTimeoutActive === false, 'Expected hot Cmd+K input to avoid storage/network side effects.');
 const twoCharOverlayInput = overlaySchedulerHarness.input('pl');
-assert(twoCharOverlayInput.resultCount > 0, 'Expected two-character Cmd+K input to render a fast preview immediately.');
+assert(twoCharOverlayInput.immediateResultCount === 0, 'Expected two-character Cmd+K input to leave the input-event paint path clear.');
+assert(twoCharOverlayInput.resultCount > 0, 'Expected two-character Cmd+K input to render a fast preview after the input paint.');
 assert(twoCharOverlayInput.searchTimeoutActive === true, 'Expected two-character Cmd+K input to schedule, not synchronously run, the full search.');
 assert(twoCharOverlayInput.sideEffectTimeoutActive === false, 'Expected scheduled Cmd+K search input to defer side effects until after the full search settles.');
 

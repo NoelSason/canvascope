@@ -18,6 +18,15 @@
   const MODE_PREFIX = 'cs-skin-mode-';
   const EARLY_STYLE_ID = 'cs-skin-early';
 
+  // In subframes, only paint the same-origin LTI tool *launch* page
+  // (/external_tools/...) — a near-blank white auto-submit document that
+  // otherwise shows white inside the themed page while the real tool loads.
+  // Other Canvas subframes (canvadocs/docviewer, speedgrader) are themed by
+  // their own scripts and must not get the full Canvas skin replayed into them.
+  if (window.top !== window.self && !location.pathname.includes('/external_tools/')) {
+    return;
+  }
+
   try {
     const raw = localStorage.getItem(CACHE_KEY);
     if (!raw) return;

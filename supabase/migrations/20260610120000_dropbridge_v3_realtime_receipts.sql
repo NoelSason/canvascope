@@ -16,6 +16,7 @@ create table if not exists public.dropbridge_receipts (
 alter table public.dropbridge_receipts enable row level security;
 
 revoke all on table public.dropbridge_receipts from anon, authenticated;
+grant select, insert on table public.dropbridge_receipts to service_role;
 
 create index if not exists idx_dropbridge_receipts_upload_created
   on public.dropbridge_receipts(upload_id, created_at);

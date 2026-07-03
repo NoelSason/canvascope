@@ -38,10 +38,9 @@
 
   /** Turn [n] markers in rendered markdown into cite pills. */
   function decorateCitations(html, sources) {
-    const sourceByNumber = new Map(sources.map(source => [source.n, source]));
     return html.replace(/\[(\d{1,2})\]/g, (match, num) => {
       const n = Number(num);
-      const source = sourceByNumber.get(n);
+      const source = sources.find(s => s.n === n);
       if (!source) return match;
       return `<button class="brain-cite" data-cite="${n}" title="${escapeHtml(source.title)}">${n}</button>`;
     });
@@ -87,35 +86,179 @@
     if (viewport) viewport.scrollTop = viewport.scrollHeight;
   }
 
-  function createThrottledBrainRenderer(body, sources) {
-    let pendingMarkdown = '';
-    let lastRenderedMarkdown = null;
-    let frame = 0;
-    const scheduleFrame = window.requestAnimationFrame || ((fn) => window.setTimeout(fn, 16));
-    const cancelFrame = window.cancelAnimationFrame || window.clearTimeout;
+  // Questions like "what do I need to get an A" are answered by the deterministic
+  // grade-target calculator (grade-target.js), NOT the LLM — LLMs are unreliable
+  // at the weighted arithmetic. Schedule/policy questions fall through to the
+  // normal retrieval path, which now includes parsed syllabus memory.
+  // True for "what do I need for an A", "what do I need to get a B+", "how do I
+  // get an A", "can I still pass", "what grade do I need", etc. — but NOT for
+  // study/prep questions like "what do I need to study".
+  function isGradeTargetQuestion(q) {
+    const s = String(q || '').toLowerCase();
+    const STUDY = /\bneed\s+to\s+(study|read|review|prepare|prep|do|bring|know|watch|practice|memoriz|finish|submit|turn in)/;
+    if (/\bwhat\s+(?:do|would|will|'?ll)\s+i\s+need\b/.test(s)) return !STUDY.test(s);
+    if (/\bwhat(?:'s| is| do i need)\b.*\bfor\s+(?:an?\s+)?[a-d][+-]?\b/.test(s)) return true;
+    if (/\bhow\s+(?:do|can|could)\s+i\s+(?:get|earn|score|make|pull|secure)\b/.test(s)) return true;
+    if (/\bcan i (?:still )?(?:get|earn|pass|make|score|pull)\b/.test(s)) return true;
+    if (/\bwhat grade\b/.test(s)) return true;
+    if (/\bgrade i need\b/.test(s)) return true;
+    // "need …" anywhere together with an explicit letter target ("for an A").
+    if (/\bneed\b/.test(s) && /\b(?:for|get|getting|earn|make|score)\s+(?:an?\s+)?[a-d][+-]?\b/.test(s)) return true;
+    return false;
+  }
 
-    const render = () => {
-      frame = 0;
-      if (pendingMarkdown === lastRenderedMarkdown) return;
-      lastRenderedMarkdown = pendingMarkdown;
-      body.innerHTML = decorateCitations(deps.markdown(pendingMarkdown), sources);
-      scrollThread();
-    };
+  function parseTargetLetter(q) {
+    const m = String(q).match(/\b(?:get|earn|score|make|want|need)\s+(?:an?\s+)?([A-D][+-]?)\b/i);
+    return m ? m[1].toUpperCase() : 'A';
+  }
 
-    return {
-      update(markdown) {
-        pendingMarkdown = markdown;
-        if (!frame) frame = scheduleFrame(render);
-      },
-      finish(markdown) {
-        pendingMarkdown = markdown;
-        if (frame) {
-          cancelFrame(frame);
-          frame = 0;
-        }
-        render();
-      }
+  // Course names differ across sources — the picker uses indexedContent's
+  // courseName (e.g. "Organic Chemistry Laboratory (Spring 2026)"), the syllabus
+  // parse stores the breadcrumb name ("Chem 3BL"), and Canvas grades use yet
+  // another course.name. Normalize (drop term/year/punctuation) and match
+  // loosely so any of them resolves to the same Canvas courseId.
+  function normName(s) {
+    return String(s || '')
+      .toLowerCase()
+      .replace(/\([^)]*\)/g, ' ')                       // drop "(Spring 2026)"
+      .replace(/\b(spring|summer|fall|winter)\b/g, ' ')
+      .replace(/\b20\d\d\b/g, ' ')
+      .replace(/[^a-z0-9]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+  function nameMatch(a, b) {
+    const x = normName(a), y = normName(b);
+    if (!x || !y) return false;
+    return x === y || x.includes(y) || y.includes(x);
+  }
+
+  // All courses we can identify, with their Canvas courseId, deduped by id.
+  async function collectCourseCandidates() {
+    const out = [];
+    const seen = new Set();
+    const add = (id, name) => {
+      const key = id && String(id);
+      if (!key || seen.has(key)) return;
+      seen.add(key);
+      out.push({ id: key, name: name || '' });
     };
+    try {
+      ((await self.CanvascopeSyllabusMemory?.listCourses?.()) || [])
+        .forEach(c => add(c.courseId, c.courseName));
+    } catch (_) { /* ignore */ }
+    try {
+      const { canvasGradesByCourse = {}, indexedContent = [] } =
+        await chrome.storage.local.get(['canvasGradesByCourse', 'indexedContent']);
+      Object.entries(canvasGradesByCourse).forEach(([id, g]) => add(id, g.name));
+      (Array.isArray(indexedContent) ? indexedContent : [])
+        .forEach(it => { if (it && it.courseId) add(it.courseId, it.courseName); });
+    } catch (_) { /* ignore */ }
+    return out;
+  }
+
+  async function resolveCourseId(name) {
+    if (!name) return null;
+    const cands = await collectCourseCandidates();
+    const exact = cands.find(c => normName(c.name) && normName(c.name) === normName(name));
+    if (exact) return exact.id;
+    const fuzzy = cands.find(c => nameMatch(c.name, name));
+    return fuzzy ? fuzzy.id : null;
+  }
+
+  // When no course is selected, see if the question names one we know about.
+  async function inferCourseFromText(text) {
+    const t = String(text || '').toLowerCase();
+    const cands = (await collectCourseCandidates())
+      .filter(c => c.name)
+      .sort((a, b) => normName(b.name).length - normName(a.name).length); // longest first
+    for (const c of cands) {
+      const n = normName(c.name);
+      if (n && (t.includes(n) || t.includes(String(c.name).toLowerCase()))) return c;
+    }
+    return null;
+  }
+
+  // The course the user is actually looking at — used when the picker is on
+  // "All courses" and the question says "this class". Reads the active Canvas
+  // tab's URL (/courses/<id>) directly.
+  async function activeTabCourse() {
+    try {
+      const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+      const tab = tabs && tabs[0];
+      if (!tab || !tab.url) return null;
+      const u = new URL(tab.url);
+      const m = u.pathname.match(/\/courses\/(\d+)/);
+      if (!m) return null;
+      return { id: m[1], host: u.hostname };
+    } catch (_) { return null; }
+  }
+
+  async function courseNameById(courseId) {
+    const cands = await collectCourseCandidates();
+    const hit = cands.find(c => String(c.id) === String(courseId) && c.name);
+    return hit ? hit.name : '';
+  }
+
+  function fetchGradebook(courseId, host) {
+    return new Promise((resolve) => {
+      try {
+        chrome.runtime.sendMessage({ action: 'csTools.fetchGradebook', courseId, host }, (r) => {
+          void chrome.runtime.lastError;
+          resolve(r);
+        });
+      } catch (_) { resolve(null); }
+    });
+  }
+
+  /**
+   * Handle a grade-target question deterministically. Returns rendered HTML to
+   * display, or null if this isn't a grade-target question.
+   */
+  async function tryGradeTarget(question) {
+    if (!isGradeTargetQuestion(question)) return null;
+    const GT = self.CanvascopeGradeTarget;
+    if (!GT) {
+      // The calculator script isn't loaded — almost always a stale build. Make
+      // it visible instead of silently falling back to the LLM.
+      return deps.markdown('_Grade calculator isn\'t loaded yet. Reload Canvascope at `chrome://extensions`, then close and reopen this panel._');
+    }
+
+    let courseId = courseScope ? await resolveCourseId(courseScope) : null;
+    let courseName = courseScope || '';
+    let host = null;
+    if (!courseId) {
+      const inferred = await inferCourseFromText(question);
+      if (inferred) { courseId = inferred.id; courseName = inferred.name; }
+    }
+    if (!courseId) {
+      // "this class" with the picker on All courses → use the active Canvas tab.
+      const active = await activeTabCourse();
+      if (active) { courseId = active.id; host = active.host; }
+    }
+    if (!courseId) {
+      return deps.markdown('Open the course in Canvas (or pick it from the dropdown above), then ask again.');
+    }
+    if (!courseName) courseName = (await courseNameById(courseId)) || 'this course';
+
+    const gb = await fetchGradebook(courseId, host);
+    if (!gb || !gb.ok || !Array.isArray(gb.assignments) || gb.assignments.length === 0) {
+      return deps.markdown(`I couldn't read your gradebook for **${escapeHtml(courseName)}**. Open the course in Canvas (so I can read it with your session), then ask again.`);
+    }
+
+    const syllabus = (await self.CanvascopeSyllabusMemory?.getCourse?.(courseId)) || {};
+    const result = GT.compute({
+      assignments: gb.assignments,
+      groups: gb.groups,
+      syllabus,
+      targetLetter: parseTargetLetter(question)
+    });
+
+    let answer = GT.formatAnswer(result, courseName);
+    if (result.weightSource === 'canvas' && !(syllabus.gradingScheme && syllabus.gradingScheme.length)) {
+      answer += `\n\n_Based on Canvas's category weights — open this course's syllabus once and I'll use its exact weighting and drop-lowest rules._`;
+    }
+    return deps.markdown(answer);
   }
 
   /**
@@ -135,6 +278,14 @@
     const body = answerBlock.querySelector('.brain-block-body');
 
     try {
+      // Deterministic grade-target path ("what do I need to get an A") — no LLM.
+      const gradeTargetHtml = await tryGradeTarget(question);
+      if (gradeTargetHtml != null) {
+        body.innerHTML = gradeTargetHtml;
+        scrollThread();
+        return;
+      }
+
       const ready = await AIRouter.ensureReady();
       if (!ready.ok) {
         body.innerHTML = deps.markdown('**AI route unavailable.** Sign in from the Canvascope popup to enable cloud fallback, or enable Chrome\'s on-device model.');
@@ -144,22 +295,27 @@
       const { prompt, sources } = await RAGCore.compileBrainPrompt(question, { courseName: courseScope });
 
       // Personalize via the system block only — the corpus/prompt stays
-      // untouched so claude-proxy's prompt cache keeps hitting.
+      // untouched so claude-proxy's prompt cache keeps hitting. The date line
+      // keeps the model from treating a present-day term (e.g. "Summer 2026")
+      // as a future, "not yet active" course and refusing to summarize indexed
+      // materials.
+      const today = new Date().toLocaleDateString('en-US', {
+        weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
+      });
+      const dateBlock = `\n\nToday's date is ${today}. Treat this as the current date for any time-relative question ("this week", "so far"). The student's indexed materials reflect their ACTUAL, current enrollment — never claim a course "hasn't started" or "isn't active yet" based on its term name or your own sense of the year; if sources are present, summarize what they contain.`;
       const profileBlock = (window.StudentProfile && StudentProfile.compileContextBlock()) || '';
-      const system = profileBlock ? AIRouter.getState().systemInstruction + profileBlock : undefined;
+      const system = AIRouter.getState().systemInstruction + dateBlock + profileBlock;
 
       let full = '';
-      const renderer = createThrottledBrainRenderer(body, sources);
       for await (const delta of AIRouter.stream(prompt, { system })) {
         if (body.querySelector('.stream-loader')) body.innerHTML = '';
         full += delta;
-        renderer.update(full);
+        body.innerHTML = decorateCitations(deps.markdown(full), sources);
+        scrollThread();
       }
 
       if (!full.trim()) {
         body.innerHTML = deps.markdown('*No answer was generated. Try rephrasing the question.*');
-      } else {
-        renderer.finish(full);
       }
       renderSourceChips(body.parentElement, sources);
 
@@ -193,146 +349,6 @@
     return ask(`Create a 4-question practice quiz on the most important concepts in ${scopeLabel}. For each question give the answer on the next line in bold. Base every question on the sources.`);
   }
 
-  /** Generate concise, citation-first notes for the current course/PDF scope. */
-  async function studyNotes() {
-    const scopeLabel = courseScope || 'the indexed course materials';
-    return ask(buildStudyNotesPrompt(scopeLabel));
-  }
-
-  function selectionStudyNote(selection, source = {}) {
-    return ask(buildSelectionStudyNotePrompt(selection, source));
-  }
-
-  function buildSelectionStudyNotePrompt(selection, source = {}) {
-    const excerpt = String(selection || '').trim();
-    const safeExcerpt = excerpt.length > 2400
-      ? `${excerpt.slice(0, 2400).trim()}\n… clipped for speed; use Expand context only if the selection is too thin.`
-      : excerpt;
-    const title = String(source.title || source.pageTitle || 'selected course material').trim();
-    const locator = [source.page ? `p. ${source.page}` : '', source.url || '']
-      .filter(Boolean)
-      .join(' · ');
-    return `Turn this selected Canvas/PDF passage into one compact study note. Process only the selected excerpt first so long PDFs and Canvas pages stay responsive; if more context is required, say exactly what is missing.
-
-Source: ${title}${locator ? ` (${locator})` : ''}
-
-Selected excerpt:
-"""
-${safeExcerpt || '[No selection provided]'}
-"""
-
-Use this exact structure:
-- Concept
-- Plain-English explanation
-- Worked example
-- Edge case / common mistake
-- Why it matters for this course
-- Citation chip: include the provided source title/page/URL when available
-- Lectra handoff: one portable Markdown bullet
-Do not invent facts beyond the selected excerpt.`;
-  }
-
-  function buildStudyNotesPrompt(scopeLabel) {
-    const cleanScope = String(scopeLabel || 'the indexed course materials').trim() || 'the indexed course materials';
-    return `Turn ${cleanScope} into actionable study notes. Use this exact structure:
-1. Key concepts — bullets, each with at least one citation like [1].
-2. Plain-English explanation — short and source-grounded.
-3. Worked example — adapt one example from the sources when possible.
-4. Edge cases / common mistakes — what a student is likely to miss.
-5. Likely exam or assignment angle — only if supported by the sources.
-6. Confusion checkpoint — one self-test question that exposes the most likely misunderstanding.
-7. Lectra handoff — 3 portable bullets a student can paste into Lectra.
-Every factual claim must be grounded in the retrieved sources; if the sources are thin, say what is missing instead of guessing.`;
-  }
-
-  function buildAssignmentBridgePrompt(assignment, source = {}) {
-    const assignmentText = String(assignment || '').trim();
-    const clippedAssignment = assignmentText.length > 2000
-      ? `${assignmentText.slice(0, 2000).trim()}\n… clipped for speed; ask for targeted PDF/page context before expanding.`
-      : assignmentText;
-    const title = String(source.title || source.pageTitle || 'course assignment').trim();
-    const course = String(source.course || source.courseName || '').trim();
-    const locator = [course, source.page ? `p. ${source.page}` : '', source.url || '']
-      .filter(Boolean)
-      .join(' · ');
-    return `Bridge this Canvas/PDF assignment context into a Lectra-ready coding/study plan. Work from the provided excerpt first so large course pages stay responsive; request only the missing context needed for the next action.
-
-Source: ${title}${locator ? ` (${locator})` : ''}
-
-Assignment excerpt:
-"""
-${clippedAssignment || '[No assignment excerpt provided]'}
-"""
-
-Use this exact structure:
-1. Goal in one sentence — grounded in the excerpt.
-2. Concepts to review — cite source title/page/URL when available.
-3. Starter examples — one tiny input/output or worked example.
-4. Edge cases / tests — at least three checks a CS student can run.
-5. Commands or files to inspect — include likely notebook, repo, terminal, or PDF handoff steps.
-6. Performance / lag audit — name the largest file/PDF/dataset and how to avoid re-parsing it.
-7. Lectra handoff — 3 portable Markdown bullets to paste into a notebook.
-Do not invent rubric details, due dates, APIs, or requirements not present in the excerpt.`;
-  }
-
-  function buildConceptDrillPrompt(concept, source = {}) {
-    const conceptText = String(concept || '').trim();
-    const clippedConcept = conceptText.length > 1800
-      ? `${conceptText.slice(0, 1800).trim()}\n… clipped for speed; drill the selected concept before expanding to the full PDF/page.`
-      : conceptText;
-    const title = String(source.title || source.pageTitle || 'course concept').trim();
-    const course = String(source.course || source.courseName || '').trim();
-    const locator = [course, source.page ? `p. ${source.page}` : '', source.url || '']
-      .filter(Boolean)
-      .join(' · ');
-    return `Turn this focused course concept into a fast active-recall drill for a CS student. Use only the selected excerpt first so long PDFs, Canvas pages, and generated notes stay responsive.
-
-Source: ${title}${locator ? ` (${locator})` : ''}
-
-Concept excerpt:
-"""
-${clippedConcept || '[No concept excerpt provided]'}
-"""
-
-Use this exact structure:
-1. One-sentence mental model — grounded in the excerpt.
-2. Tiny worked example — include inputs, output, and one intermediate state if applicable.
-3. Recall questions — 3 short questions, each answer hidden on the next line as **Answer:**.
-4. Edge-case trap — the mistake a student is most likely to make.
-5. Performance / lag hook — if this concept touches code, state the input size or repeated operation to watch.
-6. Lectra drill handoff — 3 portable Markdown bullets that can become notebook cells.
-Preserve provided source title/page/URL in the drill; do not invent facts beyond the excerpt.`;
-  }
-
-  function buildCodeTracePrompt(trace, source = {}) {
-    const traceText = String(trace || '').trim();
-    const clippedTrace = traceText.length > 1800
-      ? `${traceText.slice(0, 1800).trim()}\n… clipped for speed; summarize the smallest failing trace before asking for more logs.`
-      : traceText;
-    const title = String(source.title || source.pageTitle || 'course code context').trim();
-    const course = String(source.course || source.courseName || '').trim();
-    const locator = [course, source.page ? `p. ${source.page}` : '', source.url || '']
-      .filter(Boolean)
-      .join(' · ');
-    return `Turn this Canvas/PDF/notebook code trace into a Lectra-ready debugging study note. Prioritize the selected excerpt so long logs, generated notebooks, and large PDFs stay responsive.
-
-Source: ${title}${locator ? ` (${locator})` : ''}
-
-Trace or snippet:
-"""
-${clippedTrace || '[No trace or snippet provided]'}
-"""
-
-Use this exact structure:
-1. Symptom — the key failing line or surprising behavior.
-2. Likely concept — algorithm, data structure, API, or language rule involved.
-3. Minimal reproduction — smallest input, command, or cell to rerun.
-4. Edge-case test — one assertion to add before editing.
-5. Performance / lag audit — note input size, repeated work, or parsing/indexing step to avoid rerunning blindly.
-6. Lectra debug handoff — 3 portable Markdown bullets for a notebook postmortem.
-Preserve provided source title/page/URL; do not invent hidden requirements, stack frames, or rubric details.`;
-  }
-
   function init(dependencies) {
     deps = dependencies;
     const select = $('brain-course-select');
@@ -342,14 +358,5 @@ Preserve provided source title/page/URL; do not invent hidden requirements, stac
     populateCoursePicker();
   }
 
-  window.CourseBrain = {
-    init,
-    ask,
-    quiz,
-    studyNotes,
-    selectionStudyNote,
-    refresh: populateCoursePicker,
-    isBusy: () => busy,
-    __test: { createThrottledBrainRenderer, decorateCitations, buildStudyNotesPrompt, buildSelectionStudyNotePrompt, buildAssignmentBridgePrompt, buildConceptDrillPrompt, buildCodeTracePrompt }
-  };
+  window.CourseBrain = { init, ask, quiz, refresh: populateCoursePicker, isBusy: () => busy };
 })();
