@@ -28,8 +28,37 @@
   if (self.__canvascopeBackgroundExtrasInitialised) return;
   self.__canvascopeBackgroundExtrasInitialised = true;
 
+  try {
+    if (!self.CanvascopeSkinThemes) importScripts('../lib/skin-themes.js');
+  } catch (_) { /* fall back to local tokens below */ }
+
   const GRADES_ALARM = 'cs.grades.sync';
   const GRADES_PERIOD_MIN = 30;
+  const KALTURA_EARLY_FRAME_DEFAULT_SKIN = Object.freeze({
+    enabled: true,
+    themeId: 'canvas-default',
+    mode: 'auto',
+    customTokens: {},
+    followSystem: false,
+    schedule: {
+      enabled: false,
+      darkStart: '19:00',
+      darkEnd: '07:00'
+    }
+  });
+  const KALTURA_EARLY_FRAME_FALLBACK_TOKENS = Object.freeze({
+    bg: '#f8f4ea',
+    surface: '#fdfaf2',
+    border: 'rgba(94,71,45,0.10)',
+    borderHi: 'rgba(94,71,45,0.18)',
+    text: '#2d2925',
+    muted: '#9b8f78',
+    accent: '#b87333'
+  });
+  const kalturaEarlyFrameCssByFrame = new Map();
+  let kalturaEarlyFrameCss = buildKalturaEarlyFrameCss(KALTURA_EARLY_FRAME_FALLBACK_TOKENS, 'light');
+  let kalturaEarlyFrameEnabled = true;
+  let kalturaEarlyFrameRefreshPromise = null;
 
   // -----------------------------------------------------------------------
   // Supabase helpers
@@ -97,6 +126,306 @@
   }
 
   // -----------------------------------------------------------------------
+  // Kaltura embedded LTI anti-FOUC
+  // -----------------------------------------------------------------------
+
+  function normalizeKalturaEarlyFrameSkin(raw) {
+    const source = raw && typeof raw === 'object' ? raw : {};
+    return {
+      ...KALTURA_EARLY_FRAME_DEFAULT_SKIN,
+      ...source,
+      customTokens: source.customTokens && typeof source.customTokens === 'object'
+        ? source.customTokens
+        : {},
+      schedule: {
+        ...KALTURA_EARLY_FRAME_DEFAULT_SKIN.schedule,
+        ...(source.schedule && typeof source.schedule === 'object' ? source.schedule : {})
+      }
+    };
+  }
+
+  function computeKalturaScheduledMode(schedule) {
+    const now = new Date();
+    const minsNow = now.getHours() * 60 + now.getMinutes();
+    const [startHour, startMinute] = String(schedule?.darkStart || '19:00').split(':').map(Number);
+    const [endHour, endMinute] = String(schedule?.darkEnd || '07:00').split(':').map(Number);
+    const start = (Number.isFinite(startHour) ? startHour : 19) * 60 + (Number.isFinite(startMinute) ? startMinute : 0);
+    const end = (Number.isFinite(endHour) ? endHour : 7) * 60 + (Number.isFinite(endMinute) ? endMinute : 0);
+    if (start < end) return minsNow >= start && minsNow < end ? 'dark' : 'light';
+    return minsNow >= start || minsNow < end ? 'dark' : 'light';
+  }
+
+  function getKalturaEarlyFrameMode(skin) {
+    if (skin.mode === 'light' || skin.mode === 'dark') return skin.mode;
+    if (skin.mode === 'scheduled' && skin.schedule?.enabled) {
+      return computeKalturaScheduledMode(skin.schedule);
+    }
+    const themeMode = self.CanvascopeSkinThemes?.getTheme(skin.themeId)?.mode;
+    return themeMode === 'dark' ? 'dark' : 'light';
+  }
+
+  function resolveKalturaEarlyFrameTokens(skin, mode) {
+    const themesApi = self.CanvascopeSkinThemes || null;
+    if (!themesApi) {
+      return {
+        ...KALTURA_EARLY_FRAME_FALLBACK_TOKENS,
+        ...(skin.customTokens || {})
+      };
+    }
+
+    let theme = themesApi.getTheme(skin.themeId) || themesApi.getTheme('canvas-default');
+    if (mode === 'dark' && theme?.mode !== 'dark') theme = themesApi.getTheme('dim') || theme;
+    if (mode === 'light' && theme?.mode !== 'light') theme = themesApi.getTheme('canvas-default') || theme;
+
+    const normalized = themesApi.normalizeTheme({
+      ...theme,
+      tokens: {
+        ...(theme?.tokens || {}),
+        ...(skin.customTokens || {})
+      }
+    });
+
+    return normalized?.tokens || KALTURA_EARLY_FRAME_FALLBACK_TOKENS;
+  }
+
+  function cssValue(value, fallback) {
+    return String(value || fallback).replace(/[;{}<>\n\r]/g, '');
+  }
+
+  function buildKalturaEarlyFrameCss(tokens, mode) {
+    const bg = cssValue(tokens.bg, KALTURA_EARLY_FRAME_FALLBACK_TOKENS.bg);
+    const surface = cssValue(tokens.surface, KALTURA_EARLY_FRAME_FALLBACK_TOKENS.surface);
+    const border = cssValue(tokens.border, KALTURA_EARLY_FRAME_FALLBACK_TOKENS.border);
+    const borderHi = cssValue(tokens.borderHi, KALTURA_EARLY_FRAME_FALLBACK_TOKENS.borderHi);
+    const text = cssValue(tokens.text, KALTURA_EARLY_FRAME_FALLBACK_TOKENS.text);
+    const muted = cssValue(tokens.muted, KALTURA_EARLY_FRAME_FALLBACK_TOKENS.muted);
+    const accent = cssValue(tokens.accent, KALTURA_EARLY_FRAME_FALLBACK_TOKENS.accent);
+    const colorScheme = mode === 'dark' ? 'dark' : 'light';
+
+    return `
+html,
+body {
+  background: ${bg} !important;
+  background-color: ${bg} !important;
+  background-image: none !important;
+  color: ${text} !important;
+  color-scheme: ${colorScheme};
+}
+body,
+body > div,
+#root,
+#app,
+#__next,
+#contentContainer,
+.contentContainer,
+.tlh-container,
+.page-wrap,
+main,
+.eventplatform,
+.gallery,
+[class*="galleryContainer"],
+[class*="GalleryContainer"],
+[class*="pageContainer"],
+[class*="PageContainer"],
+[class*="container"],
+[class*="Container"],
+[class*="wrapper"],
+[class*="Wrapper"],
+.panel,
+.panel-body,
+.well,
+.tab-content,
+.row,
+[style*="background: white"],
+[style*="background-color: white"],
+[style*="background-color:#fff"],
+[style*="background-color: #fff"],
+[style*="background-color: rgb(255, 255, 255)"] {
+  background-color: transparent !important;
+}
+input,
+select,
+textarea,
+.form-control,
+[class*="searchInput"],
+[class*="SearchInput"],
+[class*="searchForm"] {
+  background-color: ${surface} !important;
+  color: ${text} !important;
+  border-color: ${borderHi} !important;
+}
+input::placeholder,
+textarea::placeholder {
+  color: ${muted} !important;
+}
+hr,
+.nav-tabs,
+[class*="divider"],
+[class*="Divider"] {
+  border-color: ${border} !important;
+}
+.nav-tabs > li.active > a,
+.nav-tabs > li > a:hover {
+  border-bottom-color: ${accent} !important;
+  color: ${text} !important;
+}
+.btn-default,
+.btn:not(.btn-primary):not([class*="primary"]):not([class*="Primary"]) {
+  background-color: ${surface} !important;
+  color: ${text} !important;
+  border-color: ${borderHi} !important;
+}
+[class*="humbnail"] [class*="itle"],
+[class*="humbnail"] [class*="ntryName"],
+[class*="humbnail"] [class*="uration"],
+[class*="humbnail"] [class*="escription"],
+[class*="humbnail"] a,
+[class*="humb"] [class*="itle"],
+[class*="_tile"] [class*="itle"],
+[class*="oster"] [class*="itle"],
+[class*="oster"] [class*="ntryName"],
+[class*="oster"] [class*="escription"],
+[class*="oster"] [class*="uration"],
+[class*="oster"] [class*="ount"],
+[class*="oster"] a,
+[class*="layerContainer"] [class*="itle"],
+[class*="layerContainer"] [class*="ntryName"],
+[class*="layerContainer"] [class*="escription"],
+[class*="layerContainer"] [class*="uration"],
+[class*="layerContainer"] [class*="ount"],
+[class*="layerContainer"] a,
+[class*="mediaContainer"] [class*="itle"],
+[class*="mediaContainer"] [class*="ntryName"],
+[class*="mediaContainer"] [class*="escription"],
+[class*="mediaContainer"] [class*="uration"],
+[class*="mediaContainer"] [class*="ount"],
+[class*="mediaContainer"] a,
+[class*="ngagement"] a,
+[class*="ngagement"] [class*="ount"],
+[class*="ntryStats"] a,
+[class*="ntryStats"] [class*="ount"],
+.photo-group [class*="itle"],
+.photo-group .name,
+.entry-title,
+a.entry-title,
+.cb-entry-title {
+  color: #ffffff !important;
+  text-shadow: 0 1px 3px rgba(0,0,0,0.9) !important;
+}
+`;
+  }
+
+  async function refreshKalturaEarlyFrameCss() {
+    try {
+      const { canvasSkin } = await chrome.storage.local.get(['canvasSkin']);
+      const skin = normalizeKalturaEarlyFrameSkin(canvasSkin);
+      kalturaEarlyFrameEnabled = skin.enabled !== false;
+      if (!kalturaEarlyFrameEnabled) return;
+      const mode = getKalturaEarlyFrameMode(skin);
+      const tokens = resolveKalturaEarlyFrameTokens(skin, mode);
+      kalturaEarlyFrameCss = buildKalturaEarlyFrameCss(tokens, mode);
+    } catch (error) {
+      console.warn('[Canvascope Kaltura Skin] Failed to refresh early-frame CSS:', String(error?.message || error));
+    }
+  }
+
+  function queueKalturaEarlyFrameCssRefresh() {
+    if (!kalturaEarlyFrameRefreshPromise) {
+      kalturaEarlyFrameRefreshPromise = refreshKalturaEarlyFrameCss()
+        .finally(() => { kalturaEarlyFrameRefreshPromise = null; });
+    }
+    return kalturaEarlyFrameRefreshPromise;
+  }
+
+  function isKalturaFrameUrl(rawUrl) {
+    try {
+      const host = new URL(rawUrl).hostname.toLowerCase();
+      return host === 'kaf.berkeley.edu'
+        || host === 'kaf.kaltura.com'
+        || host.endsWith('.kaf.kaltura.com')
+        || host === 'mediaspace.kaltura.com'
+        || host.endsWith('.mediaspace.kaltura.com');
+    } catch {
+      return false;
+    }
+  }
+
+  function kalturaFrameKey(tabId, frameId) {
+    return `${tabId}:${frameId}`;
+  }
+
+  async function injectKalturaEarlyFrameCss(details) {
+    if (!kalturaEarlyFrameEnabled || !kalturaEarlyFrameCss) return;
+    const tabId = Number(details?.tabId);
+    const frameId = Number(details?.frameId);
+    if (!Number.isInteger(tabId) || tabId < 0 || !Number.isInteger(frameId) || frameId < 0) return;
+
+    const css = kalturaEarlyFrameCss;
+    try {
+      await chrome.scripting.insertCSS({
+        target: { tabId, frameIds: [frameId] },
+        css,
+        origin: 'USER'
+      });
+      kalturaEarlyFrameCssByFrame.set(kalturaFrameKey(tabId, frameId), css);
+    } catch (error) {
+      const message = String(error?.message || error || '');
+      if (!/cannot access|missing host permission|cannot be scripted|frame with id|no tab with id/i.test(message)) {
+        console.warn('[Canvascope Kaltura Skin] Failed to inject early-frame CSS:', message);
+      }
+    }
+  }
+
+  async function removeKalturaEarlyFrameCss(sender) {
+    const tabId = Number(sender?.tab?.id);
+    const frameId = Number(sender?.frameId);
+    if (!Number.isInteger(tabId) || tabId < 0 || !Number.isInteger(frameId) || frameId < 0) {
+      return { ok: false, reason: 'missing-frame' };
+    }
+
+    const key = kalturaFrameKey(tabId, frameId);
+    const css = kalturaEarlyFrameCssByFrame.get(key);
+    if (!css) return { ok: true, removed: false };
+
+    try {
+      await chrome.scripting.removeCSS({
+        target: { tabId, frameIds: [frameId] },
+        css,
+        origin: 'USER'
+      });
+      kalturaEarlyFrameCssByFrame.delete(key);
+      return { ok: true, removed: true };
+    } catch (error) {
+      const message = String(error?.message || error || '');
+      if (/frame with id|no tab with id|cannot access|missing host permission/i.test(message)) {
+        kalturaEarlyFrameCssByFrame.delete(key);
+        return { ok: true, removed: false };
+      }
+      return { ok: false, reason: message };
+    }
+  }
+
+  function attachKalturaEarlyFrameCssInjection() {
+    if (!chrome.webNavigation?.onCommitted || !chrome.scripting?.insertCSS) return;
+    chrome.webNavigation.onCommitted.addListener((details) => {
+      if (!isKalturaFrameUrl(details?.url)) return;
+      void injectKalturaEarlyFrameCss(details);
+    }, {
+      url: [
+        { schemes: ['http', 'https'], hostEquals: 'kaf.berkeley.edu' },
+        { schemes: ['http', 'https'], hostContains: 'kaf.kaltura.com' },
+        { schemes: ['http', 'https'], hostContains: 'mediaspace.kaltura.com' }
+      ]
+    });
+    chrome.tabs?.onRemoved?.addListener?.((tabId) => {
+      const prefix = `${tabId}:`;
+      for (const key of Array.from(kalturaEarlyFrameCssByFrame.keys())) {
+        if (key.startsWith(prefix)) kalturaEarlyFrameCssByFrame.delete(key);
+      }
+    });
+  }
+
+  // -----------------------------------------------------------------------
   // Tools sync (notes / todos / GPA scenarios)
   // -----------------------------------------------------------------------
 
@@ -104,7 +433,16 @@
     dashboardNotes:    { table: 'user_dashboard_notes',   column: 'notes_json' },
     customTodos:       { table: 'user_custom_todos',      column: 'todos_json' },
     gpaScenarios:      { table: 'user_gpa_scenarios',     column: 'scenarios_json' },
-    reminderPrefs:     { table: 'user_reminder_prefs',    column: 'prefs_json'   }
+    reminderPrefs:     { table: 'user_reminder_prefs',    column: 'prefs_json'   },
+    // Autonomous agent state (prefs, kill switch, last briefing, memory notes).
+    // Rides the existing pull-on-login / debounced-push sync for free.
+    agentState:        { table: 'agent_state',            column: 'state_json'   },
+    // Parsed syllabus memory (grading scheme, cutoffs, schedule), keyed by
+    // courseId. Powers the grade-target calculator + schedule Q&A.
+    syllabusMemory:    { table: 'user_syllabi',           column: 'syllabi_json' },
+    // Character Profile: consent flags + dismissed ids + source-attributed
+    // derived summaries (content-light). Local-first, synced when signed in.
+    characterProfile:  { table: 'character_profile',      column: 'profile_json' }
   };
 
   let toolsPushTimers = {};
@@ -137,21 +475,85 @@
     return { ok: true };
   }
 
+  function timestampMs(value) {
+    if (!value) return 0;
+    const t = new Date(value).getTime();
+    return Number.isFinite(t) ? t : 0;
+  }
+
+  function resolveToolPullValue(key, local, remote, remoteUpdatedAt) {
+    if (remote == null) return { action: 'skip' };
+    if (key !== 'characterProfile') return { action: 'applyRemote', value: remote };
+
+    const hasLocal = local && typeof local === 'object';
+    if (!hasLocal) return { action: 'applyRemote', value: remote };
+
+    const localMs = timestampMs(local.updatedAt);
+    const remoteMs = Math.max(timestampMs(remote?.updatedAt), timestampMs(remoteUpdatedAt));
+    if (localMs > remoteMs) {
+      return { action: 'keepLocal', value: local, reason: 'local-newer' };
+    }
+    if (localMs === remoteMs && local.enabled === false && remote?.enabled !== false) {
+      return { action: 'keepLocal', value: local, reason: 'local-opt-out-tie' };
+    }
+    return { action: 'applyRemote', value: remote };
+  }
+
   async function pullTools() {
     const sb = getSupabase(); if (!sb) return { ok: false, reason: 'no-supabase' };
     const uid = await currentUserId();
     if (!uid) return { ok: false, reason: 'no-auth' };
     const updates = {};
+    const keptLocal = [];
     for (const [key, cfg] of Object.entries(TOOLS_TABLES)) {
       const { data, error } = await sb.from(cfg.table)
         .select(`${cfg.column}, updated_at`).eq('user_id', uid).maybeSingle();
       if (error || !data) continue;
       const remote = data[cfg.column];
-      if (remote != null) updates[key] = remote;
+      const local = key === 'characterProfile'
+        ? (await chrome.storage.local.get([key]))[key]
+        : undefined;
+      const resolved = resolveToolPullValue(key, local, remote, data.updated_at);
+      if (resolved.action === 'applyRemote') {
+        updates[key] = resolved.value;
+      } else if (resolved.action === 'keepLocal') {
+        keptLocal.push(key);
+        await pushToolsNow(key, resolved.value);
+      }
     }
     if (Object.keys(updates).length > 0) await chrome.storage.local.set(updates);
-    return { ok: true, pulled: Object.keys(updates) };
+    return { ok: true, pulled: Object.keys(updates), keptLocal };
   }
+
+  // -----------------------------------------------------------------------
+  // Agent sync glue — exposed for the agent modules (agent-loop / agent-tools).
+  // pushKey reuses the debounced tools sync; appendAudit inserts an immutable
+  // row into agent_audit (insert, not upsert).
+  // -----------------------------------------------------------------------
+  async function appendAuditRemote(entry) {
+    const sb = getSupabase(); if (!sb) return { ok: false, reason: 'no-supabase' };
+    const uid = await currentUserId();
+    if (!uid) return { ok: false, reason: 'no-auth' };
+    const { error } = await sb.from('agent_audit').insert({
+      user_id: uid,
+      run_id: entry.runId || null,
+      ts: entry.ts ? new Date(entry.ts).toISOString() : new Date().toISOString(),
+      tool: entry.tool || null,
+      input: entry.input ?? null,
+      result: entry.result ?? null,
+      status: entry.status || null,
+      undoable: !!entry.undoable,
+      undo_ref: entry.undo_ref ?? null
+    });
+    if (error) return { ok: false, reason: error.message };
+    return { ok: true };
+  }
+
+  self.CanvascopeAgentSync = {
+    pushKey: (key, value) => pushToolsDebounced(key, value),
+    appendAudit: (entry) => appendAuditRemote(entry).catch(() => { /* best-effort */ }),
+    _resolveToolPullValue: resolveToolPullValue
+  };
 
   // -----------------------------------------------------------------------
   // csTools.fetchGrades — scrape current grades from Canvas
@@ -209,6 +611,79 @@
         letter
       };
     }).filter(c => c.name);
+  }
+
+  // -----------------------------------------------------------------------
+  // csTools.fetchGradebook — per-assignment grades for ONE course
+  // -----------------------------------------------------------------------
+  //
+  // The overall-grade scrape above only yields the course's computed total.
+  // The grade-target calculator ("what do I need to get an A") needs the
+  // per-assignment scores + assignment-group structure so it can apply the
+  // syllabus weights and drop-lowest rules. Same cookie-bearing strategy.
+  //
+  function parseNextLink(linkHeader) {
+    if (!linkHeader) return null;
+    const part = linkHeader.split(',').find(s => /rel="next"/.test(s));
+    if (!part) return null;
+    const m = part.match(/<([^>]+)>/);
+    return m ? m[1] : null;
+  }
+
+  async function fetchCanvasJsonAll(url) {
+    const out = [];
+    let next = url;
+    let guard = 0;
+    while (next && guard < 40) {
+      guard++;
+      const res = await fetch(next, { credentials: 'include', headers: { 'Accept': 'application/json' } });
+      if (!res.ok) break;
+      const text = await res.text();
+      const cleaned = text.startsWith('while(1);') ? text.slice(9) : text;
+      let arr;
+      try { arr = JSON.parse(cleaned); } catch { break; }
+      if (!Array.isArray(arr) || arr.length === 0) break;
+      out.push(...arr);
+      next = parseNextLink(res.headers.get('Link'));
+    }
+    return out;
+  }
+
+  async function fetchCourseGradebook(host, courseId) {
+    const base = `https://${host}/api/v1/courses/${courseId}`;
+    const [assignmentsRaw, groupsRaw] = await Promise.all([
+      fetchCanvasJsonAll(`${base}/assignments?include[]=submission&per_page=100`),
+      fetchCanvasJsonAll(`${base}/assignment_groups?per_page=100`)
+    ]);
+    const assignments = assignmentsRaw.map(a => ({
+      id: a.id,
+      name: a.name,
+      assignment_group_id: a.assignment_group_id,
+      points_possible: a.points_possible,
+      omit_from_final_grade: !!a.omit_from_final_grade,
+      due_at: a.due_at || null,
+      score: (a.submission && a.submission.score != null) ? a.submission.score : null
+    }));
+    const groups = groupsRaw.map(g => ({
+      id: g.id,
+      name: g.name,
+      group_weight: g.group_weight,
+      rules: g.rules || null
+    }));
+    return { ok: true, host, courseId: String(courseId), assignments, groups };
+  }
+
+  // Resolve the host (if the caller didn't supply one) by trying each known
+  // Canvas host until a course returns gradebook data.
+  async function fetchGradebookAnyHost(courseId, host) {
+    const hosts = host ? [host] : await knownCanvasHosts();
+    for (const h of hosts) {
+      try {
+        const r = await fetchCourseGradebook(h, courseId);
+        if (r.assignments.length || r.groups.length) return r;
+      } catch (_) { /* try next host */ }
+    }
+    return { ok: false, courseId: String(courseId), assignments: [], groups: [], message: 'no gradebook found' };
   }
 
   function percentToLetter(p) {
@@ -289,6 +764,10 @@
         lookupIndexRank(msg.href).then(sendResponse).catch(() => sendResponse({ found: false }));
         return true;
       }
+      case 'csKaltura.removeEarlyFrameCss': {
+        removeKalturaEarlyFrameCss(_sender).then(sendResponse).catch(err => sendResponse({ ok: false, message: String(err) }));
+        return true;
+      }
       case 'csTools.push': {
         pushToolsDebounced(msg.key, msg.value);
         sendResponse({ ok: true, queued: true });
@@ -300,6 +779,12 @@
       }
       case 'csTools.fetchGrades': {
         fetchGradesAllHosts().then(sendResponse).catch(err => sendResponse({ ok: false, message: String(err) }));
+        return true;
+      }
+      case 'csTools.fetchGradebook': {
+        fetchGradebookAnyHost(msg.courseId, msg.host)
+          .then(sendResponse)
+          .catch(err => sendResponse({ ok: false, message: String(err) }));
         return true;
       }
       case 'csReminders.scheduleOnce': {
@@ -331,6 +816,12 @@
       }
     }
     return false;
+  });
+
+  chrome.storage.onChanged.addListener((changes, areaName) => {
+    if (areaName === 'local' && changes.canvasSkin) {
+      queueKalturaEarlyFrameCssRefresh().catch(() => { /* ignore */ });
+    }
   });
 
   // -----------------------------------------------------------------------
@@ -373,6 +864,8 @@
   // -----------------------------------------------------------------------
 
   (async () => {
+    attachKalturaEarlyFrameCssInjection();
+    queueKalturaEarlyFrameCssRefresh().catch(() => { /* keep fallback CSS */ });
     try {
       const existing = await chrome.alarms.get(GRADES_ALARM);
       if (!existing) {

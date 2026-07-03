@@ -1,0 +1,1147 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1080, height=1920" />
+    <title>Canvascope Brag</title>
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <script src="assets/music/audio-data.js"></script>
+    <style>
+      :root {
+        --bg: #07090f;
+        --bg1: #0b0e15;
+        --bg2: #11141d;
+        --bg3: #181c28;
+        --line: #232837;
+        --lineHi: #32384a;
+        --text: #edf0f8;
+        --text2: #a9afbf;
+        --text3: #747b8f;
+        --accent: #b9a5ff;
+        --accentDeep: #8f78ef;
+        --ok: #6fce9a;
+        --warn: #e8b770;
+        --bad: #e57373;
+        --audio-rms: 0.2;
+        --grid-alpha: 0.12;
+        --glow-alpha: 0.2;
+        --panel-alpha: 0.14;
+        --soft-alpha: 0.08;
+        --halo-size: 42px;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        width: 1080px;
+        height: 1920px;
+        overflow: hidden;
+        background: #07090f;
+        color: var(--text);
+        font-family: sans-serif;
+        font-variant-numeric: tabular-nums;
+        letter-spacing: 0;
+      }
+
+      #root {
+        position: relative;
+        width: 1080px;
+        height: 1920px;
+        overflow: hidden;
+      }
+
+      .clip {
+        position: absolute;
+        inset: 0;
+        width: 1080px;
+        height: 1920px;
+        overflow: hidden;
+      }
+
+      #bg-layer {
+        background:
+          radial-gradient(circle at 78% 8%, rgba(185, 165, 255, 0.22), transparent 280px),
+          radial-gradient(circle at 18% 86%, rgba(111, 206, 154, 0.12), transparent 260px),
+          #07090f;
+      }
+
+      .grid {
+        position: absolute;
+        inset: 0;
+        opacity: var(--grid-alpha);
+        background-image:
+          linear-gradient(rgba(185, 165, 255, 0.16) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(185, 165, 255, 0.16) 1px, transparent 1px);
+        background-size: 72px 72px;
+        transform: skewY(-7deg) scale(1.2);
+        transform-origin: center;
+      }
+
+      .scanline {
+        position: absolute;
+        left: -8%;
+        width: 116%;
+        height: 2px;
+        background: linear-gradient(90deg, transparent, rgba(185, 165, 255, 0.9), transparent);
+        opacity: 0.5;
+        box-shadow: 0 0 24px rgba(185, 165, 255, 0.5);
+      }
+
+      .scanline.one {
+        top: 310px;
+      }
+
+      .scanline.two {
+        bottom: 410px;
+      }
+
+      .corner {
+        position: absolute;
+        width: 150px;
+        height: 150px;
+        border-color: rgba(185, 165, 255, 0.62);
+        opacity: 0.72;
+      }
+
+      .corner.tl {
+        left: 54px;
+        top: 54px;
+        border-left: 3px solid;
+        border-top: 3px solid;
+      }
+
+      .corner.tr {
+        right: 54px;
+        top: 54px;
+        border-right: 3px solid;
+        border-top: 3px solid;
+      }
+
+      .corner.bl {
+        left: 54px;
+        bottom: 54px;
+        border-left: 3px solid;
+        border-bottom: 3px solid;
+      }
+
+      .corner.br {
+        right: 54px;
+        bottom: 54px;
+        border-right: 3px solid;
+        border-bottom: 3px solid;
+      }
+
+      .scene {
+        padding: 104px 76px;
+      }
+
+      .kicker {
+        font-family: monospace;
+        font-size: 22px;
+        line-height: 1;
+        text-transform: uppercase;
+        color: var(--accent);
+        letter-spacing: 0;
+      }
+
+      .headline {
+        margin: 22px 0 0;
+        color: var(--text);
+        font-size: 82px;
+        line-height: 0.98;
+        font-weight: 820;
+        letter-spacing: 0;
+      }
+
+      .headline span {
+        display: block;
+      }
+
+      .subcopy {
+        margin: 24px 0 0;
+        max-width: 850px;
+        color: var(--text2);
+        font-size: 31px;
+        line-height: 1.25;
+        font-weight: 430;
+      }
+
+      .hud {
+        position: absolute;
+        left: 76px;
+        right: 76px;
+        bottom: 90px;
+        display: flex;
+        justify-content: space-between;
+        gap: 16px;
+        color: var(--text3);
+        font-family: monospace;
+        font-size: 20px;
+        text-transform: uppercase;
+      }
+
+      .brand-lock {
+        display: flex;
+        align-items: center;
+        gap: 18px;
+      }
+
+      .brand-lock img {
+        width: 76px;
+        height: 76px;
+        object-fit: contain;
+        filter: drop-shadow(0 0 var(--halo-size) rgba(185, 165, 255, var(--glow-alpha)));
+      }
+
+      .brand-name {
+        font-size: 44px;
+        font-weight: 760;
+      }
+
+      .command-shell {
+        position: absolute;
+        left: 76px;
+        right: 76px;
+        top: 430px;
+        height: 1100px;
+        border: 2px solid rgba(185, 165, 255, 0.22);
+        background: rgba(11, 14, 21, 0.94);
+        box-shadow:
+          0 42px 140px rgba(0, 0, 0, 0.42),
+          0 0 var(--halo-size) rgba(185, 165, 255, var(--panel-alpha));
+        border-radius: 8px;
+        overflow: hidden;
+      }
+
+      .popup-topbar,
+      .panel-topbar {
+        height: 92px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 18px;
+        padding: 0 30px;
+        background: var(--bg1);
+        border-bottom: 2px solid var(--line);
+      }
+
+      .mini-brand {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        font-size: 28px;
+        font-weight: 700;
+      }
+
+      .mini-brand img {
+        width: 42px;
+        height: 42px;
+      }
+
+      .icon-row {
+        display: flex;
+        gap: 8px;
+      }
+
+      .icon-dot {
+        width: 34px;
+        height: 34px;
+        border: 2px solid var(--lineHi);
+        border-radius: 6px;
+        background: var(--bg2);
+      }
+
+      .greeting {
+        padding: 34px 32px 22px;
+      }
+
+      .date-line {
+        font-family: monospace;
+        font-size: 19px;
+        color: var(--text3);
+        text-transform: uppercase;
+      }
+
+      .hello {
+        margin-top: 10px;
+        font-size: 50px;
+        line-height: 1;
+        font-weight: 780;
+      }
+
+      .meta {
+        margin-top: 10px;
+        color: var(--text2);
+        font-size: 25px;
+      }
+
+      .search-box {
+        margin: 22px 32px 18px;
+        height: 76px;
+        border: 2px solid var(--lineHi);
+        border-radius: 8px;
+        background: var(--bg2);
+        display: flex;
+        align-items: center;
+        gap: 18px;
+        padding: 0 22px;
+        font-size: 28px;
+        color: var(--text);
+      }
+
+      .search-glyph {
+        width: 32px;
+        height: 32px;
+        border: 3px solid var(--accent);
+        border-radius: 50%;
+        position: relative;
+        flex: 0 0 auto;
+      }
+
+      .search-glyph::after {
+        content: "";
+        position: absolute;
+        width: 14px;
+        height: 3px;
+        right: -10px;
+        bottom: 0;
+        background: var(--accent);
+        transform: rotate(45deg);
+        border-radius: 3px;
+      }
+
+      .query {
+        position: relative;
+        display: inline-block;
+        transform-origin: left center;
+      }
+
+      .cursor {
+        width: 3px;
+        height: 34px;
+        background: var(--accent);
+        opacity: 0.9;
+      }
+
+      .chips {
+        display: flex;
+        gap: 12px;
+        margin: 0 32px 24px;
+      }
+
+      .chip {
+        padding: 12px 18px;
+        border-radius: 999px;
+        border: 2px solid var(--line);
+        background: var(--bg2);
+        color: var(--text2);
+        font-size: 20px;
+        font-weight: 650;
+      }
+
+      .chip.active {
+        color: var(--accent);
+        border-color: rgba(185, 165, 255, 0.42);
+        background: rgba(185, 165, 255, 0.13);
+      }
+
+      .result-list {
+        display: grid;
+        gap: 14px;
+        padding: 0 32px;
+      }
+
+      .result {
+        min-height: 118px;
+        border: 2px solid var(--line);
+        background: rgba(17, 20, 29, 0.92);
+        border-radius: 8px;
+        padding: 20px 20px;
+        display: grid;
+        grid-template-columns: 62px 1fr auto;
+        align-items: center;
+        gap: 18px;
+      }
+
+      .result-icon {
+        width: 54px;
+        height: 54px;
+        border-radius: 8px;
+        display: grid;
+        place-items: center;
+        color: var(--bg);
+        font-size: 22px;
+        font-weight: 820;
+      }
+
+      .result-title {
+        color: var(--text);
+        font-size: 27px;
+        line-height: 1.08;
+        font-weight: 760;
+      }
+
+      .result-meta {
+        margin-top: 8px;
+        color: var(--text3);
+        font-size: 19px;
+      }
+
+      .tag {
+        font-family: monospace;
+        color: var(--text3);
+        font-size: 17px;
+        text-transform: uppercase;
+      }
+
+      .rail {
+        position: absolute;
+        left: 32px;
+        right: 32px;
+        bottom: 24px;
+        height: 56px;
+        display: grid;
+        grid-template-columns: 1fr 1.2fr 0.9fr;
+        gap: 12px;
+      }
+
+      .rail-pill {
+        border: 2px solid var(--line);
+        background: var(--bg2);
+        border-radius: 8px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 0 14px;
+        color: var(--text2);
+        font-size: 19px;
+      }
+
+      .dot {
+        width: 13px;
+        height: 13px;
+        border-radius: 50%;
+        background: var(--ok);
+        box-shadow: 0 0 18px rgba(111, 206, 154, 0.6);
+        flex: 0 0 auto;
+      }
+
+      .sidepanel {
+        position: absolute;
+        left: 92px;
+        right: 92px;
+        top: 420px;
+        height: 1120px;
+        border: 2px solid rgba(185, 165, 255, 0.22);
+        border-radius: 8px;
+        background: rgba(7, 9, 15, 0.95);
+        box-shadow:
+          0 44px 150px rgba(0, 0, 0, 0.45),
+          0 0 var(--halo-size) rgba(185, 165, 255, var(--panel-alpha));
+        overflow: hidden;
+      }
+
+      .view-tab {
+        padding: 12px 16px;
+        border-radius: 6px;
+        border: 2px solid rgba(185, 165, 255, 0.36);
+        color: var(--accent);
+        font-size: 20px;
+        font-weight: 700;
+        background: rgba(185, 165, 255, 0.12);
+      }
+
+      .context-banner {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 16px;
+        padding: 22px 30px;
+        border-bottom: 2px solid var(--line);
+      }
+
+      .select {
+        height: 54px;
+        border: 2px solid var(--lineHi);
+        border-radius: 8px;
+        display: flex;
+        align-items: center;
+        padding: 0 18px;
+        color: var(--text);
+        background: var(--bg2);
+        font-size: 23px;
+      }
+
+      .corpus {
+        height: 54px;
+        display: flex;
+        align-items: center;
+        color: var(--text3);
+        font-family: monospace;
+        font-size: 18px;
+      }
+
+      .bubble {
+        margin: 30px;
+        border: 2px solid var(--line);
+        border-radius: 8px;
+        background: var(--bg2);
+        padding: 24px;
+      }
+
+      .turn {
+        color: var(--text3);
+        font-family: monospace;
+        text-transform: uppercase;
+        font-size: 17px;
+        margin-bottom: 12px;
+      }
+
+      .bubble h3 {
+        margin: 0;
+        font-size: 34px;
+        line-height: 1.08;
+      }
+
+      .bubble p {
+        margin: 14px 0 0;
+        color: var(--text2);
+        font-size: 25px;
+        line-height: 1.28;
+      }
+
+      .prompt {
+        margin: 0 30px;
+        border: 2px solid rgba(185, 165, 255, 0.32);
+        border-radius: 8px;
+        background: rgba(185, 165, 255, 0.1);
+        color: var(--text);
+        padding: 20px 22px;
+        font-size: 27px;
+        line-height: 1.2;
+      }
+
+      .answer {
+        margin: 20px 30px;
+        border: 2px solid var(--line);
+        border-radius: 8px;
+        background: rgba(17, 20, 29, 0.94);
+        padding: 24px;
+      }
+
+      .answer-title {
+        color: var(--ok);
+        font-size: 28px;
+        font-weight: 780;
+      }
+
+      .answer-copy {
+        margin-top: 12px;
+        color: var(--text);
+        font-size: 27px;
+        line-height: 1.24;
+      }
+
+      .source-row {
+        display: flex;
+        gap: 12px;
+        margin: 20px 30px 0;
+      }
+
+      .source {
+        flex: 1;
+        min-height: 74px;
+        border: 2px solid var(--lineHi);
+        border-radius: 8px;
+        background: var(--bg2);
+        padding: 14px 14px;
+        color: var(--text2);
+        font-size: 19px;
+        line-height: 1.12;
+      }
+
+      .source b {
+        color: var(--accent);
+      }
+
+      .dock {
+        position: absolute;
+        left: 30px;
+        right: 30px;
+        bottom: 30px;
+        height: 86px;
+        border: 2px solid var(--lineHi);
+        border-radius: 8px;
+        background: var(--bg2);
+        color: var(--text3);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 24px;
+        font-size: 23px;
+      }
+
+      .send {
+        width: 52px;
+        height: 52px;
+        border-radius: 8px;
+        background: var(--accent);
+        color: #181226;
+        display: grid;
+        place-items: center;
+        font-weight: 900;
+      }
+
+      .data-grid {
+        position: absolute;
+        inset: 430px 76px 220px;
+        display: grid;
+        grid-template-rows: 1fr auto;
+        gap: 24px;
+      }
+
+      .doc-stage {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 20px;
+      }
+
+      .doc-card,
+      .planner-card,
+      .bridge-card {
+        border: 2px solid var(--line);
+        border-radius: 8px;
+        background: rgba(17, 20, 29, 0.93);
+        padding: 24px;
+        box-shadow: 0 0 var(--halo-size) rgba(185, 165, 255, var(--soft-alpha));
+      }
+
+      .doc-card {
+        min-height: 690px;
+      }
+
+      .card-label {
+        font-family: monospace;
+        text-transform: uppercase;
+        color: var(--text3);
+        font-size: 18px;
+      }
+
+      .card-title {
+        margin-top: 14px;
+        font-size: 34px;
+        line-height: 1.05;
+        font-weight: 800;
+      }
+
+      .page-stack {
+        margin-top: 26px;
+        display: grid;
+        gap: 14px;
+      }
+
+      .page-line {
+        height: 64px;
+        border-radius: 6px;
+        background: var(--bg3);
+        border: 2px solid var(--line);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 16px;
+        color: var(--text2);
+        font-size: 20px;
+      }
+
+      .ocr-hit {
+        color: var(--warn);
+        font-family: monospace;
+        font-size: 17px;
+      }
+
+      .planner-card {
+        min-height: 690px;
+      }
+
+      .block-list {
+        display: grid;
+        gap: 14px;
+        margin-top: 28px;
+      }
+
+      .study-block {
+        border-radius: 8px;
+        border: 2px solid var(--line);
+        background: rgba(7, 9, 15, 0.65);
+        padding: 16px;
+        display: grid;
+        grid-template-columns: 74px 1fr;
+        gap: 16px;
+      }
+
+      .time {
+        color: var(--accent);
+        font-family: monospace;
+        font-size: 19px;
+      }
+
+      .task {
+        color: var(--text);
+        font-size: 22px;
+        line-height: 1.16;
+      }
+
+      .wide-strip {
+        border: 2px solid rgba(111, 206, 154, 0.35);
+        border-radius: 8px;
+        background: rgba(111, 206, 154, 0.08);
+        padding: 22px 24px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        color: var(--ok);
+        font-size: 26px;
+        font-weight: 760;
+      }
+
+      .bridge-layout {
+        position: absolute;
+        inset: 430px 76px 210px;
+        display: grid;
+        grid-template-rows: auto 1fr;
+        gap: 22px;
+      }
+
+      .bridge-card {
+        display: grid;
+        grid-template-columns: 1.2fr 0.8fr;
+        gap: 20px;
+        min-height: 360px;
+      }
+
+      .bridge-title {
+        font-size: 48px;
+        line-height: 1;
+        font-weight: 830;
+      }
+
+      .guardrail {
+        margin-top: 22px;
+        display: flex;
+        gap: 14px;
+        flex-wrap: wrap;
+      }
+
+      .guard {
+        border: 2px solid var(--lineHi);
+        border-radius: 8px;
+        color: var(--text2);
+        padding: 12px 14px;
+        font-size: 20px;
+      }
+
+      .device {
+        border: 3px solid rgba(185, 165, 255, 0.5);
+        border-radius: 8px;
+        background: #0b0e15;
+        display: grid;
+        place-items: center;
+        color: var(--accent);
+        font-size: 26px;
+        font-weight: 800;
+        box-shadow: inset 0 0 44px rgba(185, 165, 255, 0.12);
+      }
+
+      .receipt-list {
+        display: grid;
+        gap: 14px;
+      }
+
+      .receipt {
+        min-height: 94px;
+        border: 2px solid var(--line);
+        border-radius: 8px;
+        background: rgba(17, 20, 29, 0.92);
+        padding: 18px 20px;
+        display: grid;
+        grid-template-columns: 42px 1fr auto;
+        align-items: center;
+        gap: 16px;
+      }
+
+      .receipt .status-dot {
+        width: 26px;
+        height: 26px;
+        border-radius: 50%;
+        background: var(--ok);
+        box-shadow: 0 0 22px rgba(111, 206, 154, 0.56);
+      }
+
+      .receipt-title {
+        font-size: 26px;
+        font-weight: 760;
+      }
+
+      .receipt-meta {
+        color: var(--text3);
+        font-size: 18px;
+        margin-top: 4px;
+      }
+
+      .receipt-code {
+        color: var(--text3);
+        font-family: monospace;
+        font-size: 17px;
+      }
+
+      .final-lock {
+        position: absolute;
+        inset: 0;
+        display: grid;
+        align-content: center;
+        justify-items: start;
+        padding: 0 76px;
+      }
+
+      .final-logo {
+        width: 130px;
+        height: 130px;
+        filter: drop-shadow(0 0 var(--halo-size) rgba(185, 165, 255, var(--glow-alpha)));
+      }
+
+      .final-title {
+        margin-top: 30px;
+        font-size: 92px;
+        line-height: 0.92;
+        font-weight: 870;
+      }
+
+      .final-line {
+        margin-top: 28px;
+        font-size: 38px;
+        line-height: 1.16;
+        color: var(--text2);
+        max-width: 800px;
+      }
+
+      .privacy {
+        margin-top: 42px;
+        display: inline-flex;
+        align-items: center;
+        gap: 12px;
+        padding: 16px 20px;
+        border: 2px solid rgba(111, 206, 154, 0.38);
+        background: rgba(111, 206, 154, 0.08);
+        color: var(--ok);
+        border-radius: 8px;
+        font-size: 23px;
+        font-weight: 720;
+      }
+
+      .wash {
+        position: absolute;
+        inset: 0;
+        background: rgba(185, 165, 255, 0.08);
+        opacity: 0;
+        pointer-events: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="canvascope-brag"
+      data-start="0"
+      data-width="1080"
+      data-height="1920"
+      data-duration="21.4"
+      data-fps="30"
+    >
+      <div id="bg-layer" class="clip" data-start="0" data-duration="21.4" data-track-index="0">
+        <div class="grid" id="grid"></div>
+        <div class="scanline one" id="scan-one" data-layout-allow-overflow></div>
+        <div class="scanline two" id="scan-two" data-layout-allow-overflow></div>
+        <div class="corner tl"></div>
+        <div class="corner tr"></div>
+        <div class="corner bl"></div>
+        <div class="corner br"></div>
+      </div>
+
+      <section id="scene-hook" class="clip scene" data-start="0" data-duration="2.7" data-track-index="1">
+        <div class="brand-lock" id="hook-brand">
+          <img src="assets/icons/logo.png" alt="" />
+          <div class="brand-name">Canvascope</div>
+        </div>
+        <div class="kicker" id="hook-kicker">v10.1 / local-first academic stack</div>
+        <h1 class="headline" id="hook-title">
+          <span>Your LMS finally has</span>
+          <span>a command center.</span>
+        </h1>
+        <p class="subcopy" id="hook-copy">Search, ask, plan, annotate, and move course files without losing the source trail.</p>
+        <div class="hud" id="hook-hud">
+          <span>Chrome MV3</span>
+          <span>Canvas + Brightspace</span>
+        </div>
+      </section>
+
+      <section id="scene-search" class="clip scene" data-start="2.7" data-duration="4.3" data-track-index="1">
+        <div class="kicker" id="search-kicker">1 / instant course retrieval</div>
+        <h2 class="headline" id="search-title">Search the stack.</h2>
+        <div class="command-shell" id="popup-shell">
+          <div class="popup-topbar">
+            <div class="mini-brand"><img src="assets/icons/logo.png" alt="" />Canvascope</div>
+            <div class="icon-row"><span class="icon-dot"></span><span class="icon-dot"></span><span class="icon-dot"></span></div>
+          </div>
+          <div class="greeting">
+            <div class="date-line">Today / Organic Chemistry</div>
+            <div class="hello">Hi, there.</div>
+            <div class="meta">4 urgent items, 38 indexed records</div>
+          </div>
+          <div class="search-box" id="search-box">
+            <span class="search-glyph"></span>
+            <span class="query" id="query">enzyme kinetics</span>
+            <span class="cursor"></span>
+          </div>
+          <div class="chips" id="chips">
+            <span class="chip active">All</span>
+            <span class="chip">Due</span>
+            <span class="chip">Assignments</span>
+            <span class="chip">PDFs</span>
+          </div>
+          <div class="result-list">
+            <div class="result result-one">
+              <div class="result-icon" style="background: var(--accent)">PDF</div>
+              <div><div class="result-title">Lecture 12: enzyme kinetics</div><div class="result-meta">PDF page 4 / cached locally</div></div>
+              <div class="tag">0.03s</div>
+            </div>
+            <div class="result result-two">
+              <div class="result-icon" style="background: var(--warn)">HW</div>
+              <div><div class="result-title">Problem Set 7 due Friday</div><div class="result-meta">Assignment / course-aware rank</div></div>
+              <div class="tag">Due</div>
+            </div>
+            <div class="result result-three">
+              <div class="result-icon" style="background: var(--ok)">QZ</div>
+              <div><div class="result-title">Quick Practice Quiz</div><div class="result-meta">Grounded in indexed sources</div></div>
+              <div class="tag">Ask</div>
+            </div>
+          </div>
+          <div class="rail">
+            <div class="rail-pill"><span class="dot"></span><span>Synced</span></div>
+            <div class="rail-pill"><span class="dot"></span><span>DropBridge receiver ready</span></div>
+            <div class="rail-pill"><span>Local index</span></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="scene-ask" class="clip scene" data-start="7" data-duration="4.2" data-track-index="1">
+        <div class="kicker" id="ask-kicker">2 / cited AI that knows the page</div>
+        <h2 class="headline" id="ask-title">Ask with sources.</h2>
+        <div class="sidepanel" id="sidepanel">
+          <div class="panel-topbar">
+            <div class="mini-brand"><img src="assets/icons/logo.png" alt="" />Canvascope <span style="color: var(--text3); font-family: monospace; font-size: 20px">AI</span></div>
+            <div class="view-tab">Ask</div>
+          </div>
+          <div class="context-banner">
+            <div class="select">Organic Chemistry Lab</div>
+            <div class="corpus">138 SOURCES</div>
+          </div>
+          <div class="bubble" id="intro-bubble">
+            <div class="turn">Canvascope</div>
+            <h3>Ask anything across your course.</h3>
+            <p>I answer from your courses and the page you're on - with sources you can click.</p>
+          </div>
+          <div class="prompt" id="prompt">What do I need to understand before Friday's kinetics lab?</div>
+          <div class="answer" id="answer">
+            <div class="answer-title">Start with Michaelis-Menten, then review inhibition.</div>
+            <div class="answer-copy">Your lab handout stresses Vmax vs Km, and the quiz review asks you to compare competitive and noncompetitive inhibition [1] [2].</div>
+          </div>
+          <div class="source-row" id="sources">
+            <div class="source"><b>[1]</b> Lab 7 PDF, page 4</div>
+            <div class="source"><b>[2]</b> Quiz review notes</div>
+          </div>
+          <div class="dock"><span>Ask anything across your course...</span><span class="send">-></span></div>
+        </div>
+      </section>
+
+      <section id="scene-docs" class="clip scene" data-start="11.2" data-duration="4.6" data-track-index="1">
+        <div class="kicker" id="docs-kicker">3 / PDFs, OCR, planner</div>
+        <h2 class="headline" id="docs-title">The hidden files become usable.</h2>
+        <div class="data-grid">
+          <div class="doc-stage">
+            <div class="doc-card" id="doc-card">
+              <div class="card-label">offline document parser</div>
+              <div class="card-title">PDF pages cached in chrome.storage.local</div>
+              <div class="page-stack">
+                <div class="page-line page-one"><span>Page 2 / lab safety</span><span class="ocr-hit">TEXT</span></div>
+                <div class="page-line page-two"><span>Page 4 / enzyme chart</span><span class="ocr-hit">OCR HIT</span></div>
+                <div class="page-line page-three"><span>Page 7 / due rubric</span><span class="ocr-hit">SOURCE [3]</span></div>
+              </div>
+            </div>
+            <div class="planner-card" id="planner-card">
+              <div class="card-label">smart planner</div>
+              <div class="card-title">Deadlines become study blocks.</div>
+              <div class="block-list">
+                <div class="study-block block-one"><span class="time">Mon</span><span class="task">Read Lab 7 PDF and mark unknown terms</span></div>
+                <div class="study-block block-two"><span class="time">Wed</span><span class="task">Practice inhibition problems</span></div>
+                <div class="study-block block-three"><span class="time">Fri</span><span class="task">Submit pre-lab before section</span></div>
+              </div>
+            </div>
+          </div>
+          <div class="wide-strip" id="quiz-strip"><span>Quick Practice Quiz</span><span>grounded in indexed course context</span></div>
+        </div>
+      </section>
+
+      <section id="scene-bridge" class="clip scene" data-start="15.8" data-duration="3.4" data-track-index="1">
+        <div class="kicker" id="bridge-kicker">4 / Lectra handoff</div>
+        <h2 class="headline" id="bridge-head">Send the reading to iPad.</h2>
+        <div class="bridge-layout">
+          <div class="bridge-card" id="bridge-card">
+            <div>
+              <div class="card-label">Canvascope -> Lectra</div>
+              <div class="bridge-title">Send PDF to Lectra</div>
+              <div class="guardrail">
+                <span class="guard">PDF signature check</span>
+                <span class="guard">25 MB guardrail</span>
+                <span class="guard">synced_items row</span>
+              </div>
+            </div>
+            <div class="device">Lectra iPad</div>
+          </div>
+          <div class="receipt-list" id="receipts">
+            <div class="receipt receipt-one"><span class="status-dot"></span><div><div class="receipt-title">wake_broadcasted</div><div class="receipt-meta">Realtime receiver woke in the background</div></div><span class="receipt-code">15.82s</span></div>
+            <div class="receipt receipt-two"><span class="status-dot"></span><div><div class="receipt-title">claimed</div><div class="receipt-meta">Targeted claim by uploadId</div></div><span class="receipt-code">18.01s</span></div>
+            <div class="receipt receipt-three"><span class="status-dot"></span><div><div class="receipt-title">signed_url_issued</div><div class="receipt-meta">Browser download handoff ready</div></div><span class="receipt-code">18.55s</span></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="scene-final" class="clip scene" data-start="19.2" data-duration="2.2" data-track-index="1">
+        <div class="final-lock">
+          <img class="final-logo" id="final-logo" src="assets/icons/logo.png" alt="" />
+          <div class="kicker" id="final-kicker">Canvascope 10.1</div>
+          <div class="final-title" id="final-title">Turn Canvas into an AI study hub.</div>
+          <div class="final-line" id="final-line">Cited course answers, instant PDF search, deadline insights, and smarter planning for every class.</div>
+          <div class="privacy" id="privacy-pill"><span class="dot"></span><span>local-first by default</span></div>
+        </div>
+      </section>
+
+      <div class="wash" id="wash"></div>
+
+      <audio id="bg-music" src="assets/music/happy-beats-business-moves-vol-10-by-ende-dot-app.mp3" data-start="0" data-duration="21.4" data-track-index="10" data-volume="0.32"></audio>
+      <audio id="sfx-hook" src="assets/sfx/impact/impactSoft_medium_001.ogg" data-start="0.22" data-duration="0.18" data-track-index="11" data-volume="0.68"></audio>
+      <audio id="sfx-search-click" src="assets/sfx/interface/click_003.ogg" data-start="3.05" data-duration="0.03" data-track-index="12" data-volume="0.72"></audio>
+      <audio id="sfx-search-drop" src="assets/sfx/interface/drop_001.ogg" data-start="4.12" data-duration="0.11" data-track-index="13" data-volume="0.64"></audio>
+      <audio id="sfx-result-one" src="assets/sfx/ui/click2.ogg" data-start="4.65" data-duration="0.09" data-track-index="14" data-volume="0.58"></audio>
+      <audio id="sfx-result-two" src="assets/sfx/ui/click2.ogg" data-start="5.18" data-duration="0.09" data-track-index="15" data-volume="0.58"></audio>
+      <audio id="sfx-ask" src="assets/sfx/interface/drop_001.ogg" data-start="7.65" data-duration="0.11" data-track-index="16" data-volume="0.58"></audio>
+      <audio id="sfx-sources" src="assets/sfx/interface/click_003.ogg" data-start="10.22" data-duration="0.03" data-track-index="17" data-volume="0.62"></audio>
+      <audio id="sfx-docs" src="assets/sfx/impact/impactSoft_medium_001.ogg" data-start="11.55" data-duration="0.18" data-track-index="18" data-volume="0.60"></audio>
+      <audio id="sfx-ocr" src="assets/sfx/interface/click_003.ogg" data-start="13.12" data-duration="0.03" data-track-index="19" data-volume="0.62"></audio>
+      <audio id="sfx-bridge" src="assets/sfx/casino/card-slide-1.ogg" data-start="15.82" data-duration="0.61" data-track-index="20" data-volume="0.55"></audio>
+      <audio id="sfx-receipt-one" src="assets/sfx/interface/click_003.ogg" data-start="16.65" data-duration="0.03" data-track-index="21" data-volume="0.58"></audio>
+      <audio id="sfx-receipt-two" src="assets/sfx/interface/click_003.ogg" data-start="17.47" data-duration="0.03" data-track-index="22" data-volume="0.58"></audio>
+      <audio id="sfx-receipt-three" src="assets/sfx/impact/impactSoft_medium_001.ogg" data-start="18.55" data-duration="0.18" data-track-index="23" data-volume="0.66"></audio>
+      <audio id="sfx-final" src="assets/sfx/impact/impactBell_heavy_000.ogg" data-start="20.19" data-duration="0.47" data-track-index="24" data-volume="0.72"></audio>
+    </div>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+
+      var root = document.getElementById("root");
+      var audioData = window.CANVASCOPE_AUDIO_DATA || { fps: 30, frames: [] };
+      var fps = audioData.fps || 30;
+      var duration = 21.4;
+
+      function setAudioFrame(frame) {
+        if (!frame) return;
+        var rms = Math.max(0, Math.min(1, frame.rms || 0));
+        var bass = Math.max(0, Math.min(1, (frame.bands && frame.bands[0]) || rms));
+        root.style.setProperty("--audio-rms", rms.toFixed(3));
+        root.style.setProperty("--grid-alpha", (0.1 + rms * 0.1).toFixed(3));
+        root.style.setProperty("--glow-alpha", (0.18 + bass * 0.22).toFixed(3));
+        root.style.setProperty("--panel-alpha", (0.11 + bass * 0.16).toFixed(3));
+        root.style.setProperty("--soft-alpha", (0.06 + bass * 0.1).toFixed(3));
+        root.style.setProperty("--halo-size", Math.round(34 + bass * 54) + "px");
+      }
+
+      var tl = gsap.timeline({ paused: true, defaults: { ease: "power3.out" } });
+
+      for (var f = 0; f <= Math.floor(duration * fps); f += 1) {
+        var frame = audioData.frames[f];
+        tl.call(
+          (function (captured) {
+            return function () {
+              setAudioFrame(captured);
+            };
+          })(frame),
+          [],
+          f / fps,
+        );
+      }
+
+      tl.from("#scan-one", { y: -120, opacity: 0, duration: 1.2, ease: "power2.out" }, 0);
+      tl.from("#scan-two", { y: 120, opacity: 0, duration: 1.2, ease: "power2.out" }, 0.08);
+      tl.from("#hook-brand", { y: 34, opacity: 0, duration: 0.42 }, 0.12);
+      tl.from("#hook-kicker", { y: 28, opacity: 0, duration: 0.38 }, 0.38);
+      tl.from("#hook-title span", { y: 72, opacity: 0, duration: 0.56, stagger: 0.12, ease: "power4.out" }, 0.58);
+      tl.from("#hook-copy", { y: 34, opacity: 0, duration: 0.45 }, 1.42);
+      tl.from("#hook-hud span", { y: 22, opacity: 0, duration: 0.35, stagger: 0.08 }, 1.72);
+      tl.to("#scene-hook", { opacity: 0, duration: 0.22, ease: "power2.in" }, 2.55);
+
+      tl.from("#search-kicker", { y: 28, opacity: 0, duration: 0.36, immediateRender: false }, 2.8);
+      tl.from("#search-title", { y: 58, opacity: 0, duration: 0.5, immediateRender: false }, 2.94);
+      tl.from("#popup-shell", { y: 120, scale: 0.96, opacity: 0, duration: 0.66, ease: "back.out(1.4)", immediateRender: false }, 3.12);
+      tl.from("#query", { scaleX: 0.02, opacity: 0.2, duration: 0.72, transformOrigin: "left center", immediateRender: false }, 3.66);
+      tl.from("#chips .chip", { y: 24, opacity: 0, duration: 0.34, stagger: 0.06, immediateRender: false }, 4.12);
+      tl.from(".result-one", { x: -58, opacity: 0, duration: 0.42, immediateRender: false }, 4.64); // beat-grid
+      tl.from(".result-two", { x: -58, opacity: 0, duration: 0.42, immediateRender: false }, 5.18); // beat-grid
+      tl.from(".result-three", { x: -58, opacity: 0, duration: 0.42, immediateRender: false }, 5.74); // beat-grid
+      tl.from(".rail-pill", { y: 28, opacity: 0, duration: 0.34, stagger: 0.08, immediateRender: false }, 6.12);
+      tl.to("#scene-search", { opacity: 0, duration: 0.26, ease: "power2.in" }, 6.86);
+
+      tl.from("#ask-kicker", { y: 28, opacity: 0, duration: 0.36, immediateRender: false }, 7.1);
+      tl.from("#ask-title", { y: 58, opacity: 0, duration: 0.48, immediateRender: false }, 7.22);
+      tl.from("#sidepanel", { y: 130, scale: 0.97, opacity: 0, duration: 0.66, ease: "back.out(1.3)", immediateRender: false }, 7.42);
+      tl.from("#intro-bubble", { y: 36, opacity: 0, duration: 0.38, immediateRender: false }, 7.92);
+      tl.from("#prompt", { x: 42, opacity: 0, duration: 0.38, immediateRender: false }, 8.58);
+      tl.from("#answer", { y: 44, opacity: 0, duration: 0.48, immediateRender: false }, 9.16);
+      tl.from("#sources .source", { y: 28, opacity: 0, duration: 0.36, stagger: 0.12, immediateRender: false }, 10.22);
+      tl.to("#scene-ask", { opacity: 0, duration: 0.24, ease: "power2.in" }, 11.06);
+
+      tl.from("#docs-kicker", { y: 28, opacity: 0, duration: 0.36, immediateRender: false }, 11.3);
+      tl.from("#docs-title", { y: 58, opacity: 0, duration: 0.5, immediateRender: false }, 11.42);
+      tl.from("#doc-card", { x: -70, opacity: 0, duration: 0.54, immediateRender: false }, 11.72);
+      tl.from("#planner-card", { x: 70, opacity: 0, duration: 0.54, immediateRender: false }, 11.9);
+      tl.from(".page-one", { y: 28, opacity: 0, duration: 0.3, immediateRender: false }, 12.56);
+      tl.from(".page-two", { y: 28, opacity: 0, duration: 0.3, immediateRender: false }, 13.11); // beat-grid
+      tl.from(".page-three", { y: 28, opacity: 0, duration: 0.3, immediateRender: false }, 13.64); // beat-grid
+      tl.from(".block-one", { y: 30, opacity: 0, duration: 0.32, immediateRender: false }, 13.82);
+      tl.from(".block-two", { y: 30, opacity: 0, duration: 0.32, immediateRender: false }, 14.2);
+      tl.from(".block-three", { y: 30, opacity: 0, duration: 0.32, immediateRender: false }, 14.73);
+      tl.from("#quiz-strip", { y: 36, opacity: 0, duration: 0.44, immediateRender: false }, 15.18);
+      tl.to("#scene-docs", { opacity: 0, duration: 0.22, ease: "power2.in" }, 15.66);
+
+      tl.from("#bridge-kicker", { y: 28, opacity: 0, duration: 0.32, immediateRender: false }, 15.86);
+      tl.from("#bridge-head", { y: 58, opacity: 0, duration: 0.45, immediateRender: false }, 15.98); // beat-locked: 15.82s
+      tl.from("#bridge-card", { y: 80, scale: 0.97, opacity: 0, duration: 0.52, ease: "back.out(1.25)", immediateRender: false }, 16.22);
+      tl.from(".receipt-one", { x: -60, opacity: 0, duration: 0.34, immediateRender: false }, 16.65);
+      tl.from(".receipt-two", { x: -60, opacity: 0, duration: 0.34, immediateRender: false }, 17.47);
+      tl.from(".receipt-three", { x: -60, opacity: 0, duration: 0.34, immediateRender: false }, 18.55); // beat-locked: 18.55s
+      tl.to("#wash", { opacity: 1, duration: 0.08, ease: "none" }, 19.1);
+      tl.to("#wash", { opacity: 0, duration: 0.18, ease: "power2.out" }, 19.18);
+      tl.to("#scene-bridge", { opacity: 0, duration: 0.2, ease: "power2.in" }, 19.12);
+
+      tl.from("#final-logo", { scale: 0.58, opacity: 0, duration: 0.5, ease: "back.out(1.7)", immediateRender: false }, 19.32);
+      tl.from("#final-kicker", { y: 30, opacity: 0, duration: 0.36, immediateRender: false }, 19.66);
+      tl.from("#final-title", { y: 70, opacity: 0, duration: 0.58, ease: "power4.out", immediateRender: false }, 19.86);
+      tl.from("#final-line", { y: 38, opacity: 0, duration: 0.46, immediateRender: false }, 20.28); // beat-locked: 20.19s
+      tl.from("#privacy-pill", { y: 28, opacity: 0, duration: 0.38, immediateRender: false }, 20.72);
+      tl.to("#bg-music", { volume: 0.18, duration: 0.72, ease: "power2.out" }, 20.62);
+
+      window.__timelines["canvascope-brag"] = tl;
+    </script>
+  </body>
+</html>

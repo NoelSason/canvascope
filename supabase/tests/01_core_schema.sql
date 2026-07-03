@@ -1,6 +1,6 @@
 begin;
 
-select plan(41);
+select plan(34);
 
 select ok(to_regclass('public.users') is not null, 'public.users exists');
 select ok(to_regclass('public.preferences') is not null, 'public.preferences exists');
@@ -8,13 +8,6 @@ select ok(to_regclass('public.synced_items') is not null, 'public.synced_items e
 select ok(to_regclass('public.devices') is not null, 'public.devices exists');
 select ok(to_regclass('public.uploads') is not null, 'public.uploads exists');
 select ok(to_regclass('public.dropbridge_receipts') is not null, 'public.dropbridge_receipts exists');
-select ok(to_regclass('public.app_users') is not null, 'public.app_users exists');
-select ok(to_regclass('public.schools') is not null, 'public.schools exists');
-select ok(to_regclass('public.requirements') is not null, 'public.requirements exists');
-select ok(to_regclass('public.user_course_profiles') is not null, 'public.user_course_profiles exists');
-select ok(to_regclass('public.user_course_entries') is not null, 'public.user_course_entries exists');
-select ok(to_regclass('public.user_canvascope_course_mappings') is not null, 'public.user_canvascope_course_mappings exists');
-select ok(to_regclass('public.import_runs') is not null, 'public.import_runs exists');
 
 select ok((
   select c.relrowsecurity

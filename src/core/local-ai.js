@@ -288,7 +288,8 @@ class LocalAIController {
   }
 
   /**
-   * Streams an answer from the claude-proxy Edge Function (Claude Fable 5).
+   * Streams an answer from the claude-proxy Edge Function (Claude Haiku 4.5 —
+   * the cheapest tool-capable model; Fable 5 is never used).
    * `corpus` is the byte-stable course corpus that the proxy marks for prompt
    * caching, so repeat questions in a session reuse it at ~10% input price.
    * Yields text deltas parsed from the Anthropic SSE stream.
@@ -314,6 +315,7 @@ class LocalAIController {
         'Authorization': `Bearer ${authRes.accessToken}`
       },
       body: JSON.stringify({
+        model: 'claude-haiku-4-5',
         prompt: promptText,
         system: systemInstruction,
         corpus,

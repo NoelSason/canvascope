@@ -2,6 +2,9 @@ import { corsHeaders, json } from "../_shared/cors.ts";
 import { admin, requireUuid } from "../_shared/device-auth.ts";
 import { HttpError, requireAuthUser } from "../_shared/auth-user.ts";
 import { recordDropBridgeReceipt } from "../_shared/dropbridge-receipts.ts";
+import { broadcastDropBridgeEvent } from "../_shared/dropbridge-realtime.ts";
+
+const UPLOAD_STATUS_EVENT = "upload_status";
 
 type ClaimUploadV2Payload = {
   deviceId?: string;
@@ -92,7 +95,7 @@ Deno.serve(async (request) => {
       .eq("device_id", deviceId)
       .eq("status", "queued")
       .gt("expires_at", nowIso)
-      .select("id, file_name, object_path, mime_type, size_bytes, created_at, expires_at")
+      .select("id, file_name, object_path, mime_type, size_bytes, created_at, expires_at, sender_device_id")
       .maybeSingle();
 
     if (claimError) {
@@ -116,6 +119,23 @@ Deno.serve(async (request) => {
         clientKind: requestedClientKind,
       },
     });
+
+    if (claimedUpload.sender_device_id) {
+      await broadcastDropBridgeEvent({
+        userId: user.id,
+        deviceId: claimedUpload.sender_device_id,
+        event: UPLOAD_STATUS_EVENT,
+        payload: {
+          uploadId: claimedUpload.id,
+          status: "claimed",
+          stage: "claimed",
+          detail: {
+            receiverDeviceId: deviceId,
+            clientKind: requestedClientKind,
+          },
+        },
+      });
+    }
 
     const { data: signedData, error: signedError } = await admin.storage
       .from("drops")
@@ -141,6 +161,24 @@ Deno.serve(async (request) => {
         ttlSeconds: 60 * 5,
       },
     });
+
+    if (claimedUpload.sender_device_id) {
+      await broadcastDropBridgeEvent({
+        userId: user.id,
+        deviceId: claimedUpload.sender_device_id,
+        event: UPLOAD_STATUS_EVENT,
+        payload: {
+          uploadId: claimedUpload.id,
+          status: "signed_url_issued",
+          stage: "signed_url_issued",
+          detail: {
+            receiverDeviceId: deviceId,
+            clientKind: requestedClientKind,
+            ttlSeconds: 60 * 5,
+          },
+        },
+      });
+    }
 
     return json({
       ok: true,

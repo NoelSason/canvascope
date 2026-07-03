@@ -49,6 +49,28 @@
   function getSkinApi()  { return window.CanvascopeSkin || null; }
   function getToolsApi() { return window.CanvascopeAcademicTools || null; }
 
+  // -------------------------------------------------------------------------
+  // Developer-only commands. These are gated to a single signed-in account so
+  // they never surface (or run) for regular users. The email comes from the
+  // authenticated Supabase session (via background checkAuthStatus), so it is a
+  // trustworthy source of identity for hiding dev tooling.
+  // -------------------------------------------------------------------------
+  const CS_DEV_EMAIL = 'noel_sason@berkeley.edu';
+  function getSignedInEmail(ctx) {
+    return String(ctx?.authStatus?.user?.email || '').trim().toLowerCase();
+  }
+  function isDevUser(ctx) {
+    return getSignedInEmail(ctx) === CS_DEV_EMAIL;
+  }
+  function devRestrictedResult(cmd) {
+    return [{
+      kind: 'guidance', command: cmd,
+      title: 'Restricted command',
+      subtitle: 'This developer command is limited to the Canvascope dev account.',
+      icon: 'warn'
+    }];
+  }
+
   function buildCommands() {
     return [
       cmdTheme(),
@@ -65,11 +87,13 @@
       cmdRemind(),
       cmdSync(),
       cmdReload(),
+      cmdClearSyllabus(),
       cmdZen(),
       cmdAutopilot(),
       cmdAsk(),
       cmdPlan(),
-      cmdQuiz()
+      cmdQuiz(),
+      cmdBriefing()
     ];
   }
 
@@ -108,6 +132,26 @@
           subtitle: q ? 'Answers from your indexed course content, with sources.' : 'Type a question after /ask, or browse in the sidepanel.',
           icon: 'bolt', badge: 'AI',
           onSelect: () => openSidepanel({ view: 'brain', question: q || null }, ctx)
+        }];
+      }
+    };
+  }
+
+  function cmdBriefing() {
+    return {
+      order: 21, id: 'cs-briefing', primaryAlias: 'briefing',
+      aliases: ['agent', 'today', 'morning'],
+      title: 'Daily Briefing',
+      description: 'Your study agent reviews deadlines + grades and plans your day.',
+      keywords: ['briefing', 'agent', 'today', 'morning', 'daily', 'summary', 'plan'],
+      icon: 'bolt', badge: 'AI', needsArgument: false,
+      buildResults(arg, ctx) {
+        return [{
+          kind: 'action',
+          title: 'Run Daily Briefing',
+          subtitle: 'Surfaces what matters today and sets up study todos / blocks.',
+          icon: 'bolt', badge: 'AI',
+          onSelect: () => openSidepanel({ view: 'brain', action: 'briefing', run: true }, ctx)
         }];
       }
     };
@@ -159,7 +203,7 @@
   //           which calls chrome.runtime.reload().
   // -------------------------------------------------------------------------
   function cmdReload() {
-    return {
+    const cmd = {
       order: 999, id: 'cs-reload', primaryAlias: 'reload',
       hidden: true,
       aliases: ['rl', 'reloadext', 'refresh-extension'],
@@ -167,7 +211,8 @@
       description: 'Reload the extension (useful while iterating on CSS/JS).',
       keywords: ['reload', 'refresh', 'restart', 'extension', 'dev'],
       icon: 'arrows-rotate', badge: 'Dev', needsArgument: false,
-      buildResults() {
+      buildResults(arg, ctx) {
+        if (!isDevUser(ctx)) return devRestrictedResult(cmd);
         return [{
           kind: 'action',
           id: 'cs-reload-go',
@@ -185,6 +230,54 @@
         }];
       }
     };
+    return cmd;
+  }
+
+  // -------------------------------------------------------------------------
+  // /resetsyllabus — dev helper. Forgets every dismissed/synced syllabus so the
+  //                  Syllabus Autopilot prompt can fire again on a page you've
+  //                  already answered, without reloading the extension.
+  // -------------------------------------------------------------------------
+  function cmdClearSyllabus() {
+    const cmd = {
+      order: 998, id: 'cs-reset-syllabus', primaryAlias: 'resetsyllabus',
+      hidden: true,
+      aliases: ['clearsyllabus', 'syllabusreset', 'retrysyllabus', 'forgetsyllabus'],
+      title: 'Reset Syllabus Autopilot memory',
+      description: 'Forget dismissed syllabi so the prompt can appear again.',
+      keywords: ['syllabus', 'autopilot', 'reset', 'clear', 'memory', 'retry', 'dev'],
+      icon: 'arrows-rotate', badge: 'Dev', needsArgument: false,
+      buildResults(arg, ctx) {
+        if (!isDevUser(ctx)) return devRestrictedResult(cmd);
+        return [{
+          kind: 'action',
+          id: 'cs-reset-syllabus-go',
+          title: 'Reset Syllabus Autopilot memory',
+          subtitle: 'Clears dismissals so the prompt can re-appear on this page.',
+          icon: 'arrows-rotate',
+          onSelect: () => {
+            try {
+              const clear = window.__canvascopeClearSyllabusMemory;
+              if (typeof clear !== 'function') {
+                ctx?.setFeedbackMsg?.('Page detector unavailable — refresh the tab and retry.', 'error');
+                return;
+              }
+              Promise.resolve(clear()).then(() => {
+                ctx?.setFeedbackMsg?.('Syllabus memory cleared — re-checking this page ✓', 'success');
+                setTimeout(() => ctx?.closeOverlay?.(), 500);
+              }).catch((err) => {
+                console.error('[Canvascope] /resetsyllabus failed:', err);
+                ctx?.setFeedbackMsg?.('Reset failed — see console.', 'error');
+              });
+            } catch (err) {
+              console.error('[Canvascope] /resetsyllabus failed:', err);
+              ctx?.setFeedbackMsg?.('Reset failed — see console.', 'error');
+            }
+          }
+        }];
+      }
+    };
+    return cmd;
   }
 
   // -------------------------------------------------------------------------

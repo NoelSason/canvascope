@@ -231,13 +231,20 @@ function normalizeExtensionSettings(rawSettings) {
     const source = rawSettings && typeof rawSettings === 'object' ? rawSettings : {};
     return {
         ...DEFAULT_EXTENSION_SETTINGS,
-        ...source
+        ...source,
+        enableSendToLectra: Boolean(source.enableSendToLectra),
+        selectedCourseFilters: Array.isArray(source.selectedCourseFilters) ? source.selectedCourseFilters : []
     };
 }
 
 async function getExtensionSettings() {
     const stored = await chrome.storage.local.get(['settings']);
     return normalizeExtensionSettings(stored.settings);
+}
+
+async function isSendToLectraFeatureEnabled() {
+    const settings = await getExtensionSettings();
+    return Boolean(settings.enableSendToLectra);
 }
 
 function permissionsContains(permissions) {
@@ -888,9 +895,13 @@ async function tryClaimAndProcessDropBridgeV2UploadById({ uploadId, accessToken 
         lastTargetedClaimStartedAt: new Date(claimStartedAtMs).toISOString(),
         lastTargetedClaimUploadId: normalizedUploadId,
         lastTargetedClaimReason: reason,
-        lastTargetedClaimResult: 'started'
+        lastTargetedClaimResult: 'started',
+        lastTransferStage: 'claiming',
+        lastTransferUploadId: normalizedUploadId,
+        lastTransferAt: new Date(claimStartedAtMs).toISOString()
     }, {
-        type: 'targeted_claim_started',
+        type: 'transfer_progress',
+        stage: 'claiming',
         reason,
         uploadId: normalizedUploadId
     });
@@ -925,9 +936,14 @@ async function tryClaimAndProcessDropBridgeV2UploadById({ uploadId, accessToken 
             lastTargetedClaimFinishedAt: claimFinishedAtIso,
             lastTargetedClaimDurationMs: Date.now() - claimStartedAtMs,
             lastTargetedClaimResult: 'claimed',
-            lastSignedUrlReceivedAt: upload.downloadUrl ? claimFinishedAtIso : null
+            lastSignedUrlReceivedAt: upload.downloadUrl ? claimFinishedAtIso : null,
+            lastTransferStage: upload.downloadUrl ? 'signed_url_issued' : 'claimed',
+            lastTransferUploadId: normalizedUploadId,
+            lastTransferFileName: upload.fileName || null,
+            lastTransferAt: claimFinishedAtIso
         }, {
-            type: 'targeted_claim_finished',
+            type: 'transfer_progress',
+            stage: upload.downloadUrl ? 'signed_url_issued' : 'claimed',
             reason,
             uploadId: normalizedUploadId,
             ok: true,
@@ -989,6 +1005,15 @@ async function ensureDropBridgeV2LoopWarm(reason = 'manual', { force = false, re
         return {
             success: false,
             reason: 'disabled'
+        };
+    }
+
+    if (!await isSendToLectraFeatureEnabled()) {
+        stopDropBridgeV2Loop();
+        return {
+            success: true,
+            enabled: false,
+            reason: 'feature_disabled'
         };
     }
 
@@ -1250,9 +1275,14 @@ async function processDropBridgeV2Upload(upload, accessToken, deviceId) {
     });
     void updateDropBridgeV2Diagnostics({
         lastClaimedAt: new Date().toISOString(),
-        lastClaimedUploadId: uploadId
+        lastClaimedUploadId: uploadId,
+        lastTransferStage: 'downloading',
+        lastTransferUploadId: uploadId,
+        lastTransferFileName: upload.fileName || null,
+        lastTransferAt: new Date().toISOString()
     }, {
-        type: 'upload_processing_started',
+        type: 'transfer_progress',
+        stage: 'downloading',
         uploadId,
         deviceId
     });
@@ -1275,6 +1305,16 @@ async function processDropBridgeV2Upload(upload, accessToken, deviceId) {
             deviceId,
             status: result.status,
             durationMs: Date.now() - startedAtMs
+        });
+        void updateDropBridgeV2Diagnostics({
+            lastTransferStage: result.status,
+            lastTransferUploadId: uploadId,
+            lastTransferAt: new Date().toISOString()
+        }, {
+            type: 'transfer_progress',
+            stage: result.status,
+            uploadId,
+            status: result.status
         });
     } catch (error) {
         console.error(`[DropBridge v2] Download failure for ${uploadId}:`, parseErrorMessage(error));
@@ -1497,6 +1537,15 @@ async function buildDropBridgeV2ReceiverContext() {
         };
     }
 
+    if (!await isSendToLectraFeatureEnabled()) {
+        return {
+            success: true,
+            enabled: false,
+            signedIn: false,
+            reason: 'feature_disabled'
+        };
+    }
+
     const accessToken = await getDropBridgeV2AccessToken();
     const { data: { session }, error } = await supabaseClient.auth.getSession();
     if (error) {
@@ -1541,13 +1590,69 @@ function summarizeDropBridgeV2Event(event) {
     const uploadId = event.uploadId ? String(event.uploadId) : null;
     const status = event.status ? String(event.status) : null;
     const reason = event.reason ? String(event.reason) : null;
+    const stage = event.stage ? String(event.stage) : null;
     return {
         at: event.at || null,
         type,
         uploadId,
         status,
-        reason
+        reason,
+        stage
     };
+}
+
+function buildDropBridgeV2TransferSummary({ diagnostics, latestEvent }) {
+    const stage = String(diagnostics?.lastTransferStage || '').toLowerCase();
+    if (!stage) return null;
+
+    const uploadId = diagnostics?.lastTransferUploadId || latestEvent?.uploadId || null;
+    const fileName = diagnostics?.lastTransferFileName || diagnostics?.lastWakeFileName || null;
+    const uploadSuffix = uploadId ? ` · ${String(uploadId).slice(0, 8)}` : '';
+    const detail = fileName ? `${fileName}${uploadSuffix}` : (uploadId ? `Upload ${String(uploadId).slice(0, 8)}` : null);
+
+    switch (stage) {
+        case 'queued':
+        case 'wake_broadcasted':
+        case 'wake_emitted':
+            return {
+                health: 'transfer_active',
+                label: 'Lectra file queued',
+                detail: detail || 'Waiting for download claim'
+            };
+        case 'claiming':
+        case 'claimed':
+            return {
+                health: 'transfer_active',
+                label: 'Claiming Lectra file',
+                detail: detail || 'Receiver claimed the upload'
+            };
+        case 'signed_url_issued':
+            return {
+                health: 'transfer_active',
+                label: 'Download starting',
+                detail: detail || 'Signed download URL issued'
+            };
+        case 'downloading':
+            return {
+                health: 'transfer_active',
+                label: 'Downloading Lectra file',
+                detail: detail || 'Browser download in progress'
+            };
+        case 'downloaded':
+            return {
+                health: 'realtime_connected',
+                label: 'Lectra file downloaded',
+                detail: detail || 'Latest transfer completed'
+            };
+        case 'canceled':
+            return {
+                health: 'fallback_polling',
+                label: 'Lectra download canceled',
+                detail: detail || 'Latest transfer was canceled'
+            };
+        default:
+            return null;
+    }
 }
 
 function buildDropBridgeV2HealthSummary({ diagnostics, signedIn }) {
@@ -1574,6 +1679,17 @@ function buildDropBridgeV2HealthSummary({ diagnostics, signedIn }) {
     const receiverStatus = String(diagnostics?.receiverStatus || '').toLowerCase();
     const recentEvents = Array.isArray(diagnostics?.recentEvents) ? diagnostics.recentEvents : [];
     const latestEvent = summarizeDropBridgeV2Event(recentEvents.length > 0 ? recentEvents[recentEvents.length - 1] : null);
+    const transferSummary = buildDropBridgeV2TransferSummary({ diagnostics, latestEvent });
+    if (transferSummary) {
+        return {
+            enabled: true,
+            signedIn: true,
+            ...transferSummary,
+            latestEvent,
+            receiverStatus
+        };
+    }
+
     if (receiverStatus === 'subscribed') {
         return {
             enabled: true,
@@ -1610,6 +1726,17 @@ function buildDropBridgeV2HealthSummary({ diagnostics, signedIn }) {
 }
 
 async function buildDropBridgeV2PopupStatus() {
+    if (!await isSendToLectraFeatureEnabled()) {
+        return {
+            enabled: false,
+            signedIn: false,
+            health: 'disabled',
+            label: 'FileDrop disabled',
+            detail: 'Enable Lectra in Settings to receive files.',
+            diagnostics: null
+        };
+    }
+
     const diagnostics = await getDropBridgeV2DiagnosticsState();
     const authStatus = await resolveAuthStatus();
     return {
@@ -1623,6 +1750,9 @@ async function buildDropBridgeV2PopupStatus() {
             receiverSubscribedAt: diagnostics?.receiverSubscribedAt || null,
             lastWakeAt: diagnostics?.lastWakeAt || null,
             lastWakeUploadId: diagnostics?.lastWakeUploadId || null,
+            lastTransferStage: diagnostics?.lastTransferStage || null,
+            lastTransferUploadId: diagnostics?.lastTransferUploadId || null,
+            lastTransferAt: diagnostics?.lastTransferAt || null,
             lastTargetedClaimResult: diagnostics?.lastTargetedClaimResult || null,
             lastDownloadStatus: diagnostics?.lastDownloadStatus || null,
             lastAckStatus: diagnostics?.lastAckStatus || null,
@@ -1634,6 +1764,11 @@ async function buildDropBridgeV2PopupStatus() {
 
 async function requestDropBridgeV2Poll(reason = 'manual') {
     if (!DROPBRIDGE_V2_ENABLED || !supabaseClient) {
+        return;
+    }
+
+    if (!await isSendToLectraFeatureEnabled()) {
+        stopDropBridgeV2Loop();
         return;
     }
 
@@ -1722,6 +1857,11 @@ async function registerDropBridgeV2Device(reason = 'startup', accessToken = null
 
 async function heartbeatDropBridgeV2Device(reason = 'heartbeat', accessToken = null, deviceId = null) {
     if (!DROPBRIDGE_V2_ENABLED || !supabaseClient) return false;
+    if (!await isSendToLectraFeatureEnabled()) {
+        stopDropBridgeV2Loop();
+        return false;
+    }
+
     const token = accessToken || await getDropBridgeV2AccessToken();
     if (!token) {
         void updateDropBridgeV2Diagnostics({
@@ -1955,6 +2095,13 @@ async function startDropBridgeV2Loop(reason = 'startup') {
         });
         return;
     }
+
+    if (!await isSendToLectraFeatureEnabled()) {
+        dropBridgeDebug('loop: start skipped because Lectra is disabled', { reason });
+        stopDropBridgeV2Loop();
+        return;
+    }
+
     dropBridgeDebug('loop: start begin', { reason });
 
     try {
@@ -2458,6 +2605,10 @@ chrome.runtime.onInstalled.addListener((details) => {
     // Set up deadline reminder alarm (every 60 min)
     chrome.alarms.create('deadlineReminder', { periodInMinutes: 60 });
 
+    // Autonomous agent: tick daily; the handler runs the briefing once per
+    // morning when the local time has passed the user's chosen briefingTime.
+    chrome.alarms.create('agentDailyBriefing', { periodInMinutes: 1440 });
+
     // Keep the Supabase auth token fresh across service-worker suspensions.
     ensureAuthRefreshAlarm();
 
@@ -2471,9 +2622,14 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
     syncPdfViewerOverlayRegistration('settings-changed').catch((error) => {
         console.warn('[Canvascope PDF Viewer] Failed to sync overlay registration after settings change:', parseErrorMessage(error));
     });
-    ensureDropBridgeV2LoopWarm('settings-changed').catch((error) => {
-        console.warn('[DropBridge v2] Settings-change warmup failed:', parseErrorMessage(error));
-    });
+    const nextSettings = normalizeExtensionSettings(changes.settings.newValue);
+    if (nextSettings.enableSendToLectra) {
+        ensureDropBridgeV2LoopWarm('settings-changed').catch((error) => {
+            console.warn('[DropBridge v2] Settings-change warmup failed:', parseErrorMessage(error));
+        });
+    } else {
+        stopDropBridgeV2Loop();
+    }
 });
 
 chrome.permissions.onAdded.addListener(() => {
@@ -2536,6 +2692,12 @@ chrome.alarms.onAlarm.addListener((alarm) => {
     }
     if (alarm.name === 'deadlineReminder') {
         checkDeadlineReminders();
+    }
+    if (alarm.name === 'agentDailyBriefing' || alarm.name === 'periodicScan') {
+        // Both ticks check the briefing window; the daily alarm guarantees a
+        // run even if periodicScan is throttled, and periodicScan tightens the
+        // timing to within ~30 min of the user's chosen briefingTime.
+        maybeRunDailyBriefing(alarm.name).catch(() => { /* self-logs */ });
     }
     if (alarm.name === AUTH_REFRESH_ALARM_NAME) {
         ensureFreshAuthSession('alarm').catch((error) => {
@@ -3189,6 +3351,7 @@ function buildCanvasSyllabusItem(baseUrl, course, sourceMeta, scanTimestamp, sna
         type: 'syllabus',
         moduleName: 'Course Navigation',
         courseName: course.name,
+        courseCode: course.code || '',
         courseId: course.id,
         syllabusExcerpt: syllabusExcerpt ? syllabusExcerpt.slice(0, 400) : '',
         ...sourceMeta,
@@ -3222,6 +3385,7 @@ async function fetchFastEndpoints(baseUrl, course, sourceMeta, scanTimestamp, sn
                 type: 'assignment',
                 moduleName: 'Assignments',
                 courseName: course.name,
+                courseCode: course.code || '',
                 courseId: course.id,
                 ...sourceMeta,
                 scannedAt: scanTimestamp,
@@ -3271,6 +3435,7 @@ async function fetchFastEndpoints(baseUrl, course, sourceMeta, scanTimestamp, sn
                     type: 'page',
                     moduleName: 'Pages',
                     courseName: course.name,
+                    courseCode: course.code || '',
                     courseId: course.id,
                     ...sourceMeta,
                     scannedAt: scanTimestamp
@@ -3299,6 +3464,7 @@ async function fetchFastEndpoints(baseUrl, course, sourceMeta, scanTimestamp, sn
                     type: 'quiz',
                     moduleName: 'Quizzes',
                     courseName: course.name,
+                    courseCode: course.code || '',
                     courseId: course.id,
                     ...sourceMeta,
                     scannedAt: scanTimestamp,
@@ -3336,6 +3502,7 @@ async function fetchFastEndpoints(baseUrl, course, sourceMeta, scanTimestamp, sn
                     type: 'discussion',
                     moduleName: 'Discussions',
                     courseName: course.name,
+                    courseCode: course.code || '',
                     courseId: course.id,
                     ...sourceMeta,
                     scannedAt: scanTimestamp,
@@ -3382,6 +3549,7 @@ async function fetchHeavyEndpoints(baseUrl, course, sourceMeta, scanTimestamp, s
                             type: item.type?.toLowerCase() || 'link',
                             moduleName: mod.name || '',
                             courseName: course.name,
+                            courseCode: course.code || '',
                             courseId: course.id,
                             ...sourceMeta,
                             scannedAt: scanTimestamp
@@ -3417,6 +3585,7 @@ async function fetchHeavyEndpoints(baseUrl, course, sourceMeta, scanTimestamp, s
                 type: 'video',
                 moduleName: 'Media Gallery',
                 courseName: course.name,
+                courseCode: course.code || '',
                 courseId: course.id,
                 ...sourceMeta,
                 scannedAt: scanTimestamp
@@ -3468,6 +3637,7 @@ async function fetchHeavyEndpoints(baseUrl, course, sourceMeta, scanTimestamp, s
                     weekHints: pathMeta.weekHints.slice(),
                     containerUrl: folderUrl,
                     courseName: course.name,
+                    courseCode: course.code || '',
                     courseId: course.id,
                     createdAt: folderRecord.createdAt,
                     updatedAt: folderRecord.updatedAt,
@@ -3512,6 +3682,7 @@ async function fetchHeavyEndpoints(baseUrl, course, sourceMeta, scanTimestamp, s
                     weekHints: Array.isArray(folder?.weekHints) ? folder.weekHints.slice() : extractExplicitWeekHints([item.display_name || '', folderPath]),
                     containerUrl: folder?.url || null,
                     courseName: course.name,
+                    courseCode: course.code || '',
                     courseId: course.id,
                     createdAt: item.created_at || null,
                     updatedAt: item.updated_at || item.modified_at || null,
@@ -3821,6 +3992,7 @@ async function fetchBrightspaceCourseContent(baseUrl, course) {
                     type: inferBrightspaceTopicType(topic, topicUrl),
                     moduleName: entry.moduleTrail.join(' > ') || 'Content',
                     courseName: course.name,
+                    courseCode: course.code || '',
                     courseId: course.id,
                     ...sourceMeta,
                     scannedAt: new Date().toISOString(),
@@ -3855,6 +4027,7 @@ async function fetchBrightspaceCourseContent(baseUrl, course) {
                     type: 'assignment',
                     moduleName: 'Assignments',
                     courseName: course.name,
+                    courseCode: course.code || '',
                     courseId: course.id,
                     ...sourceMeta,
                     scannedAt: new Date().toISOString(),
@@ -3889,6 +4062,7 @@ async function fetchBrightspaceCourseContent(baseUrl, course) {
                     type: 'quiz',
                     moduleName: 'Quizzes',
                     courseName: course.name,
+                    courseCode: course.code || '',
                     courseId: course.id,
                     ...sourceMeta,
                     scannedAt: new Date().toISOString(),
@@ -3933,6 +4107,7 @@ async function fetchBrightspaceCourseContent(baseUrl, course) {
                         type: 'discussion',
                         moduleName: forum?.Name || 'Discussions',
                         courseName: course.name,
+                        courseCode: course.code || '',
                         courseId: course.id,
                         ...sourceMeta,
                         scannedAt: new Date().toISOString(),
@@ -3968,6 +4143,7 @@ async function fetchBrightspaceCourseContent(baseUrl, course) {
                     type: 'announcement',
                     moduleName: 'Announcements',
                     courseName: course.name,
+                    courseCode: course.code || '',
                     courseId: course.id,
                     ...sourceMeta,
                     scannedAt: new Date().toISOString()
@@ -4490,6 +4666,7 @@ function buildSnapshotItemBase(course, sourceMeta, scanTimestamp, overrides = {}
         type: overrides.type || 'unknown',
         moduleName: overrides.moduleName || '',
         courseName: course?.name || '',
+        courseCode: course?.code || '',
         courseId: course?.id ?? null,
         platform: sourceMeta?.platform || 'canvas',
         platformDomain: sourceMeta?.platformDomain || '',
@@ -4512,6 +4689,7 @@ function mergeIndexedContentFields(winner, loser) {
         'assignmentGroupName',
         'contentType',
         'containerUrl',
+        'courseCode',
         'courseId',
         'courseName',
         'createdAt',
@@ -6007,6 +6185,10 @@ async function getSignedInUserId() {
 
 /** List the user's Lectra PDF documents for the Attach-from-Lectra picker. */
 async function listLectraDocumentsForPicker() {
+    if (!await isSendToLectraFeatureEnabled()) {
+        return { success: false, code: 'feature_disabled', message: 'Enable Lectra in Canvascope settings first.' };
+    }
+
     if (!supabaseClient) {
         return { success: false, message: 'Sync unavailable right now.' };
     }
@@ -6055,6 +6237,10 @@ async function listLectraDocumentsForPicker() {
 
 /** Resolve a short-lived signed URL for a Lectra doc (annotated-else-original). */
 async function resolveLectraDocumentSignedUrl(documentId) {
+    if (!await isSendToLectraFeatureEnabled()) {
+        return { success: false, code: 'feature_disabled', message: 'Enable Lectra in Canvascope settings first.' };
+    }
+
     if (!supabaseClient) {
         return { success: false, message: 'Sync unavailable right now.' };
     }
@@ -6145,6 +6331,10 @@ async function fetchCourseFilesForImport(baseUrl, courseId) {
 
 /** Build the folder tree (folders that contain PDFs) for the popup picker. */
 async function buildCourseFolderTreeForImport(baseUrl, courseId) {
+    if (!await isSendToLectraFeatureEnabled()) {
+        return { success: false, code: 'feature_disabled', message: 'Enable Lectra in Canvascope settings first.' };
+    }
+
     const { files } = await fetchCourseFilesForImport(baseUrl, courseId);
     const byPath = new Map();
     for (const file of files) {
@@ -6560,6 +6750,199 @@ async function getFreshGoogleAccessToken() {
     return data.access_token;
 }
 
+// Resolve a usable Google Calendar access token (session -> cache -> refresh).
+async function getGoogleCalendarToken() {
+    const { data: { session } } = await supabaseClient.auth.getSession();
+    let providerToken = session?.provider_token;
+    if (!providerToken) {
+        const cached = await chrome.storage.local.get([GOOGLE_PROVIDER_TOKEN_CACHE_KEY]);
+        providerToken = cached?.[GOOGLE_PROVIDER_TOKEN_CACHE_KEY] || null;
+    }
+    if (!providerToken) providerToken = await getFreshGoogleAccessToken();
+    return providerToken;
+}
+
+// Create a Google Calendar event. Shared by the createGoogleCalendarEvent
+// message handler and the agent's create_calendar_event tool. Returns
+// { success, eventId } or { success:false, error, message }.
+async function createCalendarEventInternal(eventPayload) {
+    try {
+        let providerToken;
+        try {
+            providerToken = await getGoogleCalendarToken();
+        } catch (e) {
+            return { success: false, error: 'no_google_token', message: 'Google Calendar not connected. Please sign in with Google again to grant calendar access.' };
+        }
+        const doFetch = (token) => fetch('https://www.googleapis.com/calendar/v3/calendars/primary/events', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify(eventPayload)
+        });
+        let response = await doFetch(providerToken);
+        if (response.status === 401) {
+            try {
+                providerToken = await getFreshGoogleAccessToken();
+                response = await doFetch(providerToken);
+            } catch (refreshErr) {
+                return { success: false, error: 'unauthorized', message: 'Google Calendar access expired and could not be refreshed. Please reconnect your Google account.' };
+            }
+        }
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error('[Canvascope Calendar] Google Calendar API error:', errorText);
+            return { success: false, error: 'api_error', message: `Google Calendar error: ${response.status} ${errorText}` };
+        }
+        const result = await response.json();
+        return { success: true, eventId: result.id };
+    } catch (err) {
+        console.error('[Canvascope Calendar] Unhandled error:', err);
+        return { success: false, error: 'exception', message: err.message };
+    }
+}
+
+// Delete a Google Calendar event by id (used for agent undo).
+async function deleteCalendarEventInternal(eventId) {
+    if (!eventId) return { success: false, error: 'no_event_id' };
+    let providerToken = await getGoogleCalendarToken();
+    const doDelete = (token) => fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(eventId)}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${token}` }
+    });
+    let response = await doDelete(providerToken);
+    if (response.status === 401) {
+        providerToken = await getFreshGoogleAccessToken();
+        response = await doDelete(providerToken);
+    }
+    // 200/204 = deleted; 404/410 = already gone (treat as success).
+    if (response.ok || response.status === 404 || response.status === 410) {
+        return { success: true };
+    }
+    const errorText = await response.text().catch(() => '');
+    return { success: false, error: 'api_error', message: `${response.status} ${errorText}` };
+}
+
+// List Google Calendar events in a window so the agent can find free time
+// before scheduling. Returns { success, events:[{summary,start,end}] }.
+async function listCalendarEventsInternal(timeMin, timeMax) {
+    if (!timeMin || !timeMax) return { success: false, error: 'missing_window' };
+    // Google Calendar events.list requires RFC3339 with a timezone offset.
+    // The model often sends a bare local time ("2026-06-26T17:00:00") with no
+    // offset — normalize via Date (interpreted as local) -> ISO (UTC "Z").
+    const toRfc3339 = (s) => {
+        const d = new Date(s);
+        return Number.isNaN(d.getTime()) ? null : d.toISOString();
+    };
+    const tMin = toRfc3339(timeMin);
+    const tMax = toRfc3339(timeMax);
+    if (!tMin || !tMax) return { success: false, error: 'bad_window', message: 'Could not parse the time window.' };
+    let token;
+    try { token = await getGoogleCalendarToken(); }
+    catch (e) { return { success: false, error: 'no_google_token', message: 'Google Calendar not connected.' }; }
+    const url = `https://www.googleapis.com/calendar/v3/calendars/primary/events`
+        + `?timeMin=${encodeURIComponent(tMin)}&timeMax=${encodeURIComponent(tMax)}`
+        + `&singleEvents=true&orderBy=startTime&maxResults=50`;
+    const doGet = (t) => fetch(url, { headers: { Authorization: `Bearer ${t}` } });
+    let response = await doGet(token);
+    if (response.status === 401) {
+        try { token = await getFreshGoogleAccessToken(); response = await doGet(token); }
+        catch (e) { return { success: false, error: 'unauthorized', message: 'Google Calendar access expired.' }; }
+    }
+    if (!response.ok) {
+        const errorText = await response.text().catch(() => '');
+        return { success: false, error: 'api_error', message: `${response.status} ${errorText}` };
+    }
+    const data = await response.json();
+    const events = (data.items || [])
+        .map((e) => ({ summary: e.summary || '(busy)', start: e.start?.dateTime || e.start?.date, end: e.end?.dateTime || e.end?.date }))
+        .filter((e) => e.start && e.end);
+    return { success: true, events };
+}
+
+// Expose for the agent tool executors (run in the same service worker).
+self.createCalendarEventInternal = createCalendarEventInternal;
+self.deleteCalendarEventInternal = deleteCalendarEventInternal;
+self.listCalendarEventsInternal = listCalendarEventsInternal;
+
+// Run the daily briefing at most once per local day, once local time has
+// passed the user's chosen briefingTime. Safe to call from any alarm tick —
+// it self-guards via the stored lastBriefing date and the kill switch.
+let agentBriefingInFlight = false;
+async function maybeRunDailyBriefing(trigger) {
+    if (agentBriefingInFlight) return;
+    if (!self.CanvascopeAgent || !self.CanvascopeAgentMemory) return;
+    try {
+        const state = await self.CanvascopeAgentMemory.load();
+        if (state.killSwitch?.paused) return;
+
+        const now = new Date();
+        const todayStr = now.toISOString().slice(0, 10);
+        if (state.lastBriefing?.ts) {
+            const last = new Date(state.lastBriefing.ts);
+            // Compare on local calendar day.
+            if (last.toDateString() === now.toDateString()) return;
+        }
+        const [h, m] = String(state.prefs?.briefingTime || '08:00').split(':').map(Number);
+        const targetMinutes = (Number.isFinite(h) ? h : 8) * 60 + (Number.isFinite(m) ? m : 0);
+        const nowMinutes = now.getHours() * 60 + now.getMinutes();
+        if (nowMinutes < targetMinutes) return;
+
+        agentBriefingInFlight = true;
+        await self.CanvascopeAgent.runDailyBriefing(trigger || 'scheduled');
+        void todayStr;
+    } catch (err) {
+        console.warn('[Canvascope Agent] daily briefing check failed:', err?.message || err);
+    } finally {
+        agentBriefingInFlight = false;
+    }
+}
+self.maybeRunDailyBriefing = maybeRunDailyBriefing;
+
+// Streaming agent runs: the sidepanel opens a long-lived port so it can show
+// live progress ("Checking your deadlines…", "Scheduling study block…") and so
+// the service worker stays alive for the duration of the loop. The client
+// passes prior `history` to continue a multi-turn conversation; the result
+// carries the updated `messages` back for the next turn.
+chrome.runtime.onConnect.addListener((port) => {
+    if (port.name !== 'agentRun') return;
+    port.onMessage.addListener((msg) => {
+        if (!msg || msg.type !== 'start') return;
+        (async () => {
+            const onEvent = (ev) => { try { port.postMessage(ev); } catch (_) { /* port closed */ } };
+            try {
+                const result = msg.briefing
+                    ? await self.CanvascopeAgent.runDailyBriefing('on-demand', onEvent)
+                    : await self.CanvascopeAgent.runGoal({
+                        goal: String(msg.goal || ''),
+                        trigger: 'on-demand',
+                        history: Array.isArray(msg.history) ? msg.history : null,
+                        onEvent
+                    });
+                onEvent({ type: 'done', result });
+            } catch (err) {
+                onEvent({ type: 'error', message: err?.message || String(err) });
+            }
+        })();
+    });
+});
+
+// Clicking the morning-briefing notification opens the side panel to the
+// briefing card (reuses the sidepanelIntent mechanism the slash commands use).
+if (chrome.notifications?.onClicked) {
+    chrome.notifications.onClicked.addListener((notificationId) => {
+        if (notificationId !== 'agentBriefing') return;
+        (async () => {
+            try {
+                await chrome.storage.local.set({ sidepanelIntent: { action: 'briefing', ts: Date.now() } });
+                const w = await chrome.windows.getCurrent();
+                if (w?.id != null) await chrome.sidePanel.open({ windowId: w.id });
+                try { chrome.notifications.clear(notificationId); } catch (_) {}
+            } catch (err) {
+                console.warn('[Canvascope Agent] open briefing failed:', err?.message || err);
+            }
+        })();
+    });
+}
+
 // Bridge: a content script (academic-tools.js -> openSyllabusAutopilot) can't reach
 // the sibling content.js collectPdfCandidates handler via runtime.sendMessage, so the
 // background forwards the request to the requesting tab and relays the result back.
@@ -6836,13 +7219,22 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         (async () => {
             try {
                 const intent = Object.assign({}, message.intent || {}, { ts: Date.now() });
-                await chrome.storage.local.set({ sidepanelIntent: intent });
-                let windowId = sender?.tab?.windowId;
-                if (windowId == null) {
+                // Open the panel FIRST — before any await — so the user-gesture
+                // token propagated from the slash-overlay click isn't consumed
+                // (awaiting storage.set first is what triggered the
+                // "may only be called in response to a user gesture" error).
+                // The slash-overlay path always carries sender.tab.windowId.
+                const windowId = sender?.tab?.windowId;
+                if (windowId != null) {
+                    await chrome.sidePanel.open({ windowId });
+                    await chrome.storage.local.set({ sidepanelIntent: intent });
+                } else {
+                    // No sender window (rare): set intent, then best-effort open
+                    // on the current window. Gesture may be lost on this path.
+                    await chrome.storage.local.set({ sidepanelIntent: intent });
                     const w = await chrome.windows.getCurrent();
-                    windowId = w?.id;
+                    if (w?.id != null) await chrome.sidePanel.open({ windowId: w.id });
                 }
-                await chrome.sidePanel.open({ windowId });
                 sendResponse({ success: true });
             } catch (err) {
                 console.error('[Canvascope] Failed to open sidepanel:', err);
@@ -6852,151 +7244,55 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return true;
     } else if (message.type === 'createGoogleCalendarEvent') {
         (async () => {
+            const result = await createCalendarEventInternal(message.event);
+            sendResponse(result);
+        })();
+        return true;
+    } else if (message.type === 'runAgentGoal') {
+        // On-demand agent run (e.g. /briefing or the sidepanel button).
+        (async () => {
             try {
-                const { data: { session } } = await supabaseClient.auth.getSession();
-                let providerToken = session?.provider_token;
-                if (!providerToken) {
-                    const cached = await chrome.storage.local.get([GOOGLE_PROVIDER_TOKEN_CACHE_KEY]);
-                    providerToken = cached?.[GOOGLE_PROVIDER_TOKEN_CACHE_KEY] || null;
-                }
-                if (!providerToken) {
-                    try {
-                        providerToken = await getFreshGoogleAccessToken();
-                    } catch (e) {
-                        console.error('[Canvascope Calendar] No Google token and refresh failed:', e);
-                        sendResponse({ success: false, error: 'no_google_token', message: 'Google Calendar not connected. Please sign in with Google again to grant calendar access.' });
-                        return;
-                    }
-                }
-                
-                const eventPayload = message.event;
-                let response = await fetch('https://www.googleapis.com/calendar/v3/calendars/primary/events', {
-                    method: 'POST',
-                    headers: {
-                        'Authorization': `Bearer ${providerToken}`,
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify(eventPayload)
-                });
-
-                // Token expired mid-flight -> refresh once and retry.
-                if (response.status === 401) {
-                    try {
-                        providerToken = await getFreshGoogleAccessToken();
-                        response = await fetch('https://www.googleapis.com/calendar/v3/calendars/primary/events', {
-                            method: 'POST',
-                            headers: {
-                                'Authorization': `Bearer ${providerToken}`,
-                                'Content-Type': 'application/json'
-                            },
-                            body: JSON.stringify(eventPayload)
-                        });
-                    } catch (refreshErr) {
-                        console.error('[Canvascope Calendar] Refresh after 401 failed:', refreshErr);
-                        sendResponse({ success: false, error: 'unauthorized', message: 'Google Calendar access expired and could not be refreshed. Please reconnect your Google account.' });
-                        return;
-                    }
-                }
-
-                if (!response.ok) {
-                    const errorText = await response.text();
-                    console.error('[Canvascope Calendar] Google Calendar API error:', errorText);
-                    if (response.status === 401) {
-                        sendResponse({ success: false, error: 'unauthorized', message: 'Google Calendar access expired. Please sign out and sign in again.' });
-                    } else {
-                        sendResponse({ success: false, error: 'api_error', message: `Google Calendar error: ${response.status} ${errorText}` });
-                    }
-                    return;
-                }
-                
-                const result = await response.json();
-                sendResponse({ success: true, eventId: result.id });
+                const out = message.briefing
+                    ? await self.CanvascopeAgent.runDailyBriefing('on-demand')
+                    : await self.CanvascopeAgent.runGoal({ goal: String(message.goal || ''), trigger: 'on-demand' });
+                sendResponse({ success: true, result: out });
             } catch (err) {
-                console.error('[Canvascope Calendar] Unhandled error:', err);
-                sendResponse({ success: false, error: 'exception', message: err.message });
+                console.error('[Canvascope Agent] runAgentGoal failed:', err);
+                sendResponse({ success: false, message: err.message });
+            }
+        })();
+        return true;
+    } else if (message.type === 'agentUndo') {
+        (async () => {
+            try {
+                const r = await self.CanvascopeAgent.undoAction(message.auditId);
+                sendResponse(r);
+            } catch (err) {
+                sendResponse({ ok: false, reason: err.message });
+            }
+        })();
+        return true;
+    } else if (message.type === 'agentSetPause') {
+        (async () => {
+            try {
+                await self.CanvascopeAgentMemory.setPaused(!!message.paused);
+                sendResponse({ success: true, paused: !!message.paused });
+            } catch (err) {
+                sendResponse({ success: false, message: err.message });
             }
         })();
         return true;
     } else if (message.type === 'promptSyllabusAI') {
         (async () => {
             try {
-                const accessToken = await getSupabaseAccessToken();
-                if (!accessToken) {
-                    sendResponse({ success: false, error: 'not_signed_in', message: 'You must be signed in to Canvascope to use Syllabus Autopilot.' });
-                    return;
+                const r = await requestSyllabusAIText(
+                    message.prompt,
+                    'You are an academic syllabus parser. Extract all assignments, readings, and exams. Return ONLY a valid JSON array of objects. Do not wrap in backticks or markdown.'
+                );
+                if (r.success && !r.text) {
+                    console.warn('[Canvascope Syllabus AI] No text extracted.');
                 }
-                
-                const proxyUrl = 'https://vcadcdgnwxjlgaoqktkd.supabase.co/functions/v1/gemini-proxy';
-                const response = await fetch(proxyUrl, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${accessToken}`
-                    },
-                    body: JSON.stringify({
-                        prompt: message.prompt,
-                        systemInstruction: 'You are an academic syllabus parser. Extract all assignments, readings, and exams. Return ONLY a valid JSON array of objects. Do not wrap in backticks or markdown.'
-                    })
-                });
-                
-                if (!response.ok) {
-                    sendResponse({ success: false, error: 'api_error', message: `Cloud AI error: status ${response.status}` });
-                    return;
-                }
-                
-                if (!response.body) {
-                    sendResponse({ success: false, error: 'no_body', message: 'No response body returned from cloud AI.' });
-                    return;
-                }
-                
-                // Buffer the entire streamed response, then parse. Gemini's
-                // streamGenerateContent returns a JSON ARRAY of response chunks; the
-                // model's own output (which contains many { } ) lives inside
-                // candidates[].content.parts[].text, so a naive brace-counter corrupts
-                // on those inner braces. Collect everything and parse structurally.
-                const reader = response.body.getReader();
-                const decoder = new TextDecoder('utf-8');
-                let raw = '';
-                while (true) {
-                    const { done, value } = await reader.read();
-                    if (done) break;
-                    raw += decoder.decode(value, { stream: true });
-                }
-                raw += decoder.decode();
-
-                const collectText = (node) => {
-                    let out = '';
-                    const parts = node?.candidates?.[0]?.content?.parts;
-                    if (Array.isArray(parts)) {
-                        for (const p of parts) {
-                            if (p && typeof p.text === 'string') out += p.text;
-                        }
-                    }
-                    return out;
-                };
-
-                let fullText = '';
-                try {
-                    const arr = JSON.parse(raw);
-                    if (Array.isArray(arr)) {
-                        for (const chunk of arr) fullText += collectText(chunk);
-                    } else {
-                        fullText += collectText(arr);
-                    }
-                } catch (_) {
-                    // Fallback: line/SSE-delimited JSON objects.
-                    for (const line of raw.split('\n')) {
-                        const t = line.replace(/^data:\s*/, '').trim();
-                        if (!t || t === '[DONE]' || t === '[' || t === ']' || t === ',') continue;
-                        try { fullText += collectText(JSON.parse(t)); } catch (_) {}
-                    }
-                }
-
-                if (!fullText) {
-                    console.warn('[Canvascope Syllabus AI] No text extracted. Raw (first 800):', raw.slice(0, 800));
-                }
-
-                sendResponse({ success: true, text: fullText.trim() });
+                sendResponse(r);
             } catch (err) {
                 console.error('[Canvascope Syllabus AI] prompt failed:', err);
                 sendResponse({ success: false, error: 'exception', message: err.message });
@@ -7304,6 +7600,233 @@ async function clearIndexedContentFromSupabase() {
 // indexedContent. Triggered by content.js when a Canvas file/PDF is opened.
 // ============================================
 
+let courseMaterialIndexPromise = null;
+
+function getCourseMaterialsApi() {
+    return (typeof self !== 'undefined' && self.CanvascopeCourseMaterials)
+        ? self.CanvascopeCourseMaterials
+        : null;
+}
+
+async function syncCourseMaterialsToSupabase() {
+    const cm = getCourseMaterialsApi();
+    if (!cm || !supabaseClient) return { success: false, error: 'unavailable' };
+    const settings = await cm.getSettings();
+    if (!settings.supabaseSyncEnabled) return { success: true, skipped: true, reason: 'disabled' };
+
+    const { data: { session } } = await supabaseClient.auth.getSession();
+    if (!session?.user?.id) return { success: false, error: 'not_signed_in' };
+
+    const userId = session.user.id;
+    const { documents, chunks } = await cm.readIndex();
+    const now = new Date().toISOString();
+
+    const documentRows = documents.map(doc => ({
+        id: doc.documentId,
+        user_id: userId,
+        course_id: doc.courseId || '',
+        course_name: doc.courseName || '',
+        canvas_file_id: doc.canvasFileId || null,
+        source_url: doc.sourceUrl || doc.url || '',
+        download_url: doc.downloadUrl || null,
+        title: doc.title || 'Course file',
+        mime_type: doc.mimeType || null,
+        folder_path: doc.folderPath || null,
+        module_name: doc.moduleName || null,
+        week_start: doc.weekStart || null,
+        week_end: doc.weekEnd || null,
+        week_hints: doc.weekHints || [],
+        content_hash: doc.contentHash || null,
+        status: doc.status || 'queued',
+        page_count: doc.pageCount || 0,
+        text_length: doc.textLength || 0,
+        parse_error: doc.parseError || null,
+        discovered_at: doc.discoveredAt || now,
+        indexed_at: doc.indexedAt ? new Date(doc.indexedAt).toISOString() : null,
+        updated_at: now
+    }));
+
+    const chunkRows = chunks.map(chunk => ({
+        id: chunk.chunkId,
+        user_id: userId,
+        document_id: chunk.documentId,
+        course_id: chunk.courseId || '',
+        course_name: chunk.courseName || '',
+        canvas_file_id: chunk.canvasFileId || null,
+        title: chunk.title || 'Course file',
+        page_start: chunk.pageStart || null,
+        page_end: chunk.pageEnd || chunk.pageStart || null,
+        chunk_index: chunk.chunkIndex || 0,
+        text: chunk.text || '',
+        folder_path: chunk.folderPath || null,
+        module_name: chunk.moduleName || null,
+        week_start: chunk.weekStart || null,
+        week_end: chunk.weekEnd || null,
+        updated_at: now
+    })).filter(row => row.text);
+
+    for (let index = 0; index < documentRows.length; index += EXTENSION_SYNC_BATCH_SIZE) {
+        const batch = documentRows.slice(index, index + EXTENSION_SYNC_BATCH_SIZE);
+        const { error } = await supabaseClient
+            .from('course_material_documents')
+            .upsert(batch, { onConflict: 'id' });
+        if (error) throw error;
+    }
+
+    for (let index = 0; index < chunkRows.length; index += EXTENSION_SYNC_BATCH_SIZE) {
+        const batch = chunkRows.slice(index, index + EXTENSION_SYNC_BATCH_SIZE);
+        const { error } = await supabaseClient
+            .from('course_material_chunks')
+            .upsert(batch, { onConflict: 'id' });
+        if (error) throw error;
+    }
+
+    return { success: true, documents: documentRows.length, chunks: chunkRows.length };
+}
+
+async function searchCourseMaterialsSupabase(message) {
+    const cm = getCourseMaterialsApi();
+    if (!cm || !supabaseClient) return { success: false, error: 'unavailable' };
+    const settings = await cm.getSettings();
+    if (!settings.supabaseSyncEnabled) return { success: false, error: 'disabled' };
+    const { data: { session } } = await supabaseClient.auth.getSession();
+    if (!session?.user?.id) return { success: false, error: 'not_signed_in' };
+
+    const courseId = String(message.courseId || '').trim();
+    if (!courseId) return { success: false, error: 'no_course_id' };
+
+    const { data, error } = await supabaseClient.rpc('search_course_materials', {
+        p_course_id: courseId,
+        p_query: String(message.query || ''),
+        p_limit: Math.max(1, Math.min(Number(message.limit) || 8, 24)),
+        p_week_start: message.weekStart || null,
+        p_week_end: message.weekEnd || null
+    });
+    if (error) throw error;
+
+    const chunks = (Array.isArray(data) ? data : []).map(row => ({
+        title: row.title || 'Course material',
+        courseName: row.course_name || '',
+        courseId: row.course_id || '',
+        type: 'course_material',
+        url: row.source_url || '',
+        page: row.page_start || null,
+        text: row.text || '',
+        moduleName: row.module_name || '',
+        folderPath: row.folder_path || '',
+        weekStart: row.week_start || null,
+        weekEnd: row.week_end || null,
+        score: Number(row.rank) || 0,
+        remote: true
+    }));
+
+    return {
+        success: true,
+        chunks,
+        status: {
+            remote: true,
+            remoteChunks: chunks.length
+        }
+    };
+}
+
+async function processCourseMaterialIndexQueue(tabId) {
+    const cm = getCourseMaterialsApi();
+    if (!cm || !tabId) return { success: false, error: 'missing_context' };
+    if (courseMaterialIndexPromise) return courseMaterialIndexPromise;
+
+    courseMaterialIndexPromise = (async () => {
+        const { documents } = await cm.readIndex();
+        const pending = documents
+            .filter(doc => doc.isPdf && (doc.status === 'queued' || doc.status === 'failed'))
+            .slice(0, 25);
+        let indexed = 0;
+        let failed = 0;
+
+        if (!pending.length) return { success: true, indexed, failed, queued: 0 };
+
+        await chrome.scripting.executeScript({
+            target: { tabId },
+            files: ['src/core/course-materials.js', 'src/lib/pdf.min.js', 'src/core/document-parser.js']
+        });
+
+        for (const doc of pending) {
+            await cm.setDocumentStatus(doc.documentId, 'indexing', { parseError: null });
+            try {
+                const [{ result } = {}] = await chrome.scripting.executeScript({
+                    target: { tabId },
+                    func: async (documentMeta) => {
+                        try {
+                            if (typeof DocumentParser === 'undefined') return { ok: false, error: 'parser-missing' };
+                            const url = documentMeta.downloadUrl || documentMeta.url || documentMeta.sourceUrl;
+                            const pages = await DocumentParser.fetchAndParsePdf(
+                                url,
+                                documentMeta.title,
+                                documentMeta.courseName,
+                                documentMeta
+                            );
+                            return { ok: Array.isArray(pages) && pages.length > 0, pages: Array.isArray(pages) ? pages.length : 0 };
+                        } catch (error) {
+                            return { ok: false, error: error?.message || String(error) };
+                        }
+                    },
+                    args: [doc]
+                });
+
+                if (result?.ok) {
+                    indexed += 1;
+                } else {
+                    failed += 1;
+                    await cm.setDocumentStatus(doc.documentId, 'failed', {
+                        parseError: result?.error || 'No text extracted'
+                    });
+                }
+            } catch (error) {
+                failed += 1;
+                await cm.setDocumentStatus(doc.documentId, 'failed', {
+                    parseError: error?.message || String(error)
+                });
+            }
+        }
+
+        try {
+            await syncCourseMaterialsToSupabase();
+        } catch (syncError) {
+            console.warn('[Canvascope CourseMaterials] Supabase sync skipped/failed:', syncError);
+        }
+
+        const latest = await cm.readIndex();
+        return {
+            success: true,
+            indexed,
+            failed,
+            queued: latest.documents.filter(doc => doc.status === 'queued' || doc.status === 'indexing').length
+        };
+    })();
+
+    try {
+        return await courseMaterialIndexPromise;
+    } finally {
+        courseMaterialIndexPromise = null;
+    }
+}
+
+async function handleCourseMaterialsDiscovered(message, sender) {
+    const cm = getCourseMaterialsApi();
+    const tabId = sender && sender.tab && sender.tab.id;
+    if (!cm) return { success: false, error: 'course_materials_unavailable' };
+    const docs = Array.isArray(message.documents) ? message.documents : [];
+    const upsert = await cm.upsertDiscoveredDocuments(docs);
+    const queue = tabId ? await processCourseMaterialIndexQueue(tabId) : { success: false, error: 'no_tab' };
+    return {
+        success: true,
+        discovered: upsert.upserted,
+        queued: upsert.queued,
+        indexed: queue.indexed || 0,
+        failed: queue.failed || 0
+    };
+}
+
 async function handleAutoIndexPdf(message, sender) {
     const tabId = sender && sender.tab && sender.tab.id;
     const pdfUrl = message && message.pdfUrl;
@@ -7318,7 +7841,7 @@ async function handleAutoIndexPdf(message, sender) {
         // Load pdf.js + the parser into the tab's isolated content-script world.
         await chrome.scripting.executeScript({
             target: { tabId },
-            files: ['src/lib/pdf.min.js', 'src/core/document-parser.js']
+            files: ['src/core/course-materials.js', 'src/lib/pdf.min.js', 'src/core/document-parser.js']
         });
 
         const [{ result } = {}] = await chrome.scripting.executeScript({
@@ -7326,7 +7849,14 @@ async function handleAutoIndexPdf(message, sender) {
             func: async (url, title, course) => {
                 try {
                     if (typeof DocumentParser === 'undefined') return 'parser-missing';
-                    const pages = await DocumentParser.fetchAndParsePdf(url, title, course);
+                    const pages = await DocumentParser.fetchAndParsePdf(url, title, course, {
+                        title,
+                        courseName: course,
+                        sourceUrl: url,
+                        downloadUrl: url,
+                        mimeType: 'application/pdf',
+                        isPdf: true
+                    });
                     return Array.isArray(pages) && pages.length > 0 ? ('ok:' + pages.length) : 'no-pages';
                 } catch (e) {
                     return 'error:' + (e && e.message ? e.message : String(e));
@@ -7384,10 +7914,195 @@ async function handleParsePdfText(message, sender) {
 }
 
 // ============================================
+// SYLLABUS MEMORY — structured parse + store
+// ============================================
+//
+// When a syllabus is detected, we parse it once into a structured "syllabus
+// memory" entry (grading scheme + drop rules + letter cutoffs + schedule +
+// policies) and store it per-course (chrome.storage.local `syllabusMemory`,
+// synced to Supabase user_syllabi). This runs independently of the Syllabus
+// Autopilot's Google Calendar offer — the syllabus is saved even if the user
+// declines adding deadlines to their calendar.
+
+// Shared gemini-proxy text call: buffers Gemini's streamed response and returns
+// the concatenated model text. Used by Syllabus Autopilot and the parser below.
+async function requestSyllabusAIText(prompt, systemInstruction) {
+    const accessToken = await getSupabaseAccessToken();
+    if (!accessToken) {
+        return { success: false, error: 'not_signed_in', message: 'You must be signed in to Canvascope to use AI parsing.' };
+    }
+    const proxyUrl = 'https://vcadcdgnwxjlgaoqktkd.supabase.co/functions/v1/gemini-proxy';
+    const response = await fetch(proxyUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${accessToken}` },
+        body: JSON.stringify({ prompt, systemInstruction })
+    });
+    if (!response.ok) return { success: false, error: 'api_error', message: `Cloud AI error: status ${response.status}` };
+    if (!response.body) return { success: false, error: 'no_body', message: 'No response body returned from cloud AI.' };
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder('utf-8');
+    let raw = '';
+    while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        raw += decoder.decode(value, { stream: true });
+    }
+    raw += decoder.decode();
+
+    const collectText = (node) => {
+        let out = '';
+        const parts = node?.candidates?.[0]?.content?.parts;
+        if (Array.isArray(parts)) for (const p of parts) if (p && typeof p.text === 'string') out += p.text;
+        return out;
+    };
+
+    let fullText = '';
+    try {
+        const arr = JSON.parse(raw);
+        if (Array.isArray(arr)) for (const chunk of arr) fullText += collectText(chunk);
+        else fullText += collectText(arr);
+    } catch (_) {
+        for (const line of raw.split('\n')) {
+            const t = line.replace(/^data:\s*/, '').trim();
+            if (!t || t === '[DONE]' || t === '[' || t === ']' || t === ',') continue;
+            try { fullText += collectText(JSON.parse(t)); } catch (_) {}
+        }
+    }
+    return { success: true, text: fullText.trim() };
+}
+
+// Stable 32-bit hash so we only re-spend tokens when the syllabus text changes.
+function hashSyllabusText(s) {
+    let h = 0;
+    for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+    return String(h >>> 0);
+}
+
+// Tolerant single-object JSON extraction (the model can add prose/fences or
+// truncate trailing keys). Mirrors the array extractor in the autopilot.
+function extractJsonObjectLoose(text) {
+    let s = String(text || '').trim().replace(/```[a-zA-Z]*/g, '').replace(/```/g, '').trim();
+    const fb = s.indexOf('{');
+    if (fb > 0) s = s.slice(fb);
+    try { return JSON.parse(s); } catch (_) { /* fall through */ }
+    let depth = 0, start = -1, inStr = false, esc = false;
+    for (let i = 0; i < s.length; i++) {
+        const c = s[i];
+        if (inStr) { if (esc) esc = false; else if (c === '\\') esc = true; else if (c === '"') inStr = false; continue; }
+        if (c === '"') { inStr = true; continue; }
+        if (c === '{') { if (depth === 0) start = i; depth++; }
+        else if (c === '}') { depth--; if (depth === 0 && start !== -1) { try { return JSON.parse(s.slice(start, i + 1)); } catch (_) {} } }
+    }
+    return null;
+}
+
+async function getSyllabusTextForMemory(message, sender) {
+    // 1) explicit text the content script read from the DOM (HTML syllabus)
+    if (message.syllabusText && String(message.syllabusText).trim().length > 60) {
+        return String(message.syllabusText);
+    }
+    // 2) PDF syllabus — reuse the autopilot's in-tab parser
+    if (message.pdfUrl && sender && sender.tab) {
+        const r = await handleParsePdfText({ pdfUrl: message.pdfUrl }, sender);
+        if (r.success && Array.isArray(r.pages) && r.pages.length) return r.pages.join('\n');
+    }
+    // 3) Canvas syllabus_body via the authenticated API
+    if (message.host && message.courseId) {
+        try {
+            const resp = await fetchWithRetry(
+                `https://${message.host}/api/v1/courses/${message.courseId}?include[]=syllabus_body`,
+                { credentials: 'include' }
+            );
+            if (resp.ok) {
+                const detail = await resp.json();
+                const { text } = normalizeRichText(detail?.syllabus_body, SYLLABUS_TEXT_CHAR_LIMIT);
+                if (text && text.length > 60) return text;
+            }
+        } catch (_) { /* ignore */ }
+    }
+    return '';
+}
+
+async function parseSyllabusToMemory(message, sender) {
+    const courseId = message.courseId && String(message.courseId);
+    if (!courseId) return { success: false, error: 'no_course' };
+    const mem = self.CanvascopeSyllabusMemory;
+    if (!mem) return { success: false, error: 'memory_unavailable' };
+
+    const text = await getSyllabusTextForMemory(message, sender);
+    if (!text || text.length < 60) return { success: false, error: 'no_text' };
+
+    const sample = text.substring(0, 15000);
+    // Bump SYLLABUS_PARSER_VERSION when the extraction prompt/shape changes so
+    // already-parsed syllabi get re-read (e.g. v2 added points-based grading).
+    const SYLLABUS_PARSER_VERSION = 'v2-points';
+    const version = `${SYLLABUS_PARSER_VERSION}:${hashSyllabusText(sample)}`;
+
+    const existing = await mem.getCourse(courseId);
+    if (existing && existing.parseVersion === version) {
+        return { success: true, skipped: true, courseId };
+    }
+
+    const prompt = `From the syllabus text below, extract a single JSON object (no markdown, no prose) with EXACTLY this shape:
+{
+  "gradeBasis": "percent",
+  "totalPoints": 0,
+  "gradingScheme": [ { "category": "Homework", "weight": 20, "points": 0, "dropLowest": 1 } ],
+  "letterCutoffs": [ { "letter": "A", "min": 93 }, { "letter": "A-", "min": 90 } ],
+  "schedule": {
+    "meetingDays": ["Mon","Wed"],
+    "noClassDates": ["2026-11-27"],
+    "examDates": [ { "title": "Midterm 1", "date": "2026-10-15" } ]
+  },
+  "policies": { "late": "", "attendance": "", "other": "" },
+  "instructor": { "name": "", "email": "", "officeHours": "" }
+}
+Rules:
+- "gradeBasis": "points" if the syllabus assigns letter grades by an absolute POINT total (e.g. "A = 153-161 points out of 165"); otherwise "percent".
+- "totalPoints": the course's total point count when gradeBasis is "points" (else 0).
+- "gradingScheme": one entry per graded category. "weight" = percent of final grade (use 0 when points-based). "points" = total points the category contributes when points-based (else 0). "dropLowest" = how many lowest scores are dropped; for "best N of M" set dropLowest = M - N.
+- "letterCutoffs": the grade scale. "min" is in POINTS when gradeBasis is "points" (use the LOWER bound of each range, e.g. A = 153), otherwise the minimum PERCENT. [] if the syllabus states no scale.
+- "noClassDates" = holidays/breaks/cancellations with no class meeting. Dates ISO yyyy-mm-dd.
+- Use "", 0, or [] when info is absent. Return ONLY the JSON object.
+Text:
+${sample}`;
+
+    const ai = await requestSyllabusAIText(prompt, 'You are an academic syllabus parser. Return ONLY a single valid JSON object. No markdown, no prose, no backticks.');
+    if (!ai.success) return { success: false, error: ai.error || 'ai_failed', message: ai.message };
+
+    const parsed = extractJsonObjectLoose(ai.text);
+    if (!parsed || typeof parsed !== 'object') return { success: false, error: 'parse_failed' };
+
+    const entry = await mem.upsertCourse(courseId, {
+        courseName: message.courseName || (existing && existing.courseName) || '',
+        host: message.host || (existing && existing.host) || '',
+        source: message.pdfUrl ? 'pdf' : 'canvas',
+        parseVersion: version,
+        excerpt: sample.slice(0, 400),
+        gradeBasis: parsed.gradeBasis === 'points' ? 'points' : 'percent',
+        totalPoints: Number(parsed.totalPoints) || 0,
+        gradingScheme: Array.isArray(parsed.gradingScheme) ? parsed.gradingScheme : [],
+        letterCutoffs: Array.isArray(parsed.letterCutoffs) ? parsed.letterCutoffs : [],
+        schedule: (parsed.schedule && typeof parsed.schedule === 'object') ? parsed.schedule : {},
+        policies: (parsed.policies && typeof parsed.policies === 'object') ? parsed.policies : {},
+        instructor: (parsed.instructor && typeof parsed.instructor === 'object') ? parsed.instructor : {}
+    });
+
+    return { success: true, courseId, firstParse: !existing, courseName: entry.courseName };
+}
+
+// ============================================
 // MESSAGE PASSING (Popup/Content Script to Background)
 // ============================================
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (message.action === 'parseSyllabusToMemory') {
+        parseSyllabusToMemory(message, sender)
+            .then(sendResponse)
+            .catch(err => sendResponse({ success: false, error: err && err.message ? err.message : String(err) }));
+        return true;
+    }
     if (message.action === 'getStatus') {
         (async () => {
             const data = await chrome.storage.local.get(['indexedContent', 'settings']);
@@ -7476,6 +8191,33 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     if (message.action === 'autoIndexPdf') {
         handleAutoIndexPdf(message, sender).then(res => {
+            sendResponse(res);
+        }).catch(err => {
+            sendResponse({ success: false, error: err && err.message ? err.message : String(err) });
+        });
+        return true;
+    }
+
+    if (message.action === 'courseMaterialsDiscovered') {
+        handleCourseMaterialsDiscovered(message, sender).then(res => {
+            sendResponse(res);
+        }).catch(err => {
+            sendResponse({ success: false, error: err && err.message ? err.message : String(err) });
+        });
+        return true;
+    }
+
+    if (message.action === 'syncCourseMaterialsToSupabase') {
+        syncCourseMaterialsToSupabase().then(res => {
+            sendResponse(res);
+        }).catch(err => {
+            sendResponse({ success: false, error: err && err.message ? err.message : String(err) });
+        });
+        return true;
+    }
+
+    if (message.action === 'searchCourseMaterialsSupabase') {
+        searchCourseMaterialsSupabase(message).then(res => {
             sendResponse(res);
         }).catch(err => {
             sendResponse({ success: false, error: err && err.message ? err.message : String(err) });
@@ -7592,9 +8334,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                     lastWakeFileName: wakeUpload.fileName ? String(wakeUpload.fileName) : null,
                     lastWakeSizeBytes: normalizedWakeSizeBytes,
                     lastWakeMimeType: wakeUpload.mimeType ? String(wakeUpload.mimeType) : null,
-                    lastWakeCreatedAt: wakeUpload.createdAt ? String(wakeUpload.createdAt) : null
+                    lastWakeCreatedAt: wakeUpload.createdAt ? String(wakeUpload.createdAt) : null,
+                    lastTransferStage: 'queued',
+                    lastTransferUploadId: uploadId,
+                    lastTransferFileName: wakeUpload.fileName ? String(wakeUpload.fileName) : null,
+                    lastTransferAt: realtimeReceivedAt
                 }, {
-                    type: 'receiver_wake',
+                    type: 'transfer_progress',
+                    stage: 'queued',
                     reason: wakeReason,
                     topic,
                     uploadId,

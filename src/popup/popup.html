@@ -32,11 +32,6 @@
       </div>
 
       <div class="cs-topbar-controls" aria-label="Popup controls">
-        <button id="cs-ai-btn" class="cs-icon-btn" type="button" aria-label="Open AI Assistant" title="AI Assistant">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M12 3v18M3 12h18M12 3c0 4.5 3.5 8 8 8M12 21c0-4.5 3.5-8 8-8M12 3c0 4.5-3.5 8-8 8M12 21c0-4.5-3.5-8-8-8"></path>
-          </svg>
-        </button>
         <button id="help-btn" class="cs-icon-btn" type="button" aria-label="Open help and shortcuts" title="Help">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <circle cx="11" cy="11" r="7"></circle>
@@ -72,7 +67,7 @@
               <span>Refresh sync</span>
               <kbd>R</kbd>
             </button>
-            <button id="cs-overflow-send-pdf" class="cs-overflow-item" role="menuitem" type="button">
+            <button id="cs-overflow-send-pdf" class="cs-overflow-item" role="menuitem" type="button" hidden>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
                 <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
                 <polyline points="14 2 14 8 20 8"></polyline>
@@ -255,12 +250,16 @@
       </div>
     </div>
 
-    <!-- Footer rail — sync status + stats inline as a quiet HUD readout -->
+    <!-- Footer rail — sync status + DropBridge + stats inline as a quiet HUD readout -->
     <div class="cs-rail">
       <div id="sync-status" class="sync-status synced">
         <span id="sync-icon" class="sync-icon">✓</span>
         <span id="sync-text" class="sync-text">Synced</span>
         <progress id="scan-progress" max="100" value="0" class="hidden"></progress>
+      </div>
+      <div id="dropbridge-status" class="dropbridge-status signed-out" title="DropBridge signed out">
+        <span id="dropbridge-dot" class="dropbridge-dot"></span>
+        <span id="dropbridge-text" class="dropbridge-text">DropBridge signed out</span>
       </div>
       <div class="stats-section">
         <button id="stats-btn" class="stats-btn" type="button" aria-label="Browse all indexed content">
@@ -290,11 +289,57 @@
         <button id="close-account-modal" class="close-btn" type="button" aria-label="Close settings">×</button>
       </div>
       <div class="browse-content settings-modal-content">
-        <div id="settings-profile" class="settings-profile hidden">
+        <button id="settings-profile" class="settings-profile hidden" type="button" aria-expanded="false" aria-controls="settings-student-profile-panel">
           <div id="account-avatar-placeholder" class="settings-avatar"></div>
           <div class="settings-profile-copy">
-            <h3 id="account-name-display" class="settings-profile-name">Loading...</h3>
+            <span id="account-name-display" class="settings-profile-name">Loading...</span>
             <p id="account-email-display" class="settings-profile-email">Please wait</p>
+            <span id="settings-profile-hint" class="settings-profile-hint">Edit student profile</span>
+          </div>
+          <svg class="settings-profile-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="m9 18 6-6-6-6"></path>
+          </svg>
+        </button>
+
+        <div id="settings-student-profile-panel" class="settings-card settings-student-profile-panel hidden">
+          <div class="settings-card-header">
+            <h3 class="settings-card-title">Student Profile</h3>
+            <p class="settings-card-subtitle">These details personalize Canvascope answers and provide user-owned context for Character Profile suggestions.</p>
+          </div>
+          <div class="settings-profile-form">
+            <label class="settings-profile-field" for="settings-pf-name">
+              <span>Name</span>
+              <input id="settings-pf-name" type="text" autocomplete="name" placeholder="e.g. Noel">
+            </label>
+            <label class="settings-profile-field" for="settings-pf-school">
+              <span>School</span>
+              <input id="settings-pf-school" type="text" placeholder="e.g. UC Berkeley">
+            </label>
+            <label class="settings-profile-field" for="settings-pf-grade">
+              <span>Grade / year</span>
+              <input id="settings-pf-grade" type="text" placeholder="e.g. Junior">
+            </label>
+            <label class="settings-profile-field" for="settings-pf-majors">
+              <span>Major(s)</span>
+              <input id="settings-pf-majors" type="text" placeholder="e.g. Biology, Data Science">
+            </label>
+            <label class="settings-profile-field" for="settings-pf-career">
+              <span>Career plans</span>
+              <input id="settings-pf-career" type="text" placeholder="e.g. med school, physician-scientist">
+            </label>
+            <label class="settings-profile-field" for="settings-pf-other">
+              <span>Other info</span>
+              <textarea id="settings-pf-other" rows="3" placeholder="Learning preferences, interests, or context Canvascope should account for"></textarea>
+            </label>
+          </div>
+          <div class="settings-profile-actions">
+            <span id="settings-profile-status" class="settings-profile-status" aria-live="polite"></span>
+            <button id="settings-profile-clear" class="action-btn secondary-btn" type="button">
+              <span class="btn-text">Clear</span>
+            </button>
+            <button id="settings-profile-save" class="action-btn" type="button">
+              <span class="btn-text">Save profile</span>
+            </button>
           </div>
         </div>
 
@@ -310,14 +355,189 @@
           </div>
         </div>
 
+        <section class="settings-section" aria-labelledby="ai-settings-title">
+          <div class="settings-section-header">
+            <h3 id="ai-settings-title" class="settings-section-title">AI Context</h3>
+            <p class="settings-section-subtitle">Controls for course-material indexing and retrieval.</p>
+          </div>
+
+          <div class="settings-card">
+            <div class="settings-card-header">
+              <h3 class="settings-card-title">Course materials</h3>
+              <p class="settings-card-subtitle">PDF text and OCR stay local unless cloud sync is enabled.</p>
+            </div>
+
+            <label class="setting-row" for="enable-course-material-sync">
+              <div class="setting-copy">
+                <span class="setting-title">Sync extracted course text</span>
+                <span class="setting-description">Off by default. When on, signed-in users store parsed course PDF chunks in Supabase for cross-device search.</span>
+              </div>
+              <span class="setting-toggle-shell">
+                <input id="enable-course-material-sync" class="setting-toggle-input" type="checkbox" role="switch"
+                  aria-label="Sync extracted course material text">
+                <span class="setting-toggle-slider" aria-hidden="true"></span>
+              </span>
+            </label>
+          </div>
+        </section>
+
+        <section class="settings-section" aria-labelledby="lectra-settings-title">
+          <div class="settings-section-header">
+            <h3 id="lectra-settings-title" class="settings-section-title">Lectra</h3>
+            <p class="settings-section-subtitle">Optional PDF handoff and FileDrop controls.</p>
+          </div>
+
+          <div class="settings-card">
+            <div class="settings-card-header">
+              <h3 class="settings-card-title">Send to Lectra</h3>
+              <p class="settings-card-subtitle">Show Lectra send, import, and receive actions for supported PDFs.</p>
+            </div>
+
+            <label class="setting-row" for="enable-send-to-lectra">
+              <div class="setting-copy">
+                <span class="setting-title">Enable Lectra features</span>
+                <span class="setting-description">Off by default. When off, Canvascope hides Lectra buttons and stops FileDrop receiving.</span>
+              </div>
+              <span class="setting-toggle-shell">
+                <input id="enable-send-to-lectra" class="setting-toggle-input" type="checkbox" role="switch"
+                  aria-label="Enable Lectra features">
+                <span class="setting-toggle-slider" aria-hidden="true"></span>
+              </span>
+            </label>
+
+            <div id="settings-dropbridge-status" class="settings-dropbridge-status signed-out">
+              <span class="dropbridge-dot"></span>
+              <div class="settings-dropbridge-copy">
+                <span id="settings-dropbridge-label" class="settings-dropbridge-label">DropBridge signed out</span>
+                <p id="settings-dropbridge-detail" class="settings-dropbridge-detail"></p>
+              </div>
+            </div>
+          </div>
+
+          <div class="settings-card">
+            <div class="settings-card-header">
+              <h3 class="settings-card-title">Syllabus Autopilot</h3>
+              <p class="settings-card-subtitle">Spot syllabi automatically and offer to add their deadlines to your calendar.</p>
+            </div>
+
+            <label class="setting-row" for="enable-autopilot-prompt">
+              <div class="setting-copy">
+                <span class="setting-title">Offer to add deadlines</span>
+                <span class="setting-description">When you open a syllabus, Canvascope offers to pull its dates into Google Calendar. You can still run it anytime with /autopilot.</span>
+              </div>
+              <span class="setting-toggle-shell">
+                <input id="enable-autopilot-prompt" class="setting-toggle-input" type="checkbox" role="switch"
+                  aria-label="Offer to add syllabus deadlines">
+                <span class="setting-toggle-slider" aria-hidden="true"></span>
+              </span>
+            </label>
+          </div>
+        </section>
+
         <div class="settings-card">
           <div class="settings-card-header">
             <h3 class="settings-card-title">Appearance</h3>
-            <p class="settings-card-subtitle">Theme for Canvascope's own windows (popup and AI sidepanel).</p>
           </div>
-          <div id="appearance-seg" class="appearance-seg" role="group" aria-label="UI theme">
-            <button type="button" class="appearance-seg-btn" data-ui-theme="dark" aria-pressed="false">Dark</button>
-            <button type="button" class="appearance-seg-btn" data-ui-theme="light" aria-pressed="false">Light</button>
+          <div style="padding: 0 14px 14px;">
+            <div id="appearance-seg" class="appearance-seg" role="group" aria-label="UI theme">
+              <button type="button" class="appearance-seg-btn" data-ui-theme="dark" aria-pressed="false">Dark</button>
+              <button type="button" class="appearance-seg-btn" data-ui-theme="light" aria-pressed="false">Light</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="settings-card">
+          <div class="settings-card-header">
+            <h3 class="settings-card-title">Canvas Appearance</h3>
+            <p class="settings-card-subtitle">Restyle Canvas itself — theme, density, and dashboard tweaks. Changes apply to open Canvas tabs instantly.</p>
+          </div>
+
+          <label class="setting-row setting-row--select" for="canvas-theme-select">
+            <div class="setting-copy">
+              <span class="setting-title">Theme</span>
+              <span class="setting-description">Repaint Canvas with a built-in look.</span>
+            </div>
+            <select id="canvas-theme-select" class="setting-select" aria-label="Canvas theme"></select>
+          </label>
+
+          <label class="setting-row setting-row--select" for="canvas-density-select">
+            <div class="setting-copy">
+              <span class="setting-title">Card density</span>
+              <span class="setting-description">Spacing of dashboard course cards.</span>
+            </div>
+            <select id="canvas-density-select" class="setting-select" aria-label="Card density">
+              <option value="canvas">Canvas default</option>
+              <option value="compact">Compact</option>
+              <option value="cozy">Cozy</option>
+              <option value="comfy">Comfy</option>
+            </select>
+          </label>
+
+          <label class="setting-row setting-row--select" id="canvas-font-row" for="canvas-font-select" hidden>
+            <div class="setting-copy">
+              <span class="setting-title">Font</span>
+              <span class="setting-description">Typeface across Canvas.</span>
+            </div>
+            <select id="canvas-font-select" class="setting-select" aria-label="Canvas font"></select>
+          </label>
+
+          <label class="setting-row" for="canvas-grade-pills">
+            <div class="setting-copy">
+              <span class="setting-title">Grade pills on cards</span>
+              <span class="setting-description">Show current letter and percent on each dashboard card.</span>
+            </div>
+            <span class="setting-toggle-shell">
+              <input id="canvas-grade-pills" class="setting-toggle-input" type="checkbox" role="switch" aria-label="Grade pills on cards">
+              <span class="setting-toggle-slider" aria-hidden="true"></span>
+            </span>
+          </label>
+
+          <label class="setting-row" for="canvas-previews">
+            <div class="setting-copy">
+              <span class="setting-title">Hover previews</span>
+              <span class="setting-description">Peek at assignments and announcements on hover.</span>
+            </div>
+            <span class="setting-toggle-shell">
+              <input id="canvas-previews" class="setting-toggle-input" type="checkbox" role="switch" aria-label="Hover previews">
+              <span class="setting-toggle-slider" aria-hidden="true"></span>
+            </span>
+          </label>
+
+          <label class="setting-row" for="canvas-card-gradient">
+            <div class="setting-copy">
+              <span class="setting-title">Card gradient</span>
+              <span class="setting-description">Smooth hue blend on dashboard card headers.</span>
+            </div>
+            <span class="setting-toggle-shell">
+              <input id="canvas-card-gradient" class="setting-toggle-input" type="checkbox" role="switch" aria-label="Card gradient">
+              <span class="setting-toggle-slider" aria-hidden="true"></span>
+            </span>
+          </label>
+
+          <label class="setting-row" for="canvas-hide-feedback">
+            <div class="setting-copy">
+              <span class="setting-title">Hide recent feedback</span>
+              <span class="setting-description">Remove the dashboard "Recent Feedback" panel.</span>
+            </div>
+            <span class="setting-toggle-shell">
+              <input id="canvas-hide-feedback" class="setting-toggle-input" type="checkbox" role="switch" aria-label="Hide recent feedback">
+              <span class="setting-toggle-slider" aria-hidden="true"></span>
+            </span>
+          </label>
+
+          <label class="setting-row" for="canvas-hide-help">
+            <div class="setting-copy">
+              <span class="setting-title">Hide Help link</span>
+              <span class="setting-description">Remove the Help item from the global nav.</span>
+            </div>
+            <span class="setting-toggle-shell">
+              <input id="canvas-hide-help" class="setting-toggle-input" type="checkbox" role="switch" aria-label="Hide Help link">
+              <span class="setting-toggle-slider" aria-hidden="true"></span>
+            </span>
+          </label>
+
+          <div style="padding: 8px 14px 12px;">
+            <button id="canvas-skin-reset" type="button" class="action-btn secondary-btn settings-inline-btn">Reset Canvas appearance</button>
           </div>
         </div>
 
@@ -342,21 +562,9 @@
 
         <div class="settings-card">
           <div class="settings-card-header">
-            <h3 class="settings-card-title">Lectra</h3>
-            <p class="settings-card-subtitle">Control optional PDF handoff features and advanced search tuning.</p>
+            <h3 class="settings-card-title">Search Intelligence</h3>
+            <p class="settings-card-subtitle">Control personalized ranking and advanced search tuning.</p>
           </div>
-
-          <label class="setting-row" for="enable-send-to-lectra">
-            <div class="setting-copy">
-              <span class="setting-title">Enable Send to Lectra</span>
-              <span class="setting-description">Show Lectra send actions for supported PDFs. This is off by default.</span>
-            </div>
-            <span class="setting-toggle-shell">
-              <input id="enable-send-to-lectra" class="setting-toggle-input" type="checkbox" role="switch"
-                aria-label="Enable Send to Lectra">
-              <span class="setting-toggle-slider" aria-hidden="true"></span>
-            </span>
-          </label>
 
           <label class="setting-row" for="enable-adaptive-learning">
             <div class="setting-copy">
@@ -578,6 +786,21 @@
 
   <script src="../lib/fuse.min.js"></script>
   <script src="../components/radar/radar.js"></script>
+  <!-- RAG ask stack (shared with the sidepanel): retrieval + inference + render.
+       Loaded lazily; the standalone popup is unaffected until Cmd+K asks. -->
+  <script src="../core/semantic-matcher.js"></script>
+  <script src="../core/local-embeddings.js"></script>
+  <script src="../core/syllabus-memory.js"></script>
+  <script src="../core/course-materials.js"></script>
+  <script src="../core/local-ai.js"></script>
+  <script src="../core/rag-core.js"></script>
+  <script src="../core/ai-router.js"></script>
+  <script src="../core/grade-target.js"></script>
+  <script src="../core/grade-target-answer.js"></script>
+  <script src="../core/student-profile.js"></script>
+  <script src="../core/answer-render.js"></script>
+  <!-- Theme catalog so Settings → Canvas Appearance can enumerate themes/fonts. -->
+  <script src="../lib/skin-themes.js"></script>
   <script src="popup.js"></script>
 </body>
 

@@ -88,7 +88,7 @@ class DocumentParser {
    * @param {string} courseHint - Optional course name hint for indexing
    * @returns {Promise<Array<string>>} Page-by-page text content
    */
-  static async fetchAndParsePdf(url, titleHint = null, courseHint = null) {
+  static async fetchAndParsePdf(url, titleHint = null, courseHint = null, options = {}) {
     try {
       if (!url) return [];
 
@@ -106,7 +106,7 @@ class DocumentParser {
         pagesText = cache[cacheKey];
       } else {
         console.log('[Canvascope DocumentParser] Cache miss, fetching PDF:', cleanUrl);
-        const response = await fetch(url);
+        const response = await fetch(url, { credentials: 'include' });
         if (!response.ok) {
           throw new Error(`HTTP network error: status ${response.status}`);
         }
@@ -121,7 +121,7 @@ class DocumentParser {
 
       // Persistently index this PDF to indexedContent
       if (pagesText && pagesText.length > 0) {
-        await this.persistPdfToIndex(url, titleHint, courseHint, pagesText);
+        await this.persistPdfToIndex(url, titleHint, courseHint, pagesText, options);
       }
 
       return pagesText;
@@ -134,25 +134,36 @@ class DocumentParser {
   /**
    * Permanently indexes parsed PDF text into chrome.storage.local 'indexedContent'
    */
-  static async persistPdfToIndex(url, title, courseName, pagesText) {
+  static async persistPdfToIndex(url, title, courseName, pagesText, metadata = {}) {
     try {
       if (!Array.isArray(pagesText) || pagesText.length === 0) return;
       const cleanUrl = url.split('?')[0].split('#')[0];
+      const normalizePage = (page, idx) => {
+        if (typeof page === 'string') {
+          return { pageNum: idx + 1, text: page };
+        }
+        return {
+          pageNum: Number(page?.pageNum || page?.page || idx + 1),
+          text: String(page?.text || '')
+        };
+      };
+      const normalizedPages = pagesText.map(normalizePage);
       
       const { indexedContent = [] } = await chrome.storage.local.get(['indexedContent']);
       const existingIdx = indexedContent.findIndex(item => item.url && item.url.split('?')[0].split('#')[0] === cleanUrl);
       
-      const fullText = pagesText.join('\n').trim();
+      const fullText = normalizedPages.map(page => page.text).join('\n').trim();
       const filename = cleanUrl.split('/').pop() || 'document.pdf';
       const cleanTitle = title || filename;
 
       const pdfIndexItem = {
+        ...(metadata && typeof metadata === 'object' ? metadata : {}),
         title: cleanTitle,
         courseName: courseName || 'General',
         url: url,
         type: 'file',
         content: fullText, // Save full text in item's content field
-        pages: pagesText,
+        pages: normalizedPages,
         indexedAt: Date.now()
       };
 
@@ -187,6 +198,23 @@ class DocumentParser {
 
         console.warn(`[Canvascope DocumentParser] Storage quota hit; evicting ${toEvict.size} oldest indexed PDF(s) and retrying.`);
         await chrome.storage.local.set({ indexedContent: pruned });
+      }
+
+      const courseMaterials = (typeof self !== 'undefined' && self.CanvascopeCourseMaterials)
+        || (typeof window !== 'undefined' && window.CanvascopeCourseMaterials)
+        || null;
+      if (courseMaterials && typeof courseMaterials.storeParsedPdf === 'function') {
+        await courseMaterials.storeParsedPdf({
+          ...(metadata && typeof metadata === 'object' ? metadata : {}),
+          title: cleanTitle,
+          courseName: courseName || metadata?.courseName || 'General',
+          url,
+          sourceUrl: metadata?.sourceUrl || url,
+          downloadUrl: metadata?.downloadUrl || url,
+          type: 'file',
+          mimeType: metadata?.mimeType || 'application/pdf',
+          isPdf: true
+        }, normalizedPages);
       }
     } catch (e) {
       console.warn('[Canvascope DocumentParser] Failed to persist PDF to index:', e);

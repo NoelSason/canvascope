@@ -14,9 +14,31 @@
 
   const BTN_FLAG = 'data-canvascope-lectra-btn';
   const HOST_FLAG = 'data-canvascope-lectra-host';
+  const DEFAULT_EXTENSION_SETTINGS = Object.freeze({
+    enableSendToLectra: false
+  });
+  let extensionSettings = { ...DEFAULT_EXTENSION_SETTINGS };
 
   function api() {
     return window.CanvascopeAttachFromLectra || null;
+  }
+
+  function normalizeExtensionSettings(rawSettings) {
+    const source = rawSettings && typeof rawSettings === 'object' ? rawSettings : {};
+    return {
+      ...DEFAULT_EXTENSION_SETTINGS,
+      ...source,
+      enableSendToLectra: Boolean(source.enableSendToLectra)
+    };
+  }
+
+  function isLectraEnabled() {
+    return Boolean(extensionSettings.enableSendToLectra);
+  }
+
+  function removeButtons() {
+    document.querySelectorAll(`[${BTN_FLAG}]`).forEach((node) => node.remove());
+    document.querySelectorAll(`[${HOST_FLAG}]`).forEach((node) => node.removeAttribute(HOST_FLAG));
   }
 
   function isVisible(el) {
@@ -130,6 +152,11 @@
   }
 
   function injectButtons() {
+    if (!isLectraEnabled()) {
+      removeButtons();
+      return;
+    }
+
     const controls = findSelectFileControls();
     for (const control of controls) {
       // Anchor on the control's parent so duplicates are easy to detect.
@@ -169,5 +196,25 @@
       schedule();
     });
   }
-  schedule();
+
+  try {
+    chrome.storage.local.get(['settings']).then((data) => {
+      extensionSettings = normalizeExtensionSettings(data.settings);
+      schedule();
+    });
+  } catch (_) {
+    removeButtons();
+  }
+
+  try {
+    chrome.storage.onChanged.addListener((changes, areaName) => {
+      if (areaName !== 'local' || !changes.settings) return;
+      extensionSettings = normalizeExtensionSettings(changes.settings.newValue);
+      if (isLectraEnabled()) {
+        schedule();
+      } else {
+        removeButtons();
+      }
+    });
+  } catch (_) { /* ignore */ }
 })();

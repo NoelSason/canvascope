@@ -36,7 +36,7 @@ test('RISC cleanup migration disarms the auth hook and drops event support objec
   const migrationNames = readdirSync(projectUrl('supabase/migrations'))
     .filter((name) => name.endsWith('_remove_risc_account_protection.sql'));
 
-  assert.deepEqual(migrationNames, ['20260623013817_remove_risc_account_protection.sql']);
+  assert.deepEqual(migrationNames, ['20260623015138_remove_risc_account_protection.sql']);
 
   const migration = readProjectFile(`supabase/migrations/${migrationNames[0]}`);
   assert.match(migration, /create or replace function public\.risc_enforce_signin_block\(event jsonb\)/);

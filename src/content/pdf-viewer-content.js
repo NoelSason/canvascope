@@ -52,7 +52,8 @@
         const source = rawSettings && typeof rawSettings === 'object' ? rawSettings : {};
         return {
             ...DEFAULT_EXTENSION_SETTINGS,
-            ...source
+            ...source,
+            enableSendToLectra: Boolean(source.enableSendToLectra)
         };
     }
 

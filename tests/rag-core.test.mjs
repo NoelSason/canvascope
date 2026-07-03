@@ -152,3 +152,97 @@ test('RAGCore.retrieveLocalContext finds a closed PDF by a word in its body only
     mockStorage.indexedContent = prevIndexed;
   }
 });
+
+test('RAGCore.buildCorpus preserves Canvas file metadata for RAG material summaries', async () => {
+  const prevIndexed = mockStorage.indexedContent;
+  const nowIso = new Date().toISOString();
+  mockStorage.indexedContent = [
+    {
+      title: 'Membrane transport slides',
+      courseName: 'MCB 102 (Summer 2026)',
+      type: 'file',
+      url: 'https://bcourses.berkeley.edu/courses/102/files/777',
+      moduleName: 'Week 3',
+      folderPath: 'Course Materials > Week 3 (June 30)',
+      pathSegments: ['Course Materials', 'Week 3 (June 30)'],
+      weekHints: ['3'],
+      scannedAt: nowIso
+    }
+  ];
+
+  try {
+    const corpus = await RAGCore.buildCorpus();
+    const item = corpus.find(entry => entry.title === 'Membrane transport slides');
+    assert.ok(item, 'expected file item in normalized corpus');
+    assert.equal(item.moduleName, 'Week 3');
+    assert.equal(item.folderPath, 'Course Materials > Week 3 (June 30)');
+    assert.deepEqual(item.weekHints, ['3']);
+    assert.equal(item.scannedAt, nowIso);
+  } finally {
+    mockStorage.indexedContent = prevIndexed;
+  }
+});
+
+test('RAGCore.retrieveBrainChunks surfaces recent course materials for broad this-week study questions', async () => {
+  const prevIndexed = mockStorage.indexedContent;
+  mockStorage.indexedContent = [
+    {
+      title: 'Membrane transport slides',
+      courseName: 'MCB 102 (Summer 2026)',
+      type: 'file',
+      url: 'https://bcourses.berkeley.edu/courses/102/files/777',
+      folderPath: 'Course Materials > June 30',
+      scannedAt: new Date(Date.now() - 60 * 60 * 1000).toISOString()
+    },
+    {
+      title: 'Protein trafficking worksheet',
+      courseName: 'MCB 102 (Summer 2026)',
+      type: 'file',
+      url: 'https://bcourses.berkeley.edu/courses/102/files/778',
+      folderPath: 'Course Materials > July 1',
+      scannedAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString()
+    }
+  ];
+
+  try {
+    const chunks = await RAGCore.retrieveBrainChunks('what did we study this week?', { limit: 4 });
+    assert.ok(chunks.length >= 2, 'expected recent material chunks even without lexical topic overlap');
+    assert.ok(chunks.some(chunk => chunk.title === 'Membrane transport slides'));
+    assert.ok(chunks.some(chunk => chunk.text.includes('Course Materials > June 30')));
+  } finally {
+    mockStorage.indexedContent = prevIndexed;
+  }
+});
+
+test('RAGCore.compileUnifiedPrompt gives local AI date grounding and sparse file-list evidence', async () => {
+  const prevIndexed = mockStorage.indexedContent;
+  const prevTabUrl = mockTabUrl;
+  mockTabUrl = 'https://google.com';
+  mockStorage.indexedContent = [
+    {
+      title: 'Week 3 - Signal transduction lecture',
+      courseName: 'MCB 102 (Summer 2026)',
+      type: 'file',
+      url: 'https://bcourses.berkeley.edu/courses/102/files/779',
+      moduleName: 'Week 3',
+      folderPath: 'Course Materials > Week 3 (June 30 - July 2)',
+      pathSegments: ['Course Materials', 'Week 3 (June 30 - July 2)'],
+      weekHints: ['3'],
+      scannedAt: new Date().toISOString()
+    }
+  ];
+
+  try {
+    const compiled = await RAGCore.compileUnifiedPrompt('what did we study in MCB 102 this week?');
+    assert.match(compiled.prompt, /=== CURRENT CONTEXT ===/);
+    assert.match(compiled.prompt, /Today's date is /);
+    assert.match(compiled.prompt, /do not claim the course has not started/i);
+    assert.match(compiled.prompt, /Week 3 - Signal transduction lecture/);
+    assert.match(compiled.prompt, /Course Materials > Week 3 \(June 30 - July 2\)/);
+    assert.equal(compiled.sources.length, 1);
+    assert.equal(compiled.sources[0].title, 'Week 3 - Signal transduction lecture');
+  } finally {
+    mockStorage.indexedContent = prevIndexed;
+    mockTabUrl = prevTabUrl;
+  }
+});

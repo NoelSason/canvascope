@@ -4,14 +4,14 @@
 
 Canvascope is a local-first Chrome extension for Canvas and Brightspace. It indexes course content for fast search, supports course-scoped queries and planner workflows, and can optionally push selected PDFs to Lectra (iPad) through Supabase.
 
-![Version](https://img.shields.io/badge/version-10.0.0-orange)
+![Version](https://img.shields.io/badge/version-10.1.0-orange)
 ![Chrome](https://img.shields.io/badge/Chrome-116%2B-green)
 ![License](https://img.shields.io/badge/license-MIT-purple)
 
 > [!IMPORTANT]
-> **v10.0.0 is now available.**
+> **v10.1.0 is now available.**
 >
-> This major release brings a highly organized source layout, a local AI-powered RAG chat assistant (offline Gemini Nano + Supabase fallback), offline PDF text extraction and image OCR search (Tesseract.js), and DropBridge v3 with realtime receipts.
+> This release brings a highly organized source layout, a local AI-powered RAG chat assistant (offline Gemini Nano + Supabase fallback), course-scoped PDF/OCR material indexing, DropBridge v3 with realtime receipts, and Character Profile suggestions.
 
 ---
 
@@ -20,23 +20,39 @@ Canvascope is a local-first Chrome extension for Canvas and Brightspace. It inde
 ### Search and Planner
 - Instant search with Fuse.js + lexical fusion ranking
 - Auto-sync on supported LMS tabs
-- Course-scoped search queries
+- Course-code-aware search queries, including aliases like `MCB 102` for long LMS course names
+- Date-aware Cmd/Ctrl + K ranking for `today`, `yesterday`, and `this week` material searches
 - Due date planner with dismissable tasks
 - Keyboard overlay (Cmd/Ctrl + K) on Canvas pages
+- LMS skin support extends into Kaltura Media Gallery embeds and standalone players, including early-frame paint to avoid white flashes during LTI loads
 - Optional Google sign-in for account-linked sync features, using standard Supabase session persistence
 
 ### Local AI & Hybrid RAG Assistant
 - In-browser chat companion (offline Gemini Nano or online Supabase fallback)
 - Scrapes active LMS page content to dynamically supplement context
+- Course-material RAG indexer discovers Canvas course files/modules, parses PDFs with PDF.js/OCR from the authenticated Canvas tab, and retrieves by active course/week before falling back to broader local context
 - Local lexical keyword frequency scorer that retrieves stored assignments, custom tasks, and user notes
 - Lexically-gated semantic reranking: the on-device concept matcher only **reorders** lexically-relevant chunks, never injects off-topic material, so cited sources stay on-topic
+- Date-grounded material summaries preserve Canvas file paths, module names, week labels, parsed page text, and sparse file-list evidence so broad "what did we study this week" questions explain the current topics instead of citing unrelated courses
+- Cmd/Ctrl + K answers keep sources behind a compact disclosure instead of an always-visible citation rail
 - Silent personalization: the student profile tailors tone and examples but is never restated back in answers
 - Auto-surfaces upcoming schedule tasks on calendar queries with fallback heuristics
+
+### Personalized Suggestions (Character Profile)
+- Surfaces a small set of explained "what to work on next" suggestions from your own Canvascope activity (due dates, grades, recent searches)
+- Includes "Resume where you left off" suggestions for supported LMS pages and a click-only **Paste assignment** button
+- Every suggestion shows *why* it appeared and which source it came from; dismiss individual suggestions any time
+- Profile controls let you turn suggestions off, pause/unpause, inspect short summaries and sync status, or delete suggestion data
+- The Settings account row opens the editable Student Profile for name, school, grade/year, majors, career plans, and other personalization notes
+- **On by default**; settings and short derived summaries sync to your account when signed in, and stay local when signed out
+- Stores only short, source-attributed summaries — never the full text of your searches, documents, pages, or prompts
+- See [docs/TERMS.md](docs/TERMS.md) and [docs/PRIVACY.md](docs/PRIVACY.md)
 
 ### Offline PDF & Image OCR Search
 - Extracts and indexes PDF text content locally for instant searching
 - Offline OCR (via Tesseract.js) scans text inside scanned PDFs and images
 - Caches parsed pages to `chrome.storage.local` for fast future hits
+- Optional account sync stores normalized course-material document/chunk rows in Supabase for full-text search when the user enables extracted-text sync
 
 ### Lectra PDF Handoff & DropBridge v3
 - `Send to Lectra` floating action button appears on Canvas syllabus and assignment PDF pages
@@ -46,6 +62,9 @@ Canvascope is a local-first Chrome extension for Canvas and Brightspace. It inde
 
 ### Privacy Model
 - Local-first indexing: search corpus stays in `chrome.storage.local`
+- Raw extracted course PDF/OCR text stays local by default; signed-in users can opt into Supabase course-material sync from Settings
+- Character Profile sync stores only settings, dismissed suggestion ids, and short source-attributed summaries; delete clears local state and tombstones the synced row
+- Clipboard text is read only when you click **Paste assignment** and is not stored by that capability
 - No analytics or ad tracking
 - Academic PDF upload occurs only when you explicitly send to Lectra
 
@@ -142,7 +161,7 @@ This contract aligns with the Lectra workspace specs in `../..` (`lectra [IN PRO
 - Lectra PDF push bridge & DropBridge v3 (v10.0.0)
 - Local AI chat assistant with active-tab hybrid RAG pipeline (v8.0.0)
 - Offline PDF text parsing & image OCR search (v9.0.0)
-- RAG retrieval relevance floor (semantic layer reorders only, no off-topic citations), silent profile personalization, and Ask sidepanel UI cleanup (inline header, locked horizontal scroll)
+- RAG retrieval relevance floor (semantic layer reorders only, no off-topic citations), sparse Canvas file-list material summaries, silent profile personalization, and Ask sidepanel UI cleanup (inline header, locked horizontal scroll)
 
 ### Next
 - Expanded content extraction (LMS slides, video transcripts, module text)
@@ -163,6 +182,7 @@ Default support includes:
 - `canvas.ucsd.edu`
 - `canvas.asu.edu`
 - `canvas.mit.edu`
+- `kaf.berkeley.edu` and common Kaltura hosts used by Media Gallery embeds (`*.kaf.kaltura.com`, `*.mediaspace.kaltura.com`)
 
 To add a custom LMS domain:
 
@@ -176,7 +196,8 @@ bash scripts/add-school.sh https://yourschool.instructure.com
 
 - Search indexing is local-first.
 - LMS API calls are required for scanning and sync.
-- Supabase is used for account-linked features and Lectra PDF handoff.
+- Supabase is used for account-linked features, optional extracted course-material search, and Lectra PDF handoff.
+- The active Supabase contract is limited to Canvascope/Lectra sync, optional `course_material_documents` / `course_material_chunks`, DropBridge, search habits, Google token storage, profile/preferences, and planner tables; the historical MedMatch course-requirement tables have been removed.
 - Google Cross-Account Protection (RISC) is not wired into the extension; Canvascope does not consume Google RISC events or force sign-out from those events.
 - No analytics SDKs or ad trackers are included.
 

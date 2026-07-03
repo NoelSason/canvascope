@@ -4,6 +4,13 @@ import { test } from 'node:test';
 
 const backgroundSource = readFileSync(new URL('../src/background/background.js', import.meta.url), 'utf8');
 const offscreenSource = readFileSync(new URL('../src/offscreen/offscreen.js', import.meta.url), 'utf8');
+const popupHtmlSource = readFileSync(new URL('../src/popup/popup.html', import.meta.url), 'utf8');
+const sidepanelHtmlSource = readFileSync(new URL('../src/sidepanel/sidepanel.html', import.meta.url), 'utf8');
+const sidepanelJsSource = readFileSync(new URL('../src/sidepanel/sidepanel.js', import.meta.url), 'utf8');
+const gradescopeSource = readFileSync(new URL('../src/content/gradescope.js', import.meta.url), 'utf8');
+const uploadFileV2Source = readFileSync(new URL('../supabase/functions/upload-file-v2/index.ts', import.meta.url), 'utf8');
+const claimUploadV2Source = readFileSync(new URL('../supabase/functions/claim-upload-v2/index.ts', import.meta.url), 'utf8');
+const updateUploadStatusV2Source = readFileSync(new URL('../supabase/functions/update-upload-status-v2/index.ts', import.meta.url), 'utf8');
 const migrationSource = readFileSync(
   new URL('../supabase/migrations/20260610120000_dropbridge_v3_realtime_receipts.sql', import.meta.url),
   'utf8',
@@ -46,11 +53,49 @@ test('DropBridge targeted claim suppresses duplicate active upload wakes', () =>
 
 test('DropBridge offscreen receiver forwards rich realtime wake metadata', () => {
   assert.match(offscreenSource, /function normalizeWakeUpload/);
+  assert.match(offscreenSource, /payload\?\.payload/);
   assert.match(offscreenSource, /file_name/);
   assert.match(offscreenSource, /size_bytes/);
   assert.match(offscreenSource, /mime_type/);
   assert.match(offscreenSource, /created_at/);
   assert.match(offscreenSource, /realtimeReceivedAt/);
+});
+
+test('DropBridge popup renders receiver health status', () => {
+  assert.match(popupHtmlSource, /id="dropbridge-status"/);
+  assert.match(popupHtmlSource, /id="dropbridge-dot"/);
+  assert.match(popupHtmlSource, /id="dropbridge-text"/);
+  assert.match(popupHtmlSource, /id="settings-dropbridge-status"/);
+  assert.match(popupHtmlSource, /id="settings-dropbridge-label"/);
+  assert.match(popupHtmlSource, /id="settings-dropbridge-detail"/);
+  assert.match(popupHtmlSource, /id="lectra-settings-title"/);
+  assert.match(popupHtmlSource, /id="cs-overflow-send-pdf"[^>]*hidden/);
+});
+
+test('Lectra disabled hides UI and prevents FileDrop receiver warmup', () => {
+  assert.match(backgroundSource, /async function isSendToLectraFeatureEnabled/);
+  assert.match(backgroundSource, /reason:\s*'feature_disabled'/);
+  assert.match(backgroundSource, /FileDrop disabled/);
+  assert.match(gradescopeSource, /function isLectraEnabled/);
+  assert.match(gradescopeSource, /removeButtons\(\)/);
+  assert.match(sidepanelHtmlSource, /id="btn-lectra-send"[^>]*hidden/);
+  assert.match(sidepanelJsSource, /function updateLectraButtonVisibility/);
+});
+
+test('DropBridge upload sends explicit realtime wake with sender device tracking', () => {
+  assert.match(uploadFileV2Source, /const FILE_DROP_EVENT = "upload_queued"/);
+  assert.match(uploadFileV2Source, /sender_device_id:\s*senderDeviceId \|\| null/);
+  assert.match(uploadFileV2Source, /broadcastDropBridgeEvent/);
+  assert.match(uploadFileV2Source, /wake_broadcasted/);
+});
+
+test('DropBridge claim and terminal status broadcast sender progress events', () => {
+  assert.match(claimUploadV2Source, /sender_device_id/);
+  assert.match(claimUploadV2Source, /status:\s*"claimed"/);
+  assert.match(claimUploadV2Source, /status:\s*"signed_url_issued"/);
+  assert.match(updateUploadStatusV2Source, /sender_device_id/);
+  assert.match(updateUploadStatusV2Source, /const UPLOAD_STATUS_EVENT = "upload_status"/);
+  assert.match(updateUploadStatusV2Source, /stage:\s*status/);
 });
 
 test('DropBridge heartbeat uses the heartbeat endpoint instead of pending-list claim', () => {

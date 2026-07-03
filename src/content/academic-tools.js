@@ -101,8 +101,37 @@
     return host;
   }
 
+  // Match the modal to the page it overlays. We sample the actual page background
+  // luminance (covers native-light Canvas, native-dark Canvas, and Canvascope's own
+  // dark skin), falling back to the OS color-scheme preference.
+  function parseRgb(value) {
+    const m = String(value || '').match(/rgba?\(([^)]+)\)/i);
+    if (!m) return null;
+    const parts = m[1].split(',').map(s => parseFloat(s.trim()));
+    if (parts.length < 3 || parts.some(n => Number.isNaN(n))) return null;
+    return { r: parts[0], g: parts[1], b: parts[2], a: parts.length > 3 ? parts[3] : 1 };
+  }
+  function detectModalTheme() {
+    try {
+      const sources = [document.body, document.documentElement];
+      for (const el of sources) {
+        if (!el) continue;
+        const c = parseRgb(getComputedStyle(el).backgroundColor);
+        if (!c || c.a < 0.5) continue;
+        // Perceived luminance (0–255).
+        const lum = 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
+        return lum >= 150 ? 'light' : 'dark';
+      }
+    } catch (_) {}
+    try {
+      if (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) return 'light';
+    } catch (_) {}
+    return 'dark';
+  }
+
   function openModal(renderInner) {
     const host = ensureModalHost();
+    host.setAttribute('data-theme', detectModalTheme());
     host.style.pointerEvents = 'auto';
     const root = host.shadowRoot;
     const slot = root.getElementById('slot');
@@ -1161,7 +1190,8 @@ ${docTextSample}`;
         listContainer.className = 'autopilot-list-container';
         listContainer.innerHTML = `
           <div class="autopilot-meta-row">
-            <span>Found ${scheduleItems.length} calendar items. Select the ones to schedule:</span>
+            <span class="autopilot-count">${scheduleItems.length}</span>
+            <span>deadlines found — pick the ones to add</span>
           </div>
           <ul class="autopilot-list">
             ${scheduleItems.map((item, idx) => {
@@ -1170,15 +1200,15 @@ ${docTextSample}`;
                 <li class="autopilot-item" data-idx="${idx}">
                   <input type="checkbox" checked data-chk />
                   <div class="autopilot-item-fields">
-                    <input type="text" value="${escapeHtml(item.title)}" data-title placeholder="Task Title" style="flex: 2; background: var(--cs-tool-bg-1); border: 1px solid var(--cs-tool-border); color: var(--cs-tool-text); padding: 4px 8px; font-size: 12px; border-radius: 4px;" />
-                    <input type="datetime-local" value="${dateVal}" data-date style="flex: 1; background: var(--cs-tool-bg-1); border: 1px solid var(--cs-tool-border); color: var(--cs-tool-text); padding: 4px 8px; font-size: 11px; border-radius: 4px;" />
+                    <input type="text" class="autopilot-input-title" value="${escapeHtml(item.title)}" data-title placeholder="Task title" />
+                    <input type="datetime-local" class="autopilot-input-date" value="${dateVal}" data-date />
                   </div>
                 </li>
               `;
             }).join('')}
           </ul>
           <div class="autopilot-footer">
-            <label class="autopilot-sync-gcal-label" style="display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--cs-tool-text-2); cursor: pointer;">
+            <label class="autopilot-sync-gcal-label">
               <input type="checkbox" checked data-gcal-sync />
               <span>Sync to my Google Calendar</span>
             </label>
@@ -1274,6 +1304,127 @@ ${docTextSample}`;
     });
   }
 
+  // -------------------------------------------------------------------------
+  // SYLLABUS AUTOPILOT — PROACTIVE PROMPT
+  // -------------------------------------------------------------------------
+  // A small floating card shown by content.js when it detects a syllabus page.
+  // Accepting opens the existing autopilot modal; either action is remembered so
+  // the same syllabus is never prompted again.
+
+  const SYLLABUS_PROMPT_ID = 'cs-syllabus-autopilot-prompt';
+  const SYLLABUS_PROMPT_STYLE_ID = 'cs-syllabus-autopilot-prompt-style';
+  const SYLLABUS_DISMISS_STORE = 'syllabusAutopilotDismissals';
+  let syllabusPromptCard = null;
+
+  function removeSyllabusAutopilotPrompt() {
+    if (syllabusPromptCard) {
+      try { syllabusPromptCard.remove(); } catch (_) {}
+      syllabusPromptCard = null;
+    }
+    const stray = document.getElementById(SYLLABUS_PROMPT_ID);
+    if (stray) { try { stray.remove(); } catch (_) {} }
+  }
+
+  async function rememberSyllabusChoice(key) {
+    if (!key) return;
+    try {
+      const { [SYLLABUS_DISMISS_STORE]: existing } = await chrome.storage.local.get([SYLLABUS_DISMISS_STORE]);
+      const map = (existing && typeof existing === 'object') ? existing : {};
+      map[key] = Date.now();
+      await chrome.storage.local.set({ [SYLLABUS_DISMISS_STORE]: map });
+    } catch (_) { /* storage may be unavailable right after a reload */ }
+  }
+
+  function ensureSyllabusPromptStyle() {
+    if (document.getElementById(SYLLABUS_PROMPT_STYLE_ID)) return;
+    const style = document.createElement('style');
+    style.id = SYLLABUS_PROMPT_STYLE_ID;
+    style.textContent = `
+      #${SYLLABUS_PROMPT_ID} {
+        /* Dark by default; light values applied via [data-theme="light"]. */
+        --csp-bg: #0c0f17; --csp-border: #232837; --csp-border-2: #32384a;
+        --csp-text: #f3f5fb; --csp-text-2: #aeb4c4; --csp-hover: #181c28;
+        --csp-accent: #b297ff; --csp-on-accent: #100a22;
+        --csp-shadow: 0 22px 60px rgba(0,0,0,0.55);
+        position: fixed; right: 20px; bottom: 20px; z-index: 2147483646;
+        width: 326px; max-width: calc(100vw - 40px); padding: 16px 16px 14px;
+        border-radius: 16px; background: var(--csp-bg);
+        border: 1px solid var(--csp-border);
+        color: var(--csp-text); box-shadow: var(--csp-shadow);
+        font: 13px/1.5 'Geist', system-ui, -apple-system, "Segoe UI", sans-serif;
+        animation: csSyllabusPromptIn 0.26s cubic-bezier(0.16, 1, 0.3, 1);
+        overflow: hidden;
+      }
+      #${SYLLABUS_PROMPT_ID}[data-theme="light"] {
+        --csp-bg: #ffffff; --csp-border: #e4e6ef; --csp-border-2: #d2d5e1;
+        --csp-text: #1a1c26; --csp-text-2: #595e6e; --csp-hover: #eef0f6;
+        --csp-accent: #7c5cff; --csp-on-accent: #ffffff;
+        --csp-shadow: 0 20px 52px rgba(40, 36, 80, 0.20);
+      }
+      #${SYLLABUS_PROMPT_ID}::before {
+        content: ''; position: absolute; inset: 0 0 auto 0; height: 3px;
+        background: linear-gradient(90deg, var(--csp-accent), transparent);
+      }
+      @keyframes csSyllabusPromptIn {
+        from { opacity: 0; transform: translateY(12px) scale(0.98); }
+        to { opacity: 1; transform: translateY(0) scale(1); }
+      }
+      #${SYLLABUS_PROMPT_ID} .cs-syl-head { display: flex; align-items: center; gap: 9px; margin-bottom: 6px; }
+      #${SYLLABUS_PROMPT_ID} .cs-syl-icon {
+        display: inline-flex; align-items: center; justify-content: center;
+        width: 26px; height: 26px; border-radius: 8px; font-size: 15px; line-height: 1;
+        background: color-mix(in srgb, var(--csp-accent) 16%, transparent);
+      }
+      #${SYLLABUS_PROMPT_ID} .cs-syl-title { font-weight: 650; font-size: 14px; color: var(--csp-text); letter-spacing: -0.01em; }
+      #${SYLLABUS_PROMPT_ID} .cs-syl-body { color: var(--csp-text-2); margin-bottom: 14px; }
+      #${SYLLABUS_PROMPT_ID} .cs-syl-actions { display: flex; gap: 8px; justify-content: flex-end; }
+      #${SYLLABUS_PROMPT_ID} button { font: 600 12.5px 'Geist', system-ui, sans-serif; border-radius: 9px; padding: 8px 15px; cursor: pointer; border: 1px solid transparent; transition: filter 0.15s ease, background 0.15s ease, transform 0.12s ease; }
+      #${SYLLABUS_PROMPT_ID} button:active { transform: scale(0.96); }
+      #${SYLLABUS_PROMPT_ID} .cs-syl-add { background: var(--csp-accent); color: var(--csp-on-accent); box-shadow: 0 5px 16px color-mix(in srgb, var(--csp-accent) 38%, transparent); }
+      #${SYLLABUS_PROMPT_ID} .cs-syl-add:hover { filter: brightness(1.07); }
+      #${SYLLABUS_PROMPT_ID} .cs-syl-dismiss { background: transparent; color: var(--csp-text-2); border-color: var(--csp-border-2); }
+      #${SYLLABUS_PROMPT_ID} .cs-syl-dismiss:hover { background: var(--csp-hover); color: var(--csp-text); }
+    `;
+    (document.head || document.documentElement).appendChild(style);
+  }
+
+  function showSyllabusAutopilotPrompt(ctx) {
+    if (!ctx || syllabusPromptCard || document.getElementById(SYLLABUS_PROMPT_ID)) return;
+    if (!document.body) return;
+
+    ensureSyllabusPromptStyle();
+
+    const card = document.createElement('div');
+    card.id = SYLLABUS_PROMPT_ID;
+    card.setAttribute('data-theme', detectModalTheme());
+    card.innerHTML = `
+      <div class="cs-syl-head">
+        <span class="cs-syl-icon">📅</span>
+        <span class="cs-syl-title">This looks like a syllabus</span>
+      </div>
+      <div class="cs-syl-body">Extract the deadlines and add them to your Google Calendar?</div>
+      <div class="cs-syl-actions">
+        <button class="cs-syl-dismiss" data-cs-syllabus-dismiss>Not now</button>
+        <button class="cs-syl-add" data-cs-syllabus-add>Add to Calendar</button>
+      </div>
+    `;
+    document.body.appendChild(card);
+    syllabusPromptCard = card;
+
+    card.querySelector('[data-cs-syllabus-add]').addEventListener('click', () => {
+      const { key, pdfUrl } = ctx;
+      removeSyllabusAutopilotPrompt();
+      rememberSyllabusChoice(key);
+      // pdfUrl is null for an HTML Syllabus tab → undefined routes to the page-text path.
+      openSyllabusAutopilot(pdfUrl || undefined);
+    });
+    card.querySelector('[data-cs-syllabus-dismiss]').addEventListener('click', () => {
+      const { key } = ctx;
+      removeSyllabusAutopilotPrompt();
+      rememberSyllabusChoice(key);
+    });
+  }
+
   window.CanvascopeAcademicTools = {
     openGpaCalculator,
     openGradesSummary,
@@ -1287,7 +1438,9 @@ ${docTextSample}`;
     computeGpa,
     percentToLetter,
     openZenSpace,
-    openSyllabusAutopilot
+    openSyllabusAutopilot,
+    showSyllabusAutopilotPrompt,
+    removeSyllabusAutopilotPrompt
   };
 
   // -------------------------------------------------------------------------
@@ -1297,8 +1450,9 @@ ${docTextSample}`;
   const MODAL_CSS = `
     :host, * { box-sizing: border-box; }
     :host {
+      /* Dark theme (default). Light overrides live in :host([data-theme="light"]). */
       --cs-tool-bg: #07090f;
-      --cs-tool-bg-1: #0b0e15;
+      --cs-tool-bg-1: #0c0f17;
       --cs-tool-bg-2: #11141d;
       --cs-tool-bg-3: #181c28;
       --cs-tool-border: #232837;
@@ -1308,15 +1462,37 @@ ${docTextSample}`;
       --cs-tool-text-3: #70788a;
       --cs-tool-accent: #b297ff;
       --cs-tool-accent-2: #c7b7ff;
+      --cs-tool-on-accent: #100a22;
       --cs-tool-success: #75c48f;
       --cs-tool-danger: #ff8b8b;
+      --cs-tool-shadow: 0 32px 80px rgba(0,0,0,0.62);
       --cs-tool-font: 'Geist', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
       --cs-tool-mono: 'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+      color-scheme: dark;
+    }
+    :host([data-theme="light"]) {
+      --cs-tool-bg: #f3f4f8;
+      --cs-tool-bg-1: #ffffff;
+      --cs-tool-bg-2: #f6f7fb;
+      --cs-tool-bg-3: #eef0f6;
+      --cs-tool-border: #e4e6ef;
+      --cs-tool-border-strong: #d2d5e1;
+      --cs-tool-text: #1a1c26;
+      --cs-tool-text-2: #595e6e;
+      --cs-tool-text-3: #8a8f9f;
+      --cs-tool-accent: #7c5cff;
+      --cs-tool-accent-2: #6a48f5;
+      --cs-tool-on-accent: #ffffff;
+      --cs-tool-success: #2f9e5f;
+      --cs-tool-danger: #d8443f;
+      --cs-tool-shadow: 0 24px 64px rgba(40, 36, 80, 0.22);
+      color-scheme: light;
     }
     .backdrop {
       position: absolute; inset: 0;
-      background: rgba(4, 6, 10, 0.74);
-      backdrop-filter: blur(6px);
+      background: rgba(4, 6, 10, 0.62);
+      backdrop-filter: blur(8px) saturate(1.1);
+      -webkit-backdrop-filter: blur(8px) saturate(1.1);
       display: flex; align-items: flex-start; justify-content: center;
       padding-top: 8vh;
       font-family: var(--cs-tool-font);
@@ -1325,28 +1501,51 @@ ${docTextSample}`;
     .panel {
       width: min(720px, calc(100vw - 32px));
       max-height: 84vh;
-      overflow: auto;
+      overflow: hidden auto;
       background: var(--cs-tool-bg-1);
       border: 1px solid var(--cs-tool-border);
-      border-radius: 8px;
-      box-shadow: 0 32px 80px rgba(0,0,0,0.55);
+      border-radius: 18px;
+      box-shadow: var(--cs-tool-shadow);
       position: relative;
+      animation: cs-panel-in 200ms cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    @keyframes cs-panel-in {
+      from { opacity: 0; transform: translateY(14px) scale(0.985); }
+      to   { opacity: 1; transform: translateY(0) scale(1); }
     }
     .panel__head {
-      padding: 18px 22px 12px;
-      background: var(--cs-tool-bg-2);
+      padding: 20px 24px 16px;
+      background:
+        linear-gradient(180deg,
+          color-mix(in srgb, var(--cs-tool-accent) 9%, var(--cs-tool-bg-2)),
+          var(--cs-tool-bg-2));
       border-bottom: 1px solid var(--cs-tool-border);
       position: relative;
     }
-    .panel__head h2 { margin: 0; font-size: 18px; font-weight: 600; letter-spacing: 0; }
-    .panel__sub { font-size: 12px; color: var(--cs-tool-text-2); margin-top: 4px; }
+    .panel__head::before {
+      content: ''; position: absolute; inset: 0 0 auto 0; height: 3px;
+      background: linear-gradient(90deg, var(--cs-tool-accent), color-mix(in srgb, var(--cs-tool-accent) 35%, transparent));
+    }
+    .panel__head h2 {
+      margin: 0; font-size: 19px; font-weight: 650; letter-spacing: -0.01em;
+      color: var(--cs-tool-text);
+    }
+    .panel__sub { font-size: 12.5px; color: var(--cs-tool-text-2); margin-top: 5px; }
     .panel__close {
-      position: absolute; top: 14px; right: 14px;
-      width: 28px; height: 28px; border-radius: 6px;
+      position: absolute; top: 16px; right: 16px;
+      width: 30px; height: 30px; border-radius: 9px;
+      display: inline-flex; align-items: center; justify-content: center;
       background: var(--cs-tool-bg-3); color: var(--cs-tool-text-2);
       border: 1px solid var(--cs-tool-border);
-      cursor: pointer; font-size: 13px;
+      cursor: pointer; font-size: 14px; line-height: 1;
+      transition: background 140ms ease, color 140ms ease, border-color 140ms ease, transform 140ms ease;
     }
+    .panel__close:hover {
+      background: color-mix(in srgb, var(--cs-tool-danger) 16%, var(--cs-tool-bg-3));
+      border-color: color-mix(in srgb, var(--cs-tool-danger) 40%, var(--cs-tool-border));
+      color: var(--cs-tool-danger);
+    }
+    .panel__close:active { transform: scale(0.92); }
     .panel__body { padding: 16px 22px 22px; }
     .empty { color: var(--cs-tool-text-3); padding: 24px 0; text-align: center; }
     .flash {
@@ -1778,23 +1977,23 @@ ${docTextSample}`;
       border-radius: 0 6px 6px 0;
     }
     
-    /* Syllabus Autopilot Styles */
+    /* ===================== Syllabus Autopilot ===================== */
     .autopilot-loading {
       display: flex;
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      padding: 40px 20px;
+      padding: 48px 20px;
       text-align: center;
     }
     .autopilot-spinner {
-      width: 36px;
-      height: 36px;
-      border: 3px solid var(--cs-tool-border);
+      width: 40px;
+      height: 40px;
+      border: 3px solid color-mix(in srgb, var(--cs-tool-accent) 22%, transparent);
       border-top-color: var(--cs-tool-accent);
       border-radius: 50%;
-      animation: autopilot-spin 1s linear infinite;
-      margin-bottom: 16px;
+      animation: autopilot-spin 0.9s linear infinite;
+      margin-bottom: 18px;
     }
     @keyframes autopilot-spin {
       to { transform: rotate(360deg); }
@@ -1806,102 +2005,213 @@ ${docTextSample}`;
       margin-bottom: 6px;
     }
     .autopilot-loading-sub {
-      font-size: 11px;
+      font-size: 12px;
       color: var(--cs-tool-text-3);
+      max-width: 320px;
+      line-height: 1.5;
     }
     .autopilot-list-container {
       display: flex;
       flex-direction: column;
-      gap: 12px;
-      max-height: 55vh;
+      gap: 14px;
     }
     .autopilot-meta-row {
-      font-size: 12px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 13px;
       color: var(--cs-tool-text-2);
       font-weight: 500;
+    }
+    .autopilot-meta-row .autopilot-count {
+      display: inline-flex; align-items: center;
+      padding: 3px 10px; border-radius: 999px;
+      font-size: 12px; font-weight: 650;
+      color: var(--cs-tool-accent);
+      background: color-mix(in srgb, var(--cs-tool-accent) 14%, transparent);
+      border: 1px solid color-mix(in srgb, var(--cs-tool-accent) 30%, transparent);
     }
     .autopilot-list {
       list-style: none;
       margin: 0;
       padding: 0;
       overflow-y: auto;
+      max-height: 52vh;
       display: flex;
       flex-direction: column;
       gap: 8px;
-      border: 1px solid var(--cs-tool-border);
-      border-radius: 8px;
-      padding: 10px;
-      background: var(--cs-tool-bg-2);
+      padding-right: 4px;
+    }
+    /* Slim, themed scrollbar */
+    .autopilot-list::-webkit-scrollbar { width: 8px; }
+    .autopilot-list::-webkit-scrollbar-thumb {
+      background: var(--cs-tool-border-strong); border-radius: 999px;
+      border: 2px solid transparent; background-clip: padding-box;
     }
     .autopilot-item {
       display: flex;
       align-items: center;
-      gap: 10px;
-      padding: 8px;
-      background: var(--cs-tool-bg-3);
-      border-radius: 6px;
+      gap: 12px;
+      padding: 11px 13px;
+      background: var(--cs-tool-bg-2);
+      border-radius: 12px;
       border: 1px solid var(--cs-tool-border);
+      position: relative;
+      transition: border-color 150ms ease, background 150ms ease, transform 120ms ease;
     }
-    .autopilot-item input[type="checkbox"] {
-      width: 16px;
-      height: 16px;
-      accent-color: var(--cs-tool-accent);
-      cursor: pointer;
+    .autopilot-item::before {
+      content: ''; position: absolute; left: 0; top: 50%;
+      width: 3px; height: 0; border-radius: 0 3px 3px 0;
+      background: var(--cs-tool-accent);
+      transform: translateY(-50%);
+      transition: height 160ms ease;
     }
+    .autopilot-item:hover {
+      border-color: var(--cs-tool-border-strong);
+    }
+    .autopilot-item:has(input[data-chk]:checked) {
+      background: color-mix(in srgb, var(--cs-tool-accent) 7%, var(--cs-tool-bg-2));
+      border-color: color-mix(in srgb, var(--cs-tool-accent) 42%, var(--cs-tool-border));
+    }
+    .autopilot-item:has(input[data-chk]:checked)::before { height: 60%; }
+    .autopilot-item:not(:has(input[data-chk]:checked)) { opacity: 0.78; }
+
+    /* Unified custom checkboxes (rows + sync toggle) */
+    .autopilot-item input[type="checkbox"],
+    .autopilot-sync-gcal-label input[type="checkbox"] {
+      appearance: none; -webkit-appearance: none;
+      flex: none;
+      width: 19px; height: 19px;
+      border-radius: 6px;
+      border: 1.5px solid var(--cs-tool-border-strong);
+      background: var(--cs-tool-bg-1);
+      cursor: pointer; position: relative;
+      transition: background 130ms ease, border-color 130ms ease, transform 100ms ease;
+    }
+    .autopilot-item input[type="checkbox"]:hover,
+    .autopilot-sync-gcal-label input[type="checkbox"]:hover {
+      border-color: var(--cs-tool-accent);
+    }
+    .autopilot-item input[type="checkbox"]:checked,
+    .autopilot-sync-gcal-label input[type="checkbox"]:checked {
+      background: var(--cs-tool-accent);
+      border-color: var(--cs-tool-accent);
+    }
+    .autopilot-item input[type="checkbox"]:checked::after,
+    .autopilot-sync-gcal-label input[type="checkbox"]:checked::after {
+      content: ''; position: absolute; left: 6px; top: 2.5px;
+      width: 5px; height: 9px;
+      border: solid var(--cs-tool-on-accent);
+      border-width: 0 2px 2px 0;
+      transform: rotate(45deg);
+    }
+    .autopilot-item input[type="checkbox"]:active,
+    .autopilot-sync-gcal-label input[type="checkbox"]:active { transform: scale(0.9); }
+
     .autopilot-item-fields {
       display: flex;
       flex: 1;
       gap: 8px;
+      min-width: 0;
     }
+    .autopilot-item-fields input {
+      background: var(--cs-tool-bg-1);
+      border: 1px solid var(--cs-tool-border);
+      color: var(--cs-tool-text);
+      border-radius: 9px;
+      padding: 8px 11px;
+      font: inherit;
+      font-size: 13px;
+      outline: none;
+      min-width: 0;
+      transition: border-color 140ms ease, box-shadow 140ms ease;
+    }
+    .autopilot-item-fields input:focus {
+      border-color: var(--cs-tool-accent);
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--cs-tool-accent) 22%, transparent);
+    }
+    .autopilot-input-title { flex: 2; font-weight: 500; }
+    .autopilot-input-date {
+      flex: 1.15;
+      font-family: var(--cs-tool-mono);
+      font-size: 12px;
+      color: var(--cs-tool-text-2);
+      letter-spacing: -0.02em;
+    }
+    .autopilot-input-date::-webkit-calendar-picker-indicator {
+      opacity: 0.55; cursor: pointer;
+      transition: opacity 140ms ease;
+    }
+    .autopilot-input-date:hover::-webkit-calendar-picker-indicator { opacity: 0.85; }
+
     .autopilot-footer {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      margin-top: 10px;
-      padding-top: 10px;
+      gap: 14px;
+      margin-top: 4px;
+      padding-top: 16px;
       border-top: 1px solid var(--cs-tool-border);
+    }
+    .autopilot-sync-gcal-label {
+      display: flex; align-items: center; gap: 9px;
+      font-size: 13px; color: var(--cs-tool-text-2);
+      cursor: pointer; user-select: none;
     }
     .autopilot-btn-submit {
       background: var(--cs-tool-accent);
-      color: #080a11;
-      font-weight: 600;
+      color: var(--cs-tool-on-accent);
+      font-weight: 650;
       border: none;
-      border-radius: 6px;
-      padding: 8px 16px;
-      font-size: 13px;
+      border-radius: 10px;
+      padding: 10px 20px;
+      font-size: 13.5px;
       cursor: pointer;
+      box-shadow: 0 6px 18px color-mix(in srgb, var(--cs-tool-accent) 38%, transparent);
+      transition: transform 120ms ease, box-shadow 140ms ease, background 140ms ease, opacity 140ms ease;
     }
     .autopilot-btn-submit:hover {
       background: var(--cs-tool-accent-2);
+      transform: translateY(-1px);
+      box-shadow: 0 10px 26px color-mix(in srgb, var(--cs-tool-accent) 46%, transparent);
+    }
+    .autopilot-btn-submit:active { transform: translateY(0); }
+    .autopilot-btn-submit:disabled {
+      opacity: 0.6; cursor: default; transform: none; box-shadow: none;
     }
     .autopilot-error {
       display: flex;
       flex-direction: column;
       align-items: center;
-      padding: 24px 0;
+      padding: 36px 20px;
       text-align: center;
     }
     .autopilot-error-title {
       font-size: 16px;
-      font-weight: 600;
+      font-weight: 650;
       color: var(--cs-tool-danger);
       margin-bottom: 8px;
     }
     .autopilot-error-body {
-      font-size: 12px;
+      font-size: 13px;
       color: var(--cs-tool-text-2);
-      margin-bottom: 16px;
+      margin-bottom: 18px;
       max-width: 80%;
-      line-height: 1.5;
+      line-height: 1.55;
     }
     .autopilot-error-close {
       background: var(--cs-tool-bg-3);
       color: var(--cs-tool-text);
       border: 1px solid var(--cs-tool-border);
-      border-radius: 6px;
-      padding: 6px 16px;
-      font-size: 12px;
+      border-radius: 9px;
+      padding: 8px 18px;
+      font-size: 13px;
       cursor: pointer;
+      transition: background 140ms ease, border-color 140ms ease;
+    }
+    .autopilot-error-close:hover {
+      background: var(--cs-tool-bg-2);
+      border-color: var(--cs-tool-border-strong);
     }
   `;
 

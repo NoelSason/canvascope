@@ -7,6 +7,8 @@ import { fileURLToPath } from 'node:url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const docParserPath = path.resolve(__dirname, '..', 'src', 'core', 'document-parser.js');
 const docParserCode = fs.readFileSync(docParserPath, 'utf8');
+const courseMaterialsPath = path.resolve(__dirname, '..', 'src', 'core', 'course-materials.js');
+const courseMaterialsCode = fs.readFileSync(courseMaterialsPath, 'utf8');
 
 // Define chrome mocks
 let mockStorage = {};
@@ -61,6 +63,10 @@ globalThis.pdfjsLib = {
 const matcherPath = path.resolve(__dirname, '..', 'src', 'core', 'semantic-matcher.js');
 const matcherCode = fs.readFileSync(matcherPath, 'utf8');
 new Function(matcherCode + '\nglobalThis.SemanticMatcher = SemanticMatcher;')();
+
+// Evaluate course material storage helper before DocumentParser so parsed PDFs
+// are also persisted into the document/chunk index.
+new Function(courseMaterialsCode)();
 
 // Evaluate the DocumentParser code
 new Function(docParserCode + '\nglobalThis.DocumentParser = DocumentParser;')();
@@ -128,5 +134,12 @@ test('DocumentParser.persistPdfToIndex saves PDF persistently to indexedContent'
   assert.equal(indexed[0].title, 'Syllabus');
   assert.equal(indexed[0].courseName, 'CS 101');
   assert.equal(indexed[0].content, 'Page 1 outline.\nPage 2 schedule.');
-  assert.deepEqual(indexed[0].pages, pagesText);
+  assert.deepEqual(indexed[0].pages, [
+    { pageNum: 1, text: 'Page 1 outline.' },
+    { pageNum: 2, text: 'Page 2 schedule.' }
+  ]);
+  assert.equal(mockStorage.courseMaterialDocuments.length, 1);
+  assert.equal(mockStorage.courseMaterialDocuments[0].status, 'indexed');
+  assert.equal(mockStorage.courseMaterialChunks.length, 2);
+  assert.equal(mockStorage.courseMaterialChunks[1].pageStart, 2);
 });

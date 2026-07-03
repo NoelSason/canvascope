@@ -80,9 +80,13 @@
     }
 
     function normalizeWakeUpload(payload) {
-        const row = payload?.new && typeof payload.new === 'object'
+        const customPayload = payload?.payload && typeof payload.payload === 'object'
+            ? payload.payload
+            : null;
+        const row = customPayload
+            || (payload?.new && typeof payload.new === 'object'
             ? payload.new
-            : (payload && typeof payload === 'object' ? payload : {});
+            : (payload && typeof payload === 'object' ? payload : {}));
         const uploadId = row.uploadId || row.id || null;
         return {
             uploadId,

@@ -41,6 +41,7 @@ const KNOWN_BRIGHTSPACE_DOMAINS = [];
 let contentCustomDomains = [];
 const DEFAULT_EXTENSION_SETTINGS = Object.freeze({
     enableSendToLectra: false,
+    autopilotAutoPrompt: true,
     selectedCourseFilters: []
 });
 const LECTRA_BUTTON_POSITION_STORAGE_KEY = 'lectraSendButtonPositions';
@@ -51,7 +52,11 @@ const LECTRA_BUTTON_DEFAULT_RIGHT_PX = 20;
 const LECTRA_BUTTON_DEFAULT_BOTTOM_PX = 96;
 const LECTRA_BUTTON_EDGE_PADDING_PX = 12;
 const LECTRA_BUTTON_DEFAULT_TRANSITION = 'transform 0.15s ease, opacity 0.2s ease';
+const COURSE_MATERIAL_DISCOVERY_MIN_MS = 10 * 60 * 1000;
+const COURSE_MATERIAL_DISCOVERY_MAX_PAGES = 8;
 let contentExtensionSettings = { ...DEFAULT_EXTENSION_SETTINGS };
+let courseMaterialDiscoveryTimer = null;
+const courseMaterialDiscoveryLastAt = new Map();
 
 // Load custom domains from storage so domain checks work for user-added domains
 try {
@@ -74,6 +79,9 @@ try {
         if (changes.settings) {
             contentExtensionSettings = normalizeExtensionSettings(changes.settings.newValue);
             scheduleLectraPdfContextRefresh(0);
+            // Toggling the proactive prompt off should hide a visible card immediately;
+            // toggling on should re-evaluate the current page.
+            scheduleSyllabusPromptCheck(0);
         }
 
         if (changes[LECTRA_BUTTON_POSITION_STORAGE_KEY]) {
@@ -278,6 +286,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             sendResponse({ success: true });
             break;
 
+        case 'discoverCourseMaterials':
+            discoverAndSendCourseMaterials(message.reason || 'message')
+                .then(sendResponse)
+                .catch(error => sendResponse({ success: false, error: error?.message || String(error) }));
+            break;
+
         case 'ping':
             // Health check from popup
             sendResponse({ alive: true });
@@ -400,7 +414,11 @@ function normalizeExtensionSettings(rawSettings) {
     const source = rawSettings && typeof rawSettings === 'object' ? rawSettings : {};
     return {
         ...DEFAULT_EXTENSION_SETTINGS,
-        ...source
+        ...source,
+        enableSendToLectra: Boolean(source.enableSendToLectra),
+        // Proactive syllabus prompt is on unless the user explicitly turns it off.
+        autopilotAutoPrompt: source.autopilotAutoPrompt !== false,
+        selectedCourseFilters: Array.isArray(source.selectedCourseFilters) ? source.selectedCourseFilters : []
     };
 }
 
@@ -962,6 +980,224 @@ function initializeLectraPdfSendUi() {
 }
 
 // ============================================
+// SYLLABUS AUTOPILOT AUTO-PROMPT
+// ============================================
+//
+// Proactively offers Syllabus Autopilot when the user lands on a page that is
+// clearly a syllabus, instead of requiring them to discover the /autopilot
+// slash command. Detection is deliberately conservative (strong signals only)
+// to avoid false positives; the prompt remembers dismissals so it never nags.
+
+const SYLLABUS_AUTOPILOT_DISMISS_KEY = 'syllabusAutopilotDismissals';
+let syllabusPromptTimer = null;
+let syllabusPromptHooksInstalled = false;
+const syllabusPromptShownThisSession = new Set();
+const syllabusMemoryParsedThisSession = new Set();
+
+// Strong syllabus phrases. Course home/landing pages are only treated as syllabi
+// when several of these appear, so we don't nag on Modules/Home pages that aren't.
+const SYLLABUS_KEYWORDS = [
+    'office hours', 'grading', 'academic integrity', 'academic honesty',
+    'prerequisite', 'course description', 'course schedule', 'learning objectives',
+    'learning outcomes', 'attendance', 'required text', 'textbook', 'late policy',
+    'course policies', 'grade breakdown', 'weekly schedule'
+];
+
+// True when a clearly-labeled "syllabus" heading/title is present, or the page body
+// reads like a syllabus (several strong keywords over a meaningful amount of prose).
+function pageLooksLikeSyllabus() {
+    if (document.getElementById('course_syllabus')) return true;
+    if (/\bsyllab/i.test(document.title || '')) return true;
+
+    const headings = document.querySelectorAll('h1, h2, h3, .page-title, [role="heading"]');
+    for (const h of headings) {
+        if (/\bsyllab/i.test(h.textContent || '')) return true;
+    }
+
+    const content = document.querySelector(
+        '#course_syllabus, .user_content, #wiki_page_show, #content, main'
+    );
+    const text = String(content?.innerText || '').toLowerCase();
+    if (text.length > 400) {
+        let hits = 0;
+        for (const kw of SYLLABUS_KEYWORDS) {
+            if (text.includes(kw)) { hits++; if (hits >= 3) return true; }
+        }
+    }
+    return false;
+}
+
+// Returns { pdfUrl, key } when the current page is clearly a syllabus, else null.
+function detectSyllabusContext() {
+    if (!isCanvasDomain()) return null;
+
+    const path = window.location.pathname;
+    const courseMatch = path.match(/\/courses\/(\d+)/);
+
+    // 1. Canvas Syllabus tab: /courses/<id>/assignments/syllabus (HTML page text path).
+    if (isCanvasSyllabusUrl(window.location.href)) {
+        const courseId = courseMatch ? courseMatch[1] : 'unknown';
+        return { pdfUrl: null, key: `course/${courseId}/syllabus` };
+    }
+
+    // 2. A Canvas file named "syllabus" (file preview or PDF download page).
+    const fileMatch = path.match(/\/files\/(\d+)/);
+    if (fileMatch) {
+        let decodedPath = '';
+        try { decodedPath = decodeURIComponent(path); } catch (_) { decodedPath = path; }
+        const haystack = `${document.title || ''} ${decodedPath}`;
+        if (/\bsyllab/i.test(haystack)) {
+            const pdfUrl = `${window.location.origin}/files/${fileMatch[1]}/download?download_frd=1`;
+            return { pdfUrl, key: `file/${fileMatch[1]}` };
+        }
+    }
+
+    // 3. Course home/front page or a Page (e.g. /courses/<id>, /courses/<id>/pages/<slug>,
+    //    /courses/<id>/wiki) whose content actually reads like a syllabus. Many instructors
+    //    set the course home page to be the syllabus, so this is a common real case.
+    if (courseMatch) {
+        const isHomeOrPage =
+            /^\/courses\/\d+\/?$/.test(path) ||
+            /^\/courses\/\d+\/(pages|wiki|front_page)\b/i.test(path);
+        if (isHomeOrPage && pageLooksLikeSyllabus()) {
+            // Key off the page path so re-prompts are remembered per page.
+            return { pdfUrl: null, key: `page${path.replace(/\/$/, '')}` };
+        }
+    }
+
+    return null;
+}
+
+function isAutopilotAutoPromptEnabled() {
+    return contentExtensionSettings.autopilotAutoPrompt !== false;
+}
+
+function removeSyllabusPrompt() {
+    try { window.CanvascopeAcademicTools?.removeSyllabusAutopilotPrompt?.(); } catch (_) {}
+}
+
+// Read the syllabus body text from the DOM (HTML syllabus pages). Used to feed
+// the background memory parser without re-fetching the page.
+function readSyllabusDomText() {
+    const sel = document.querySelector(
+        '#course_syllabus, .syllabus_course_summary, #wiki_page_show, .user_content, #content, main'
+    );
+    let text = sel ? sel.innerText : '';
+    if (!text || text.length < 60) text = document.body ? document.body.innerText : '';
+    return String(text || '').slice(0, 16000);
+}
+
+// Minimal, self-removing toast (no shadow DOM dependency).
+function showCanvascopeToast(message) {
+    try {
+        const el = document.createElement('div');
+        el.textContent = message;
+        el.style.cssText = [
+            'position:fixed', 'bottom:20px', 'right:20px', 'z-index:2147483647',
+            'background:#11141d', 'color:#e8ebf2', 'padding:10px 14px',
+            'border-radius:10px', 'font:500 13px/1.3 system-ui,sans-serif',
+            'box-shadow:0 6px 24px rgba(0,0,0,.35)', 'opacity:0',
+            'transition:opacity .2s ease'
+        ].join(';');
+        document.body.appendChild(el);
+        requestAnimationFrame(() => { el.style.opacity = '1'; });
+        setTimeout(() => { el.style.opacity = '0'; setTimeout(() => el.remove(), 250); }, 2600);
+    } catch (_) { /* non-critical */ }
+}
+
+// Parse the detected syllabus into structured memory in the background. Fires
+// once per syllabus per session; the background dedupes token spend by content
+// hash. Runs regardless of the calendar prompt setting — the syllabus is saved
+// even if the user declines adding deadlines to their calendar.
+function maybeAutoParseSyllabusToMemory(ctx) {
+    if (!ctx || !isExtensionContextValid()) return;
+    if (syllabusMemoryParsedThisSession.has(ctx.key)) return;
+    const courseMatch = window.location.pathname.match(/\/courses\/(\d+)/);
+    const courseId = courseMatch ? courseMatch[1] : null;
+    if (!courseId) return; // need a course to key the memory entry
+    syllabusMemoryParsedThisSession.add(ctx.key);
+
+    const course = getCourseContext();
+    const payload = {
+        action: 'parseSyllabusToMemory',
+        courseId,
+        courseName: course.title || '',
+        host: window.location.hostname,
+        pdfUrl: ctx.pdfUrl || null,
+        syllabusText: ctx.pdfUrl ? null : readSyllabusDomText()
+    };
+    try {
+        chrome.runtime.sendMessage(payload, (res) => {
+            void chrome.runtime.lastError; // swallow service-worker disconnects
+            if (res && res.success && res.firstParse) showCanvascopeToast('Syllabus saved');
+        });
+    } catch (_) { /* extension context invalidated */ }
+}
+
+async function maybeShowSyllabusPrompt() {
+    if (!isExtensionContextValid()) return;
+
+    const ctx = detectSyllabusContext();
+    if (!ctx) { removeSyllabusPrompt(); return; }
+
+    // Always parse the syllabus into memory on detection — independent of the
+    // calendar autopilot prompt below.
+    maybeAutoParseSyllabusToMemory(ctx);
+
+    if (!isAutopilotAutoPromptEnabled()) { removeSyllabusPrompt(); return; }
+
+    // Already shown this session for this syllabus → leave the existing card alone.
+    if (syllabusPromptShownThisSession.has(ctx.key)) return;
+
+    // Previously dismissed or synced (persisted across sessions) → never re-prompt.
+    let dismissed = false;
+    try {
+        const { [SYLLABUS_AUTOPILOT_DISMISS_KEY]: map } =
+            await chrome.storage.local.get([SYLLABUS_AUTOPILOT_DISMISS_KEY]);
+        dismissed = Boolean(map && map[ctx.key]);
+    } catch (_) {}
+    if (dismissed) return;
+
+    const tools = window.CanvascopeAcademicTools;
+    if (!tools || typeof tools.showSyllabusAutopilotPrompt !== 'function') return;
+
+    syllabusPromptShownThisSession.add(ctx.key);
+    tools.showSyllabusAutopilotPrompt(ctx);
+}
+
+function scheduleSyllabusPromptCheck(delayMs = 0) {
+    if (syllabusPromptTimer) clearTimeout(syllabusPromptTimer);
+    syllabusPromptTimer = setTimeout(() => { maybeShowSyllabusPrompt(); }, delayMs);
+}
+
+function installSyllabusPromptHooks() {
+    if (syllabusPromptHooksInstalled) return;
+    syllabusPromptHooksInstalled = true;
+    subscribeToNavigation(() => scheduleSyllabusPromptCheck(120));
+}
+
+function initializeSyllabusAutopilotPrompt() {
+    if (!isCanvasDomain()) return;
+    installSyllabusPromptHooks();
+    scheduleSyllabusPromptCheck(0);
+    setTimeout(() => scheduleSyllabusPromptCheck(120), 120);
+    // Home/front-page syllabus content can render a beat after idle; re-check once
+    // it has settled so the keyword scan sees the full page body.
+    setTimeout(() => scheduleSyllabusPromptCheck(0), 700);
+}
+
+// Dev helper: forget every dismissed/synced syllabus (persisted + this-session)
+// so the prompt can fire again on a page you already responded to. Exposed on
+// window so the gated /resetsyllabus slash command can call it without a reload.
+async function clearSyllabusAutopilotMemory() {
+    syllabusPromptShownThisSession.clear();
+    try { await chrome.storage.local.remove(SYLLABUS_AUTOPILOT_DISMISS_KEY); } catch (_) {}
+    removeSyllabusPrompt();
+    scheduleSyllabusPromptCheck(0);
+}
+window.__canvascopeClearSyllabusMemory = clearSyllabusAutopilotMemory;
+
+// ============================================
 // SCANNING FUNCTIONALITY
 // ============================================
 
@@ -1004,6 +1240,7 @@ async function handleStartScan() {
         });
 
         console.log(`[Canvascope Content] Scan complete. Found ${uniqueContent.length} items.`);
+        scheduleCourseMaterialDiscovery(250, 'scan');
 
     } catch (error) {
         console.error('[Canvascope Content] Scan error:', error);
@@ -1206,6 +1443,217 @@ function scanCanvasFileBrowser(courseContext) {
     });
 
     return content;
+}
+
+function parseCanvasLinkNext(linkHeader) {
+    const header = String(linkHeader || '');
+    if (!header) return '';
+    for (const part of header.split(',')) {
+        const section = part.trim();
+        if (!/rel="?next"?/i.test(section)) continue;
+        const match = section.match(/<([^>]+)>/);
+        if (match) return match[1];
+    }
+    return '';
+}
+
+async function fetchCanvasApiPaginated(pathOrUrl, maxPages = COURSE_MATERIAL_DISCOVERY_MAX_PAGES) {
+    const out = [];
+    let nextUrl = new URL(pathOrUrl, window.location.origin).toString();
+    let pages = 0;
+
+    while (nextUrl && pages < maxPages) {
+        const response = await fetch(nextUrl, {
+            credentials: 'include',
+            headers: { Accept: 'application/json' }
+        });
+        if (!response.ok) break;
+        const data = await response.json();
+        if (Array.isArray(data)) out.push(...data);
+        else if (data && typeof data === 'object') out.push(data);
+        nextUrl = parseCanvasLinkNext(response.headers.get('Link'));
+        pages += 1;
+    }
+
+    return out;
+}
+
+function canvasFolderSegments(folder, courseTitle = '') {
+    const raw = normalizeCanvasText(folder?.full_name || folder?.name || '');
+    const parts = String(folder?.full_name || folder?.name || '')
+        .split('/')
+        .map(part => part.trim())
+        .filter(Boolean);
+    const normalizedCourse = normalizeCanvasText(courseTitle);
+    return parts.filter((part, index) => {
+        const normalized = normalizeCanvasText(part);
+        if (!normalized) return false;
+        if (normalizedCourse && normalized === normalizedCourse) return false;
+        if (index === 0 && (normalized === 'course files' || normalized === 'files')) return false;
+        if (raw === normalized && normalized === 'course files') return false;
+        return true;
+    });
+}
+
+function buildModuleNameByFileId(modules) {
+    const byId = new Map();
+    for (const module of Array.isArray(modules) ? modules : []) {
+        const moduleName = normalizeCanvasText(module?.name || module?.title || '');
+        const items = Array.isArray(module?.items) ? module.items : [];
+        for (const item of items) {
+            const urlFileId = String(item?.html_url || '').match(/\/files\/(\d+)/)?.[1] || '';
+            const id = item?.content_id || item?.file_id || urlFileId;
+            if (!id || !moduleName) continue;
+            byId.set(String(id), moduleName);
+        }
+    }
+    return byId;
+}
+
+function normalizeCanvasFileTitle(text) {
+    return String(text || '')
+        .replace(/\s+/g, ' ')
+        .replace(/\s*(download|preview|open)\s*$/i, '')
+        .trim();
+}
+
+function collectVisibleCanvasFileDocuments(courseContext) {
+    const browserContext = getCanvasFileBrowserContext(courseContext);
+    const docs = [];
+    const seen = new Set();
+    const links = document.querySelectorAll(
+        'a[href*="/files/"], a[href*="preview="], a.instructure_file_link, a.file_download_btn'
+    );
+
+    links.forEach(link => {
+        if (!link.href || !isCanvasUrl(link.href)) return;
+        if (link.closest('nav, header, footer, #breadcrumbs, #section-tabs')) return;
+        const fileId = link.href.match(/[?&]preview=(\d+)/)?.[1] || link.href.match(/\/files\/(\d+)/)?.[1] || '';
+        if (!fileId) return;
+        const title = normalizeCanvasFileTitle(
+            link.getAttribute('title') || link.getAttribute('aria-label') || safeGetText(link)
+        );
+        if (!title) return;
+        const key = `${fileId}|${title}`;
+        if (seen.has(key)) return;
+        seen.add(key);
+        const sourceUrl = `${window.location.origin}/courses/${courseContext.id}/files/${fileId}`;
+        const pathSegments = browserContext?.pathSegments || [];
+        docs.push({
+            courseId: courseContext.id,
+            courseName: courseContext.title,
+            canvasFileId: fileId,
+            title,
+            url: sourceUrl,
+            sourceUrl,
+            downloadUrl: `${window.location.origin}/files/${fileId}/download`,
+            folderPath: browserContext?.folderPath || '',
+            pathSegments,
+            moduleName: browserContext?.moduleName || 'Files',
+            weekHints: extractWeekHintsFromTextParts([...(pathSegments || []), title]),
+            discoveredAt: new Date().toISOString()
+        });
+    });
+
+    return docs;
+}
+
+async function discoverCourseMaterialDocuments(courseContext) {
+    if (!courseContext?.id) return [];
+
+    const docs = collectVisibleCanvasFileDocuments(courseContext);
+    const seenIds = new Set(docs.map(doc => doc.canvasFileId).filter(Boolean));
+
+    let files = [];
+    let folders = [];
+    let modules = [];
+    try {
+        [files, folders, modules] = await Promise.all([
+            fetchCanvasApiPaginated(`/api/v1/courses/${courseContext.id}/files?per_page=100`),
+            fetchCanvasApiPaginated(`/api/v1/courses/${courseContext.id}/folders?per_page=100`),
+            fetchCanvasApiPaginated(`/api/v1/courses/${courseContext.id}/modules?include[]=items&per_page=100`)
+        ]);
+    } catch (error) {
+        console.warn('[Canvascope CourseMaterials] Canvas API discovery failed, using visible file links only:', error);
+    }
+
+    const folderById = new Map();
+    folders.forEach(folder => {
+        if (folder?.id != null) folderById.set(String(folder.id), folder);
+    });
+    const moduleByFileId = buildModuleNameByFileId(modules);
+
+    for (const file of files) {
+        const fileId = file?.id != null ? String(file.id) : '';
+        if (!fileId || seenIds.has(fileId)) continue;
+        const title = normalizeCanvasFileTitle(file.display_name || file.filename || file.name || '');
+        if (!title) continue;
+        const mimeType = file['content-type'] || file.content_type || file.mime_class || '';
+        const folder = folderById.get(String(file.folder_id || ''));
+        const pathSegments = canvasFolderSegments(folder, courseContext.title);
+        const sourceUrl = `${window.location.origin}/courses/${courseContext.id}/files/${fileId}`;
+        const moduleName = moduleByFileId.get(fileId) || pathSegments[0] || 'Files';
+        seenIds.add(fileId);
+        docs.push({
+            courseId: courseContext.id,
+            courseName: courseContext.title,
+            canvasFileId: fileId,
+            title,
+            url: sourceUrl,
+            sourceUrl,
+            downloadUrl: `${window.location.origin}/files/${fileId}/download`,
+            mimeType,
+            folderPath: pathSegments.join(' > '),
+            pathSegments,
+            moduleName,
+            weekHints: extractWeekHintsFromTextParts([...pathSegments, moduleName, title]),
+            modifiedAt: file.modified_at || file.updated_at || file.created_at || null,
+            discoveredAt: new Date().toISOString()
+        });
+    }
+
+    return docs;
+}
+
+async function discoverAndSendCourseMaterials(reason = 'auto') {
+    if (!isCanvasDomain()) return { success: false, error: 'not_canvas' };
+    const courseContext = getCourseContext();
+    if (!courseContext?.id) return { success: false, error: 'no_course' };
+
+    const docs = await discoverCourseMaterialDocuments(courseContext);
+    if (!docs.length) return { success: true, discovered: 0 };
+
+    const response = await new Promise((resolve) => {
+        chrome.runtime.sendMessage({
+            action: 'courseMaterialsDiscovered',
+            reason,
+            courseId: courseContext.id,
+            courseName: courseContext.title,
+            documents: docs
+        }, (res) => resolve(res || { success: false, error: chrome.runtime.lastError?.message || 'no-response' }));
+    });
+
+    console.log(`[Canvascope CourseMaterials] discovered ${docs.length} course files (${reason})`, response);
+    return { success: !!response.success, discovered: docs.length, queued: response.queued || 0, response };
+}
+
+function scheduleCourseMaterialDiscovery(delayMs = 1200, reason = 'auto') {
+    if (courseMaterialDiscoveryTimer) clearTimeout(courseMaterialDiscoveryTimer);
+    courseMaterialDiscoveryTimer = setTimeout(() => {
+        try {
+            if (!isCanvasDomain()) return;
+            const courseContext = getCourseContext();
+            if (!courseContext?.id) return;
+            const last = courseMaterialDiscoveryLastAt.get(courseContext.id) || 0;
+            if (Date.now() - last < COURSE_MATERIAL_DISCOVERY_MIN_MS && reason !== 'message') return;
+            courseMaterialDiscoveryLastAt.set(courseContext.id, Date.now());
+            discoverAndSendCourseMaterials(reason).catch(error => {
+                console.warn('[Canvascope CourseMaterials] auto discovery failed:', error);
+            });
+        } catch (error) {
+            console.warn('[Canvascope CourseMaterials] discovery scheduler failed:', error);
+        }
+    }, delayMs);
 }
 
 /**
@@ -1748,6 +2196,7 @@ function sendProgress(percent, status) {
 if (isSupportedLmsDomain() || detectCanvasPage() || detectBrightspacePage()) {
     console.log('[Canvascope Content] Content script loaded on supported LMS page');
     initializeLectraPdfSendUi();
+    initializeSyllabusAutopilotPrompt();
 } else {
     console.log('[Canvascope Content] Not a supported LMS page, staying dormant');
 }
@@ -1759,6 +2208,7 @@ if (isSupportedLmsDomain() || detectCanvasPage() || detectBrightspacePage()) {
 let overlayContainer = null;
 let overlayIframe = null;
 let overlayVisible = false;
+let overlayAskActive = false; // popup is showing an inline answer — keep it open
 
 /**
  * Create and inject the search overlay
@@ -1813,9 +2263,10 @@ function createOverlay() {
         opacity: 0;
     `;
 
-    // Close on click outside
+    // Close on click outside — unless an inline answer is showing, in which
+    // case the conversation stays open (Escape inside the popup goes back).
     overlayContainer.addEventListener('click', (e) => {
-        if (e.target === overlayContainer) {
+        if (e.target === overlayContainer && !overlayAskActive) {
             hideOverlay();
         }
     });
@@ -1862,6 +2313,7 @@ function hideOverlay() {
     if (!overlayContainer) return;
 
     overlayVisible = false;
+    overlayAskActive = false;
 
     // Tell the iframe to clear its search input
     if (overlayIframe && overlayIframe.contentWindow) {
@@ -2005,6 +2457,12 @@ function maybeAutoIndexPdf() {
     });
 })();
 
+(function startCourseMaterialDiscoveryWatcher() {
+    if (!isCanvasDomain()) return;
+    scheduleCourseMaterialDiscovery(2200, 'page-load');
+    subscribeToNavigation(() => scheduleCourseMaterialDiscovery(1800, 'navigation'));
+})();
+
 function isCmdKEvent(e) {
     if (!e || !(e.metaKey || e.ctrlKey)) return false;
     if (e.altKey) return false;
@@ -2028,6 +2486,17 @@ document.addEventListener('keydown', (e) => {
         }
     }
 
+    // `/` opens the same Cmd+K palette (the standalone slash menu is retired).
+    if (e.key === '/' && !e.metaKey && !e.ctrlKey && !e.altKey && !overlayVisible) {
+        if (isEditableTarget(document.activeElement)) return;
+        if (isSupportedLmsDomain() || detectCanvasPage() || detectBrightspacePage()) {
+            e.preventDefault();
+            e.stopPropagation();
+            if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
+            showOverlay();
+        }
+    }
+
     // Close on Escape if overlay is open
     if (e.key === 'Escape') {
         if (overlayVisible) {
@@ -2038,6 +2507,45 @@ document.addEventListener('keydown', (e) => {
     }
 }, true);
 
+// After a refresh, Chrome often leaves keyboard focus in the omnibox or inside a
+// Canvas subframe, so the top-document keydown listener above never fires until the
+// user clicks the page. Reclaim focus to the top document on load (and whenever the
+// tab becomes visible again) so Cmd+K / `/` work immediately without a click first.
+(function ensurePageFocusForShortcuts() {
+    function reclaimFocus() {
+        try {
+            // Only on the pages where the palette actually runs.
+            if (!(isSupportedLmsDomain() || detectCanvasPage() || detectBrightspacePage())) return;
+            // Don't yank focus away from a field the user is (or could be) typing in.
+            if (isEditableTarget(document.activeElement)) return;
+            if (document.hasFocus()) return;
+            window.focus();
+        } catch (_) { /* best effort */ }
+    }
+
+    // Initial reclaim (the script runs at document_idle, but retry a couple of times
+    // in case Canvas focuses a subframe slightly after we load).
+    reclaimFocus();
+    setTimeout(reclaimFocus, 250);
+    setTimeout(reclaimFocus, 1000);
+
+    // Reclaim when the user switches back to this tab.
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') reclaimFocus();
+    });
+    window.addEventListener('focus', reclaimFocus);
+})();
+
+// True when focus is in a field where `/` should type literally, not open Cmd+K.
+function isEditableTarget(el) {
+    if (!el) return false;
+    const tag = el.tagName ? el.tagName.toLowerCase() : '';
+    if (tag === 'input' || tag === 'textarea' || tag === 'select') return true;
+    if (el.isContentEditable) return true;
+    if (el.getAttribute && el.getAttribute('role') === 'textbox') return true;
+    return false;
+}
+
 // Listen for messages from the iframe/popup (strict origin + source check)
 window.addEventListener('message', (event) => {
     const extensionOrigin = new URL(chrome.runtime.getURL('')).origin;
@@ -2047,11 +2555,90 @@ window.addEventListener('message', (event) => {
     if (event.data && event.data.type === 'CLOSE_OVERLAY') {
         hideOverlay();
     }
+
+    if (event.data && event.data.type === 'CS_ASK_ACTIVE') {
+        overlayAskActive = !!event.data.active;
+    }
+
+    if (event.data && event.data.type === 'CANVASCOPE_RUN_ACTION') {
+        runOverlayAction(event.data.action, event.data.arg);
+    }
 });
+
+// Parse a trailing "in 1h" / "in 30m" / "tomorrow 9am" out of a reminder phrase.
+function parseReminderWhen(q) {
+    const inMatch = q.match(/\bin\s+(\d+)\s*(m|min|mins|minutes|h|hr|hrs|hours|d|day|days)\b/i);
+    if (inMatch) {
+        const n = Number(inMatch[1]);
+        const unit = inMatch[2].toLowerCase();
+        const ms = /m/.test(unit) && !/h|d/.test(unit) ? n * 60 * 1000
+                 : /h/.test(unit) ? n * 3600 * 1000
+                 : n * 86400 * 1000;
+        return { at: Date.now() + ms, start: inMatch.index };
+    }
+    const tomMatch = q.match(/\btomorrow(?:\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?)?\b/i);
+    if (tomMatch) {
+        const d = new Date();
+        d.setDate(d.getDate() + 1);
+        const hr = tomMatch[1]
+            ? Number(tomMatch[1]) + (tomMatch[3]?.toLowerCase() === 'pm' && Number(tomMatch[1]) < 12 ? 12 : 0)
+            : 9;
+        d.setHours(hr, tomMatch[2] ? Number(tomMatch[2]) : 0, 0, 0);
+        return { at: d.getTime(), start: tomMatch.index };
+    }
+    return null;
+}
+
+// Run a Cmd+K command that targets in-page tooling (academic tools / background),
+// then close the overlay. These globals live in the same content-script world.
+function runOverlayAction(action, arg) {
+    const tools = window.CanvascopeAcademicTools || null;
+    const text = String(arg || '').trim();
+    try {
+        switch (action) {
+            case 'gpa':       tools?.openGpaCalculator?.(text || undefined); break;
+            case 'grades':    tools?.openGradesSummary?.(); break;
+            case 'zen':       tools?.openZenSpace?.(); break;
+            case 'notes':     tools?.openNotesBrowser?.(); break;
+            case 'note':      if (text) tools?.quickCaptureNote?.(text); break;
+            case 'todo':      if (text) tools?.addTodo?.(text); break;
+            case 'autopilot': tools?.openSyllabusAutopilot?.(); break;
+            case 'sync':
+                chrome.runtime.sendMessage({ action: 'csSync.forceAll' }, () => void chrome.runtime.lastError);
+                break;
+            case 'remind': {
+                if (!text) break;
+                const when = parseReminderWhen(text);
+                const subject = when ? text.slice(0, when.start).trim() : text;
+                chrome.runtime.sendMessage({
+                    action: 'csReminders.scheduleOnce',
+                    title: subject || text,
+                    body: 'Canvascope reminder',
+                    at: when?.at || (Date.now() + 60 * 60 * 1000)
+                }, () => void chrome.runtime.lastError);
+                break;
+            }
+            default: break;
+        }
+    } catch (err) {
+        console.warn('[Canvascope] overlay action failed:', action, err);
+    }
+    hideOverlay();
+}
 
 // Also listen to runtime messages just in case
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.action === 'closeOverlay') {
         hideOverlay();
+    }
+    // The popup's AI button opens Cmd+K on this tab instead of the side panel.
+    if (message.action === 'openOverlay') {
+        if (isSupportedLmsDomain() || detectCanvasPage() || detectBrightspacePage()) {
+            showOverlay();
+            sendResponse?.({ ok: true });
+        } else {
+            sendResponse?.({ ok: false });
+        }
+        return true;
     }
 });

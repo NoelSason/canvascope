@@ -24,7 +24,7 @@ How to use it:
 4. (Optional) Sign in with Google to send PDFs directly to Lectra on your iPad.
 
 Privacy & Security:
-All indexing and search matching is local-first, meaning your academic data stays securely on your device in local storage. Cloud uploads and sync are strictly opt-in and occur only when you explicitly send a PDF to Lectra. No third-party ad networks or analytics trackers are used.
+All indexing and search matching is local-first, meaning your academic data starts on your device in local storage. Cloud sync is limited to signed-in account features such as Lectra handoff, Course Brain sync, tool/preferences sync, and Character Profile summaries. No third-party ad networks or analytics trackers are used.
 
 **Category**
 Productivity
@@ -68,6 +68,10 @@ Every permission and host endpoint declared in `manifest.json` is strictly requi
 | `identity` | permissions | Resolves standard Google OAuth tokens to secure DropBridge uploads and map iPad communication channels to the correct account. |
 | `downloads` | permissions | Automatically triggers browser downloads when annotated PDF documents are pushed back to the computer from the iPad companion. |
 | `notifications` | permissions | Fires local desktop alert toasts to notify the student when an iPad handoff completes or a sync completes. |
+| `sidePanel` | permissions | Hosts the persistent chat and planner assistant beside active LMS pages. |
+| `webNavigation` | permissions | Detects Kaltura Media Gallery iframe commits so Canvascope can inject theme CSS before POST-loaded LTI frames flash white. |
+| `history` | permissions | Powers the "Resume where you left off" suggestion: reads recent visits to supported LMS/course domains so Canvascope can suggest re-opening a course page or document the student was recently on. History is read on-device; only a short title/URL summary is used. |
+| `clipboardRead` | permissions | Powers the "Paste assignment" button in the side panel: reads the clipboard once, only in response to that button click (a user gesture), so the student can drop assignment text into Canvascope to search or ask about it. The clipboard is never read in the background or without an explicit click; the text is not stored. |
 | `https://*/*`, `http://*/*` | host_permissions | Resolves academic file links and course assets across custom student search pages. |
 | `file:///*` | host_permissions | Allows scanning and uploading local course PDF materials when opened directly in the browser via file URLs. |
 | `https://*.supabase.co/*` | host_permissions | Connects database sync triggers, user profile mappings, and PDF storage bucket uploads. |
@@ -79,6 +83,8 @@ Every permission and host endpoint declared in `manifest.json` is strictly requi
 | `*://canvas.ucsd.edu/*` | host_permissions | Injects UCSD Canvas custom styling skins and handles UCSD-scoped search indexing. |
 | `*://canvas.asu.edu/*` | host_permissions | Injects ASU Canvas custom styling skins and ASU-scoped search indexing. |
 | `*://canvas.mit.edu/*` | host_permissions | Injects MIT Canvas custom styling skins and MIT-scoped search indexing. |
+| `*://kaf.berkeley.edu/*` | host_permissions | Applies Canvascope themes inside Berkeley Kaltura Media Gallery embeds and standalone player pages. |
+| `*://*.kaf.kaltura.com/*`, `*://*.mediaspace.kaltura.com/*` | host_permissions | Applies the same Kaltura theming to common hosted Media Gallery/player domains. |
 
 ---
 
@@ -96,7 +102,7 @@ Every permission and host endpoint declared in `manifest.json` is strictly requi
 | Authentication info | Yes | Yes (Supabase Auth) | Securing Lectra account sync links | No |
 | Personal communications | No | No | | No |
 | Location | No | No | | No |
-| Web history | No | No | | No |
+| Web history | Yes (required permission; LMS/course pages only) | Yes (signed-in summary only) | "Resume where you left off": recent LMS-page visits read on-device; only a short title/URL summary may sync to the user's own row | No |
 | User activity | Yes | No | Click ranking tiebreaks (stored locally) | No |
 | Website content | Yes | Yes (Opt-in) | Transferring valid PDF documents to iPad | No |
 
