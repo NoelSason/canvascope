@@ -73,6 +73,14 @@ class RAGCore {
     return material && (temporal || summaryAsk);
   }
 
+  static hasExampleDrillIntent(question) {
+    const q = String(question || '').toLowerCase();
+    if (!q) return false;
+    const practice = /\b(example|examples|edge cases?|corner cases?|walk ?through|practice|quiz me|test me|problem|problems|debug|trace|dry run|implement|code|coding)\b/.test(q);
+    const learning = /\b(learn|study|understand|explain|teach|review|prepare|prep|exam|midterm|final|homework|assignment|project|algorithm|data structure|python|java|c\+\+|programming)\b/.test(q);
+    return practice && learning;
+  }
+
   static isCourseMaterialChunk(chunk) {
     const type = String(chunk?.type || '').toLowerCase();
     return [
@@ -884,7 +892,10 @@ class RAGCore {
       prompt += `=== COURSE SOURCES ===\n(No indexed course content matched this question${courseName ? ` in ${courseName}` : ''}. Answer from your general knowledge, and mention that nothing in their indexed course materials covered it — opening the course files once lets Canvascope index them.)\n\n`;
     }
 
-    prompt += `=== QUESTION ===\nAnswer the student's question. Ground claims in the numbered sources when they cover it, citing inline like [1] or [2]. When the sources only partially cover the topic (or are merely related, e.g. labs on the concept), fill the gaps from your general knowledge — clearly grounded teaching is better than refusing — and connect the explanation back to the course materials where helpful. For material-summary questions such as "what did we study this week", use source titles, folders, module names, dates, and week labels to summarize what the available materials indicate, even when body text is sparse. Only attach [n] citations to claims actually drawn from the sources; never fabricate a citation. For facts specific to this course (due dates, grading, instructions), rely strictly on the sources and say so if they're missing. Be concise (2-5 sentences or a short list). Question: ${question}`;
+    const drillGuidance = this.hasExampleDrillIntent(question)
+      ? ' Because the student is asking for practice or examples, include one small worked example and one edge/corner case when it fits the topic; for code, show the reasoning trace before the final snippet.'
+      : '';
+    prompt += `=== QUESTION ===\nAnswer the student's question. Ground claims in the numbered sources when they cover it, citing inline like [1] or [2]. When the sources only partially cover the topic (or are merely related, e.g. labs on the concept), fill the gaps from your general knowledge — clearly grounded teaching is better than refusing — and connect the explanation back to the course materials where helpful. For material-summary questions such as "what did we study this week", use source titles, folders, module names, dates, and week labels to summarize what the available materials indicate, even when body text is sparse.${drillGuidance} Only attach [n] citations to claims actually drawn from the sources; never fabricate a citation. For facts specific to this course (due dates, grading, instructions), rely strictly on the sources and say so if they're missing. Be concise (2-5 sentences or a short list). Question: ${question}`;
 
     return { prompt, sources };
   }
@@ -963,7 +974,10 @@ class RAGCore {
       prompt += `=== CURRENT COURSE WEEK ===\nFor this active course, the indexed folder dates indicate this week is ${currentWeek.weekStart} to ${currentWeek.weekEnd}.\n\n`;
     }
 
-    prompt += `=== QUESTION ===\nAnswer the student's question. Use the active course scope first${effectiveCourseName ? ` (${effectiveCourseName})` : ''}; do not pull supporting links or materials from other courses unless the student explicitly asks for them. For material-summary questions such as "what am I learning this week?", explain the actual topics in plain language rather than summarizing source numbers. Prefer parsed PDF/OCR content over title-only metadata; when only titles/folders are available, say "based on the indexed file list" and avoid inventing slide details. Do not include a bibliography or source list in the answer. Use citations sparingly only when a specific claim needs verification; never fabricate a citation. For facts specific to this course (due dates, grading, instructions) rely strictly on the sources and say so plainly if they are missing. Be concise: 3-5 bullets or 2-5 sentences. Question: ${question}`;
+    const drillGuidance = this.hasExampleDrillIntent(question)
+      ? ' Because the student is asking for practice or examples, include one small worked example and one edge/corner case when it fits the topic; for code, show the reasoning trace before the final snippet.'
+      : '';
+    prompt += `=== QUESTION ===\nAnswer the student's question. Use the active course scope first${effectiveCourseName ? ` (${effectiveCourseName})` : ''}; do not pull supporting links or materials from other courses unless the student explicitly asks for them. For material-summary questions such as "what am I learning this week?", explain the actual topics in plain language rather than summarizing source numbers. Prefer parsed PDF/OCR content over title-only metadata; when only titles/folders are available, say "based on the indexed file list" and avoid inventing slide details.${drillGuidance} Do not include a bibliography or source list in the answer. Use citations sparingly only when a specific claim needs verification; never fabricate a citation. For facts specific to this course (due dates, grading, instructions) rely strictly on the sources and say so plainly if they are missing. Be concise: 3-5 bullets or 2-5 sentences. Question: ${question}`;
 
     return {
       prompt,

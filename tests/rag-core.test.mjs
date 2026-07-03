@@ -246,3 +246,29 @@ test('RAGCore.compileUnifiedPrompt gives local AI date grounding and sparse file
     mockTabUrl = prevTabUrl;
   }
 });
+
+test('RAGCore prompts add worked examples and edge cases for CS practice questions', async () => {
+  assert.equal(RAGCore.hasExampleDrillIntent('help me study recursion with examples and edge cases'), true);
+  assert.equal(RAGCore.hasExampleDrillIntent('summarize what we studied this week'), false);
+
+  const prevIndexed = mockStorage.indexedContent;
+  const prevTabUrl = mockTabUrl;
+  mockTabUrl = 'https://google.com';
+  mockStorage.indexedContent = [
+    {
+      title: 'Recursion worksheet',
+      courseName: 'CS 61A',
+      type: 'file',
+      content: 'Base cases, recursive calls, and tree recursion examples.'
+    }
+  ];
+
+  try {
+    const compiled = await RAGCore.compileUnifiedPrompt('help me study recursion with examples and edge cases');
+    assert.match(compiled.prompt, /one small worked example/i);
+    assert.match(compiled.prompt, /edge\/corner case/i);
+  } finally {
+    mockStorage.indexedContent = prevIndexed;
+    mockTabUrl = prevTabUrl;
+  }
+});
