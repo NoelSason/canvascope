@@ -81,6 +81,12 @@ class RAGCore {
     return practice && learning;
   }
 
+  static hasComplexityIntent(question) {
+    const q = String(question || '').toLowerCase();
+    if (!q) return false;
+    return /\b(big[- ]?o|time complexity|space complexity|runtime|asymptotic|worst case|average case|amortized|scales?|efficient|efficiency)\b/.test(q);
+  }
+
   static isCourseMaterialChunk(chunk) {
     const type = String(chunk?.type || '').toLowerCase();
     return [
@@ -517,12 +523,17 @@ class RAGCore {
       // Tokenize prompt, removing standard punctuation and filtering out short helper words
       const tokens = this.tokenize(promptText);
 
-      // 1. Lexical keyword scoring (precise matches for specific questions)
-      const scoredItems = searchCorpus.map(item => {
+      // 1. Lexical keyword scoring (precise matches for specific questions).
+      // Normalize each row once so large cached PDF bodies are not rebuilt and
+      // lowercased three times during every Ask keystroke/run.
+      const searchableItems = searchCorpus.map(item => ({
+        item,
+        titleLower: String(item.title || '').toLowerCase(),
+        courseLower: String(item.courseName || '').toLowerCase(),
+        contentLower: this.sourceTextForItem(item, item.content || '').toLowerCase()
+      }));
+      const scoredItems = searchableItems.map(({ item, titleLower, courseLower, contentLower }) => {
         let score = 0;
-        const titleLower = item.title.toLowerCase();
-        const courseLower = item.courseName.toLowerCase();
-        const contentLower = this.sourceTextForItem(item, item.content || '').toLowerCase();
 
         for (const token of tokens) {
           if (titleLower.includes(token)) {
@@ -551,8 +562,8 @@ class RAGCore {
         const hasConcepts = Object.values(queryVector).some(val => val > 0);
         
         if (hasConcepts) {
-          const scoredSemantic = searchCorpus.map(item => {
-            const itemText = `${item.title} ${item.courseName} ${item.type} ${item.content || ''}`;
+          const scoredSemantic = searchableItems.map(({ item, titleLower, courseLower, contentLower }) => {
+            const itemText = `${titleLower} ${courseLower} ${item.type || ''} ${contentLower}`;
             const itemVector = SemanticMatcher.vectorize(itemText);
             const similarity = SemanticMatcher.cosineSimilarity(queryVector, itemVector);
             return { item, similarity };
@@ -895,7 +906,10 @@ class RAGCore {
     const drillGuidance = this.hasExampleDrillIntent(question)
       ? ' Because the student is asking for practice or examples, include one small worked example and one edge/corner case when it fits the topic; for code, show the reasoning trace before the final snippet.'
       : '';
-    prompt += `=== QUESTION ===\nAnswer the student's question. Ground claims in the numbered sources when they cover it, citing inline like [1] or [2]. When the sources only partially cover the topic (or are merely related, e.g. labs on the concept), fill the gaps from your general knowledge — clearly grounded teaching is better than refusing — and connect the explanation back to the course materials where helpful. For material-summary questions such as "what did we study this week", use source titles, folders, module names, dates, and week labels to summarize what the available materials indicate, even when body text is sparse.${drillGuidance} Only attach [n] citations to claims actually drawn from the sources; never fabricate a citation. For facts specific to this course (due dates, grading, instructions), rely strictly on the sources and say so if they're missing. Be concise (2-5 sentences or a short list). Question: ${question}`;
+    const complexityGuidance = this.hasComplexityIntent(question)
+      ? ' Include time and space complexity with the assumptions that justify them; when there is a tradeoff, name the input variables explicitly.'
+      : '';
+    prompt += `=== QUESTION ===\nAnswer the student's question. Ground claims in the numbered sources when they cover it, citing inline like [1] or [2]. When the sources only partially cover the topic (or are merely related, e.g. labs on the concept), fill the gaps from your general knowledge — clearly grounded teaching is better than refusing — and connect the explanation back to the course materials where helpful. For material-summary questions such as "what did we study this week", use source titles, folders, module names, dates, and week labels to summarize what the available materials indicate, even when body text is sparse.${drillGuidance}${complexityGuidance} Only attach [n] citations to claims actually drawn from the sources; never fabricate a citation. For facts specific to this course (due dates, grading, instructions), rely strictly on the sources and say so if they're missing. Be concise (2-5 sentences or a short list). Question: ${question}`;
 
     return { prompt, sources };
   }
@@ -977,7 +991,10 @@ class RAGCore {
     const drillGuidance = this.hasExampleDrillIntent(question)
       ? ' Because the student is asking for practice or examples, include one small worked example and one edge/corner case when it fits the topic; for code, show the reasoning trace before the final snippet.'
       : '';
-    prompt += `=== QUESTION ===\nAnswer the student's question. Use the active course scope first${effectiveCourseName ? ` (${effectiveCourseName})` : ''}; do not pull supporting links or materials from other courses unless the student explicitly asks for them. For material-summary questions such as "what am I learning this week?", explain the actual topics in plain language rather than summarizing source numbers. Prefer parsed PDF/OCR content over title-only metadata; when only titles/folders are available, say "based on the indexed file list" and avoid inventing slide details.${drillGuidance} Do not include a bibliography or source list in the answer. Use citations sparingly only when a specific claim needs verification; never fabricate a citation. For facts specific to this course (due dates, grading, instructions) rely strictly on the sources and say so plainly if they are missing. Be concise: 3-5 bullets or 2-5 sentences. Question: ${question}`;
+    const complexityGuidance = this.hasComplexityIntent(question)
+      ? ' Include time and space complexity with named input variables and call out any tradeoff between speed and memory.'
+      : '';
+    prompt += `=== QUESTION ===\nAnswer the student's question. Use the active course scope first${effectiveCourseName ? ` (${effectiveCourseName})` : ''}; do not pull supporting links or materials from other courses unless the student explicitly asks for them. For material-summary questions such as "what am I learning this week?", explain the actual topics in plain language rather than summarizing source numbers. Prefer parsed PDF/OCR content over title-only metadata; when only titles/folders are available, say "based on the indexed file list" and avoid inventing slide details.${drillGuidance}${complexityGuidance} Do not include a bibliography or source list in the answer. Use citations sparingly only when a specific claim needs verification; never fabricate a citation. For facts specific to this course (due dates, grading, instructions) rely strictly on the sources and say so plainly if they are missing. Be concise: 3-5 bullets or 2-5 sentences. Question: ${question}`;
 
     return {
       prompt,

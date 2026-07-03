@@ -272,3 +272,29 @@ test('RAGCore prompts add worked examples and edge cases for CS practice questio
     mockTabUrl = prevTabUrl;
   }
 });
+
+test('RAGCore prompts add Big-O guidance for CS complexity questions', async () => {
+  assert.equal(RAGCore.hasComplexityIntent('what is the Big-O runtime?'), true);
+  assert.equal(RAGCore.hasComplexityIntent('summarize the reading'), false);
+
+  const prevIndexed = mockStorage.indexedContent;
+  const prevTabUrl = mockTabUrl;
+  mockTabUrl = 'https://google.com';
+  mockStorage.indexedContent = [
+    {
+      title: 'Graph traversal notes',
+      courseName: 'CS 61B',
+      type: 'file',
+      content: 'Breadth-first search visits vertices and edges.'
+    }
+  ];
+
+  try {
+    const compiled = await RAGCore.compileUnifiedPrompt('what is the time complexity of BFS?');
+    assert.match(compiled.prompt, /time and space complexity/i);
+    assert.match(compiled.prompt, /input variables/i);
+  } finally {
+    mockStorage.indexedContent = prevIndexed;
+    mockTabUrl = prevTabUrl;
+  }
+});
