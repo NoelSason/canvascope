@@ -262,7 +262,7 @@ Use only the cited context first; say what source is missing instead of inventin
   }
 
   function parseTargetLetter(q) {
-    const m = String(q).match(/\b(?:get|earn|score|make|want|need)\s+(?:an?\s+)?([A-D][+-]?)\b/i);
+    const m = String(q).match(/\b(?:get|earn|score|make|want|need|for)\s+(?:an?\s+)?([A-D][+-]?)(?![A-Za-z0-9])/i);
     return m ? m[1].toUpperCase() : 'A';
   }
 
@@ -534,6 +534,7 @@ Use only the cited context first; say what source is missing instead of inventin
     buildConceptDrillPrompt,
     buildCodeTracePrompt,
     buildExamSprintPrompt,
+    parseTargetLetter,
     normName,
     nameMatch
   };

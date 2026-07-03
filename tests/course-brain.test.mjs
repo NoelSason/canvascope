@@ -294,6 +294,13 @@ test('CourseBrain exam sprint prompt clips long contexts for responsiveness', ()
   assert.ok(prompt.length < 2300);
 });
 
+test('CourseBrain grade target parser handles for-a-letter phrasing', () => {
+  const { brain } = loadCourseBrain();
+
+  assert.equal(brain.__test.parseTargetLetter('what do I need for a B+ in CS 201?'), 'B+');
+  assert.equal(brain.__test.parseTargetLetter('what score do I need to get an A-?'), 'A-');
+});
+
 test('CourseBrain course normalization strips terms and reuses cached labels', () => {
   const { brain } = loadCourseBrain();
 
