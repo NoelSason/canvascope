@@ -139,6 +139,27 @@ test('DocumentParser filters repeated study-command words before scanning pages'
   assert.equal(scored[0].pageNum, 2);
 });
 
+test('DocumentParser.scoreDocumentPages preserves page numbers from page objects', () => {
+  const pages = [
+    { pageNum: 7, text: 'General syllabus overview and schedule.' },
+    { pageNum: 12, text: 'Dynamic programming edge cases and recurrence examples.' }
+  ];
+
+  const scored = DocumentParser.scoreDocumentPages(pages, 'Need dynamic programming recurrence edge cases.');
+  assert.equal(scored[0].pageNum, 12);
+  assert.ok(scored[0].text.includes('recurrence'));
+
+  const fallback = DocumentParser.scoreDocumentPages(pages, '');
+  assert.equal(fallback[0].pageNum, 7);
+});
+
+test('DocumentParser.vectorHasSignal supports dense and sparse vectors', () => {
+  assert.equal(DocumentParser.vectorHasSignal([0, 0, 0]), false);
+  assert.equal(DocumentParser.vectorHasSignal([0, 0.2, 0]), true);
+  assert.equal(DocumentParser.vectorHasSignal({ MATERIAL: 0, COMPUTING: 0 }), false);
+  assert.equal(DocumentParser.vectorHasSignal({ MATERIAL: 0, COMPUTING: 1 }), true);
+});
+
 test('DocumentParser.persistPdfToIndex saves PDF persistently to indexedContent', async () => {
   mockStorage = { indexedContent: [] };
   const mockUrl = 'https://ucla.edu/syllabus.pdf';

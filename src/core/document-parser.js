@@ -247,27 +247,46 @@ class DocumentParser {
       });
   }
 
+  static normalizeScoredPage(page, idx) {
+    if (typeof page === 'string') {
+      return { pageNum: idx + 1, text: page, textLower: page.toLowerCase() };
+    }
+    const text = String(page?.text || page?.content || '');
+    return {
+      pageNum: Number(page?.pageNum || page?.page || idx + 1),
+      text,
+      textLower: text.toLowerCase()
+    };
+  }
+
+  static vectorHasSignal(vector) {
+    if (Array.isArray(vector)) return vector.some(val => val > 0);
+    return Object.values(vector || {}).some(val => val > 0);
+  }
+
   static scoreDocumentPages(pages, promptText) {
     if (!Array.isArray(pages) || pages.length === 0) return [];
+    const normalizedPages = pages.map((page, idx) => this.normalizeScoredPage(page, idx));
 
     // 1. Lexical page scoring list. De-duping and filtering common study-command
     // words avoids repeated full-page scans and keeps actionable course terms
     // (e.g. named concepts, formulas, authors) from being drowned out by prompt phrasing.
+    // The lowercase page text is computed once and shared with every query token,
+    // which keeps repeated PDF/page-context searches responsive on long readings.
     const tokens = this.getPromptSearchTokens(promptText);
 
     let lexicalRankList = [];
     if (tokens.length > 0) {
-      const scoredLexical = pages.map((text, idx) => {
+      const scoredLexical = normalizedPages.map((page) => {
         let score = 0;
-        const textLower = text.toLowerCase();
         for (const token of tokens) {
-          let pos = textLower.indexOf(token);
+          let pos = page.textLower.indexOf(token);
           while (pos !== -1) {
             score += 1;
-            pos = textLower.indexOf(token, pos + token.length);
+            pos = page.textLower.indexOf(token, pos + token.length);
           }
         }
-        return { pageNum: idx + 1, text, score };
+        return { pageNum: page.pageNum, text: page.text, score };
       });
       
       lexicalRankList = scoredLexical
@@ -279,13 +298,13 @@ class DocumentParser {
     let semanticRankList = [];
     if (typeof SemanticMatcher !== 'undefined') {
       const queryVector = SemanticMatcher.vectorize(promptText);
-      const hasConcepts = Object.values(queryVector).some(val => val > 0);
+      const hasConcepts = this.vectorHasSignal(queryVector);
 
       if (hasConcepts) {
-        const scoredSemantic = pages.map((text, idx) => {
-          const pageVector = SemanticMatcher.vectorize(text);
+        const scoredSemantic = normalizedPages.map((page) => {
+          const pageVector = SemanticMatcher.vectorize(page.text);
           const similarity = SemanticMatcher.cosineSimilarity(queryVector, pageVector);
-          return { pageNum: idx + 1, text, similarity };
+          return { pageNum: page.pageNum, text: page.text, similarity };
         });
 
         semanticRankList = scoredSemantic
@@ -308,7 +327,7 @@ class DocumentParser {
 
     // If no matching pages found, return the first 3 pages as a fallback
     if (matchedPages.length === 0) {
-      return pages.slice(0, 3).map((text, idx) => ({ pageNum: idx + 1, text }));
+      return normalizedPages.slice(0, 3).map((page) => ({ pageNum: page.pageNum, text: page.text }));
     }
 
     return matchedPages.map(x => ({ pageNum: x.pageNum, text: x.text }));
