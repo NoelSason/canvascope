@@ -21,6 +21,10 @@ class SemanticMatcher {
     return 250;
   }
 
+  static get VECTOR_CACHE_TEXT_LIMIT() {
+    return 12000;
+  }
+
   static get CONCEPT_TERMS() {
     if (!this._conceptTerms) {
       this._conceptTerms = Object.freeze(
@@ -68,15 +72,19 @@ class SemanticMatcher {
     const normalizedText = String(text || '');
     const hasWindowEmbeddings = typeof window !== 'undefined' && window.LocalEmbeddings;
     const hasGlobalEmbeddings = typeof globalThis !== 'undefined' && globalThis.LocalEmbeddings;
-    const cacheKey = `${hasWindowEmbeddings || hasGlobalEmbeddings ? 'dense' : 'concept'}:${normalizedText}`;
-    const cached = this.cachedVector(cacheKey);
+    const canCacheVector = normalizedText.length <= this.VECTOR_CACHE_TEXT_LIMIT;
+    const embeddingMode = hasWindowEmbeddings || hasGlobalEmbeddings ? 'dense' : 'concept';
+    const cacheKey = canCacheVector ? `${embeddingMode}:${normalizedText}` : null;
+    const cached = cacheKey ? this.cachedVector(cacheKey) : null;
     if (cached) return cached;
 
     if (hasWindowEmbeddings) {
-      return this.rememberVector(cacheKey, window.LocalEmbeddings.generateFallbackEmbedding(normalizedText));
+      const vector = window.LocalEmbeddings.generateFallbackEmbedding(normalizedText);
+      return cacheKey ? this.rememberVector(cacheKey, vector) : this.cloneVector(vector);
     }
     if (hasGlobalEmbeddings) {
-      return this.rememberVector(cacheKey, globalThis.LocalEmbeddings.generateFallbackEmbedding(normalizedText));
+      const vector = globalThis.LocalEmbeddings.generateFallbackEmbedding(normalizedText);
+      return cacheKey ? this.rememberVector(cacheKey, vector) : this.cloneVector(vector);
     }
 
     const vector = {};
@@ -87,7 +95,7 @@ class SemanticMatcher {
       vector[key] = 0;
     }
 
-    if (!normalizedText) return this.rememberVector(cacheKey, vector);
+    if (!normalizedText) return cacheKey ? this.rememberVector(cacheKey, vector) : this.cloneVector(vector);
 
     // Tokenize text once, then score exact concept hits in O(tokens + phrases)
     // instead of repeatedly scanning every synonym for every token. This keeps
@@ -128,7 +136,7 @@ class SemanticMatcher {
       }
     }
 
-    return this.rememberVector(cacheKey, vector);
+    return cacheKey ? this.rememberVector(cacheKey, vector) : this.cloneVector(vector);
   }
 
   /**

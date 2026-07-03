@@ -51,6 +51,16 @@ test('SemanticMatcher.vectorize recognizes CS complexity and data-structure stud
   assert.equal(vector.EVALUATION, 0);
 });
 
+test('SemanticMatcher.vectorize avoids retaining huge source blobs in cache', () => {
+  SemanticMatcher._vectorCache = new Map();
+
+  const huge = `${'recursion stack graph '.repeat(1000)}runtime complexity`;
+  const vector = SemanticMatcher.vectorize(huge);
+
+  assert.ok(vector.COMPUTING > 0, 'large CS source blobs should still score computing context');
+  assert.equal(SemanticMatcher._vectorCache.size, 0, 'huge one-off PDF/course blobs should not become Map keys');
+});
+
 test('SemanticMatcher.cosineSimilarity computes similarity index', () => {
   const v1 = SemanticMatcher.vectorize('When is the chemistry midterm exam due?'); // Evaluative + Temporal
   const v2 = SemanticMatcher.vectorize('Final quiz deadline schedule'); // Evaluative + Temporal
