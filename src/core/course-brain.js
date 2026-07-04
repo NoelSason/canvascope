@@ -560,6 +560,7 @@ Before the quiz, add one short-answer warmup that the student should answer from
 After the answers, add a short "Review next" section with:
 - what to retry today
 - what to revisit tomorrow
+- one interleaved transfer question that connects this topic to a neighboring concept, assignment pattern, or debugging workflow found in the sources
 - one likely misconception or trap answer to watch for
 - what to save into Lectra as a notebook cell, flashcard, or checklist
 

@@ -371,6 +371,8 @@ test('CourseBrain practice quiz prompt adds spaced review and Lectra save guidan
   assert.match(prompt, /short-answer warmup/);
   assert.match(prompt, /retry today/);
   assert.match(prompt, /revisit tomorrow/);
+  assert.match(prompt, /interleaved transfer question/);
+  assert.match(prompt, /neighboring concept/);
   assert.match(prompt, /likely misconception or trap answer/);
   assert.match(prompt, /save into Lectra/);
   assert.match(prompt, /instead of inventing facts/i);
