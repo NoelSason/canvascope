@@ -93,6 +93,7 @@
       cmdAsk(),
       cmdPlan(),
       cmdQuiz(),
+      cmdMistakes(),
       cmdBriefing()
     ];
   }
@@ -192,6 +193,29 @@
           subtitle: 'Questions with answers, sourced from your course materials.',
           icon: 'bolt', badge: 'AI',
           onSelect: () => openSidepanel({ view: 'brain', action: 'quiz' }, ctx)
+        }];
+      }
+    };
+  }
+
+  function cmdMistakes() {
+    const defaultPrompt = 'Build a cited mistake-replay journal from my current course context. Include what went wrong, a minimal replay, the corrective move, a retest checklist, and the exact Lectra flashcard/checklist/notebook cell to save.';
+    return {
+      order: 25, id: 'cs-mistakes', primaryAlias: 'mistakes',
+      aliases: ['mistake', 'replay', 'debug-review'],
+      title: 'Mistake replay journal',
+      description: 'Turn confusing feedback, traces, or missed concepts into a Lectra-ready spaced-review checklist.',
+      keywords: ['mistake', 'replay', 'debug', 'review', 'lectra', 'spaced', 'feedback'],
+      icon: 'bolt', badge: 'AI', needsArgument: false,
+      buildResults(arg, ctx) {
+        const context = String(arg || '').trim();
+        const prompt = context ? `${defaultPrompt}\n\nFocus on: ${context}` : defaultPrompt;
+        return [{
+          kind: 'action',
+          title: context ? `Replay mistakes for: "${context}"` : 'Build mistake replay journal',
+          subtitle: 'Grounded in indexed sources; ends with a Lectra save item and retest checklist.',
+          icon: 'bolt', badge: 'AI',
+          onSelect: () => openSidepanel({ view: 'brain', question: prompt }, ctx)
         }];
       }
     };

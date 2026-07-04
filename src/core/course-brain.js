@@ -264,6 +264,23 @@ Return:
 Use only the provided context first. If there is not enough evidence, say what Canvas page, rubric, grade item, or lecture note is missing.`;
   }
 
+  function buildMistakeReplayPrompt(context, source) {
+    const clipped = clipForPrompt(context, 1600);
+    return `Build a cited mistake-replay journal from this Canvas/PDF context.
+Source: ${sourceLabel(source)}
+${clipped.clipped ? 'Note: the context was clipped for speed; flag any missing rubric, trace, or feedback details.\n' : ''}Context:
+${clipped.text}
+
+Return:
+- What went wrong: misconception, bug pattern, missed requirement, or confusing step, with citation [1]
+- Minimal replay: tiny example, trace, command, or notebook cell that recreates the issue
+- Corrective move: invariant, edge-case check, proof step, or debugging habit to use next time
+- Retest checklist: 2 to 4 concrete checks before submitting or reviewing
+- Lectra save: exact flashcard, checklist, or notebook cell title for spaced review
+
+Use only the provided context first. If evidence is thin, say what source, rubric, code, log, or lecture note is missing instead of inventing facts.`;
+  }
+
   // Questions like "what do I need to get an A" are answered by the deterministic
   // grade-target calculator (grade-target.js), NOT the LLM — LLMs are unreliable
   // at the weighted arithmetic. Schedule/policy questions fall through to the
@@ -578,6 +595,7 @@ If the sources are thin, say what material is missing instead of inventing facts
     buildCodeTracePrompt,
     buildExamSprintPrompt,
     buildOfficeHoursPrepPrompt,
+    buildMistakeReplayPrompt,
     buildPracticeQuizPrompt,
     clipForPrompt,
     parseTargetLetter,

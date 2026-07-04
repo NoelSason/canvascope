@@ -320,6 +320,32 @@ test('CourseBrain office hours prep prompt clips long contexts for responsivenes
   assert.ok(prompt.length < 2600);
 });
 
+test('CourseBrain mistake replay prompt creates Lectra-ready retest plan', () => {
+  const { brain } = loadCourseBrain();
+  const prompt = brain.__test.buildMistakeReplayPrompt(
+    'Hidden tests fail when the graph has a disconnected node; feedback says revisit BFS invariants.',
+    { title: 'Autograder Feedback', course: 'CS 201', page: 1, url: 'https://canvas.example/feedback' }
+  );
+
+  assert.match(prompt, /mistake-replay journal/);
+  assert.match(prompt, /Autograder Feedback \(CS 201 · p\. 1 · https:\/\/canvas\.example\/feedback\)/);
+  assert.match(prompt, /What went wrong/);
+  assert.match(prompt, /Minimal replay/);
+  assert.match(prompt, /Corrective move/);
+  assert.match(prompt, /Retest checklist/);
+  assert.match(prompt, /Lectra save/);
+  assert.match(prompt, /disconnected node/);
+  assert.match(prompt, /instead of inventing facts/);
+});
+
+test('CourseBrain mistake replay prompt clips long feedback for responsiveness', () => {
+  const { brain } = loadCourseBrain();
+  const prompt = brain.__test.buildMistakeReplayPrompt('stack trace\n'.repeat(400), { title: 'Long Failure Log' });
+
+  assert.match(prompt, /clipped for speed/);
+  assert.ok(prompt.length < 2700);
+});
+
 test('CourseBrain prompt clipping preserves complete source lines when possible', () => {
   const { brain } = loadCourseBrain();
   const clipped = brain.__test.clipForPrompt([
