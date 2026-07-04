@@ -514,9 +514,12 @@ Use only the cited context first; say what source is missing instead of inventin
   function buildPracticeQuizPrompt(scopeLabel) {
     return `Create a 4-question practice quiz on the most important concepts in ${scopeLabel}. For each question give the answer on the next line in bold. Base every question on the sources.
 
+Before the quiz, add one short-answer warmup that the student should answer from memory before looking at options.
+
 After the answers, add a short "Review next" section with:
 - what to retry today
 - what to revisit tomorrow
+- one likely misconception or trap answer to watch for
 - what to save into Lectra as a notebook cell, flashcard, or checklist
 
 If the sources are thin, say what material is missing instead of inventing facts.`;
