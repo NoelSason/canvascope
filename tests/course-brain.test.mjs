@@ -194,6 +194,22 @@ test('CourseBrain practice quiz prompt requires source citations and integrity r
   assert.match(prompt, /verify AI-generated study aids/);
 });
 
+test('CourseBrain flashcard pack prompt creates cited active-recall exports', () => {
+  const { brain } = loadCourseBrain();
+  const prompt = brain.__test.buildFlashcardPackPrompt('CS 61B heaps and priority queues');
+
+  assert.match(prompt, /citation-first flashcard pack/);
+  assert.match(prompt, /CS 61B heaps and priority queues/);
+  assert.match(prompt, /6 source-backed cards/);
+  assert.match(prompt, /Front \/ Back/);
+  assert.match(prompt, /citation like \[1\] on every back/);
+  assert.match(prompt, /trap cards/);
+  assert.match(prompt, /tiny code, command, proof, or calculation replay card/);
+  assert.match(prompt, /Review cadence/);
+  assert.match(prompt, /Lectra export/);
+  assert.match(prompt, /instead of inventing facts/);
+});
+
 test('CourseBrain assignment bridge prompt turns course context into Lectra action plan', () => {
   const { brain } = loadCourseBrain();
   const prompt = brain.__test.buildAssignmentBridgePrompt(

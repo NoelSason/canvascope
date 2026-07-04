@@ -573,6 +573,21 @@ against the cited course material before submitting coursework.
 If the sources are thin, say what material is missing instead of inventing facts.`;
   }
 
+  function buildFlashcardPackPrompt(scopeLabel) {
+    return `Create a citation-first flashcard pack from ${scopeLabel} for quick active recall.
+
+Return exactly:
+1. 6 source-backed cards in Front / Back format. Put a citation like [1] on every back.
+2. 2 trap cards for common misconceptions or edge cases found in the sources.
+3. 1 tiny code, command, proof, or calculation replay card when the sources support it.
+4. Review cadence: what to retry today, tomorrow, and later this week.
+5. Lectra export: concise card titles or notebook-cell names to save next.
+
+Keep each front short enough to answer from memory before revealing the back. If a card
+cannot be tied to a visible source, replace it with a source-backed card. If the sources
+are thin, say what lecture, page, rubric, or file is missing instead of inventing facts.`;
+  }
+
   /**
    * Generate a grounded practice quiz from the current Brain scope.
    * Rides the same retrieval + router path as ask().
@@ -604,6 +619,7 @@ If the sources are thin, say what material is missing instead of inventing facts
     buildOfficeHoursPrepPrompt,
     buildMistakeReplayPrompt,
     buildPracticeQuizPrompt,
+    buildFlashcardPackPrompt,
     clipForPrompt,
     parseTargetLetter,
     normName,
