@@ -319,6 +319,23 @@ Return:
 Use only the provided context first. If evidence is thin, say what source, rubric, code, log, or lecture note is missing instead of inventing facts.`;
   }
 
+  function buildUpcomingWorkTriagePrompt(context, source) {
+    const clipped = clipForPrompt(context, 1700);
+    return `Turn this Canvas assignment/deadline context into an upcoming-work triage plan.
+Source: ${sourceLabel(source)}
+${clipped.clipped ? 'Note: the context was clipped for speed; flag any missing rubric, due-date, or submission details.\n' : ''}Context:
+${clipped.text}
+
+Return:
+- Priority lane: quick task, medium task, project/exam prep, or unknown — with the reason and citation [1]
+- Due-soon risk: what must happen in the next 24-48 hours, if anything
+- Starter checklist: first concrete actions, files/links to open, commands/tests to run, or questions to ask
+- Submission sanity check: how to verify upload, timestamp, gradebook status, or external-tool completion
+- Lectra handoff: note title, checklist, or notebook cell to create for this work
+
+Use only the provided Canvas/PDF context first. If evidence is thin, say what syllabus, assignment page, rubric, or link is missing instead of inventing requirements.`;
+  }
+
   // Questions like "what do I need to get an A" are answered by the deterministic
   // grade-target calculator (grade-target.js), NOT the LLM — LLMs are unreliable
   // at the weighted arithmetic. Schedule/policy questions fall through to the
@@ -656,6 +673,7 @@ are thin, say what lecture, page, rubric, or file is missing instead of inventin
     buildExamSprintPrompt,
     buildOfficeHoursPrepPrompt,
     buildMistakeReplayPrompt,
+    buildUpcomingWorkTriagePrompt,
     buildPracticeQuizPrompt,
     buildFlashcardPackPrompt,
     summarizeSourceConfidence,

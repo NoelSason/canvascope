@@ -386,6 +386,34 @@ test('CourseBrain mistake replay prompt clips long feedback for responsiveness',
   assert.ok(prompt.length < 2700);
 });
 
+test('CourseBrain upcoming work triage prompt creates actionable Canvas checklist', () => {
+  const { brain } = loadCourseBrain();
+  const prompt = brain.__test.buildUpcomingWorkTriagePrompt(
+    'Project 5 is due tomorrow at 11:59 PM. Submit files on Gradescope and include a README with test results.',
+    { title: 'Project 5 Assignment', course: 'CS 201', page: 1, url: 'https://canvas.example/project5' }
+  );
+
+  assert.match(prompt, /upcoming-work triage plan/);
+  assert.match(prompt, /Project 5 Assignment \(CS 201 · p\. 1 · https:\/\/canvas\.example\/project5\)/);
+  assert.match(prompt, /Priority lane/);
+  assert.match(prompt, /quick task, medium task, project\/exam prep, or unknown/);
+  assert.match(prompt, /Due-soon risk/);
+  assert.match(prompt, /24-48 hours/);
+  assert.match(prompt, /Starter checklist/);
+  assert.match(prompt, /commands\/tests to run/);
+  assert.match(prompt, /Submission sanity check/);
+  assert.match(prompt, /Lectra handoff/);
+  assert.match(prompt, /instead of inventing requirements/);
+});
+
+test('CourseBrain upcoming work triage prompt clips long assignment context for responsiveness', () => {
+  const { brain } = loadCourseBrain();
+  const prompt = brain.__test.buildUpcomingWorkTriagePrompt('rubric line\n'.repeat(500), { title: 'Long Assignment' });
+
+  assert.match(prompt, /clipped for speed/);
+  assert.ok(prompt.length < 2900);
+});
+
 test('CourseBrain prompt clipping preserves complete source lines when possible', () => {
   const { brain } = loadCourseBrain();
   const clipped = brain.__test.clipForPrompt([
