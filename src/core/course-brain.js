@@ -368,6 +368,23 @@ Return:
 Use only the provided Canvas/PDF context first. If evidence is thin, say what syllabus, assignment page, rubric, or link is missing instead of inventing requirements.`;
   }
 
+  function buildSourceGapPlanPrompt(context, source) {
+    const clipped = clipForPrompt(context, 1600);
+    return `Audit this Canvas/PDF context for missing evidence before creating study aids.
+Source: ${sourceLabel(source)}
+${clipped.clipped ? 'Note: the context was clipped for speed; ask for missing pages or files if needed.\n' : ''}Context:
+${clipped.text}
+
+Return:
+- Evidence available: cite the exact page, heading, timestamp, command, file, or Canvas item currently visible
+- Missing sources: lectures, rubrics, code files, diagrams, feedback, due dates, datasets, or assignment links needed before trusting the answer
+- Safe next study action: one active-recall, code-replay, or checklist step that uses only the available evidence
+- Questions to ask: TA, office-hours, Canvas discussion, or self-check questions that would close the gaps
+- Lectra handoff: note title, weak-topic tag, or notebook cell that records both the evidence and the missing source
+
+Do not fill gaps with plausible facts. Prefer saying what source is missing instead of inventing requirements.`;
+  }
+
   // Questions like "what do I need to get an A" are answered by the deterministic
   // grade-target calculator (grade-target.js), NOT the LLM — LLMs are unreliable
   // at the weighted arithmetic. Schedule/policy questions fall through to the
@@ -721,6 +738,7 @@ of inventing facts.`;
     buildOfficeHoursPrepPrompt,
     buildMistakeReplayPrompt,
     buildUpcomingWorkTriagePrompt,
+    buildSourceGapPlanPrompt,
     buildPracticeQuizPrompt,
     buildFlashcardPackPrompt,
     buildConfusionMapPrompt,

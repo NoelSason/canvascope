@@ -445,6 +445,32 @@ test('CourseBrain upcoming work triage prompt clips long assignment context for 
   assert.ok(prompt.length < 2900);
 });
 
+test('CourseBrain source gap plan prompt audits evidence before study aid generation', () => {
+  const { brain } = loadCourseBrain();
+  const prompt = brain.__test.buildSourceGapPlanPrompt(
+    'Page 4 mentions Dijkstra, but the rubric and graph.py starter file are not attached.',
+    { title: 'Project 6 Brief', course: 'CS 201', page: 4, url: 'https://canvas.example/project6' }
+  );
+
+  assert.match(prompt, /missing evidence before creating study aids/);
+  assert.match(prompt, /Project 6 Brief \(CS 201 · p\. 4 · https:\/\/canvas\.example\/project6\)/);
+  assert.match(prompt, /Evidence available/);
+  assert.match(prompt, /Missing sources/);
+  assert.match(prompt, /Safe next study action/);
+  assert.match(prompt, /Questions to ask/);
+  assert.match(prompt, /Lectra handoff/);
+  assert.match(prompt, /Do not fill gaps with plausible facts/);
+  assert.match(prompt, /Dijkstra/);
+});
+
+test('CourseBrain source gap plan prompt clips long contexts for responsiveness', () => {
+  const { brain } = loadCourseBrain();
+  const prompt = brain.__test.buildSourceGapPlanPrompt('missing source\n'.repeat(400), { title: 'Long Evidence Audit' });
+
+  assert.match(prompt, /clipped for speed/);
+  assert.ok(prompt.length < 2700);
+});
+
 test('CourseBrain prompt clipping preserves complete source lines when possible', () => {
   const { brain } = loadCourseBrain();
   const clipped = brain.__test.clipForPrompt([
