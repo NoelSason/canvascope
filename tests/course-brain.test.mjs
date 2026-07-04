@@ -145,6 +145,19 @@ test('CourseBrain citation decoration leaves unknown markers unchanged', () => {
   assert.equal(html, 'Use <button class="brain-cite" data-cite="1" title="Escaped &lt;Source&gt;">1</button> and [9]');
 });
 
+test('CourseBrain source confidence badge distinguishes weak and anchored context', () => {
+  const { brain } = loadCourseBrain();
+
+  assert.equal(brain.__test.summarizeSourceConfidence([]).level, 'low');
+  assert.equal(brain.__test.summarizeSourceConfidence([{ n: 1 }]).level, 'low');
+  assert.equal(brain.__test.summarizeSourceConfidence([{ n: 1, title: 'Lecture 2' }]).level, 'ok');
+  assert.equal(brain.__test.summarizeSourceConfidence([
+    { n: 1, title: 'Lecture 2', page: 4 },
+    { n: 2, title: 'Worksheet', url: 'https://canvas.example/file' },
+    { n: 3, title: 'Syllabus' }
+  ]).level, 'strong');
+});
+
 test('CourseBrain study notes prompt is citation-first and Lectra-ready', () => {
   const { brain } = loadCourseBrain();
   const prompt = brain.__test.buildStudyNotesPrompt('CS 101 PDF pages 4-6');

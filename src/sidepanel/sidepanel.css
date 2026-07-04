@@ -726,6 +726,27 @@ textarea#user-prompt::placeholder { color: var(--cs-text-3); }
   gap: 6px;
   margin-top: 8px;
 }
+.brain-source-confidence {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  padding: 4px 8px;
+  border-radius: var(--cs-r-pill);
+  border: 1px solid var(--cs-border-hi);
+  background: var(--cs-bg-2);
+  color: var(--cs-text-2);
+  font-size: var(--cs-t-meta);
+  font-weight: 600;
+}
+.brain-source-confidence.is-strong {
+  color: var(--cs-accent-hi);
+  border-color: var(--cs-border-hot);
+  background: var(--cs-accent-lo);
+}
+.brain-source-confidence.is-low {
+  color: var(--cs-warn, #b45309);
+  border-color: color-mix(in srgb, currentColor 34%, transparent);
+}
 .brain-source-chip {
   display: inline-flex;
   align-items: center;

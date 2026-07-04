@@ -51,6 +51,12 @@
     if (!sources.length) return;
     const rail = document.createElement('div');
     rail.className = 'brain-source-rail';
+    const confidence = summarizeSourceConfidence(sources);
+    const badge = document.createElement('span');
+    badge.className = `brain-source-confidence is-${confidence.level}`;
+    badge.textContent = confidence.label;
+    badge.title = confidence.title;
+    rail.appendChild(badge);
     sources.forEach(source => {
       const chip = document.createElement(source.url ? 'button' : 'span');
       chip.className = 'brain-source-chip' + (source.url ? ' is-link' : '');
@@ -64,6 +70,38 @@
       rail.appendChild(chip);
     });
     container.appendChild(rail);
+  }
+
+  function summarizeSourceConfidence(sources = []) {
+    const count = Array.isArray(sources) ? sources.length : 0;
+    if (!count) {
+      return {
+        level: 'low',
+        label: 'No source confidence',
+        title: 'No retrieved course sources were attached. Scan or index more material before trusting this answer.'
+      };
+    }
+
+    const anchored = sources.filter(source => source && (source.url || source.page || source.course || source.title)).length;
+    if (count >= 3 && anchored >= 2) {
+      return {
+        level: 'strong',
+        label: 'Strong source confidence',
+        title: 'This answer has multiple anchored course sources. Still verify important facts before submitting coursework.'
+      };
+    }
+    if (anchored >= 1) {
+      return {
+        level: 'ok',
+        label: 'Source-backed',
+        title: 'This answer has at least one course source. Use the chips below to verify the cited context.'
+      };
+    }
+    return {
+      level: 'low',
+      label: 'Low source confidence',
+      title: 'Retrieved chunks lack stable anchors. Try indexing the PDF/page again or ask for narrower sources.'
+    };
   }
 
   function appendBlock(role, html) {
@@ -620,6 +658,7 @@ are thin, say what lecture, page, rubric, or file is missing instead of inventin
     buildMistakeReplayPrompt,
     buildPracticeQuizPrompt,
     buildFlashcardPackPrompt,
+    summarizeSourceConfidence,
     clipForPrompt,
     parseTargetLetter,
     normName,

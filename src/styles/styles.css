@@ -2958,6 +2958,26 @@ body.in-overlay .result-item.cs-cmd-row.overlay-highlighted .overlay-result-righ
   gap: 6px;
   margin-top: 10px;
 }
+.brain-source-confidence {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  padding: 4px 8px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-dim);
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+}
+.brain-source-confidence.is-strong {
+  color: var(--accent);
+  background: var(--accent-bg);
+  border-color: var(--accent);
+}
+.brain-source-confidence.is-low {
+  color: #b45309;
+}
 .brain-source-chip {
   display: inline-flex;
   align-items: center;
