@@ -555,6 +555,9 @@ Use only the provided context first. If evidence is thin, say what source, rubri
   function buildPracticeQuizPrompt(scopeLabel) {
     return `Create a 4-question practice quiz on the most important concepts in ${scopeLabel}. For each question give the answer on the next line in bold. Base every question on the sources.
 
+Add a citation like [1] to each question or answer explanation. If a question cannot
+be tied to a visible source, replace it with a source-backed question instead.
+
 Before the quiz, add one short-answer warmup that the student should answer from memory before looking at options.
 
 After the answers, add a short "Review next" section with:
@@ -563,6 +566,9 @@ After the answers, add a short "Review next" section with:
 - one interleaved transfer question that connects this topic to a neighboring concept, assignment pattern, or debugging workflow found in the sources
 - one likely misconception or trap answer to watch for
 - what to save into Lectra as a notebook cell, flashcard, or checklist
+
+End with a one-line academic integrity reminder to verify AI-generated study aids
+against the cited course material before submitting coursework.
 
 If the sources are thin, say what material is missing instead of inventing facts.`;
   }

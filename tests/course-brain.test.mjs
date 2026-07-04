@@ -183,6 +183,17 @@ test('CourseBrain selection study note prompt clips long selections for responsi
   assert.ok(prompt.length < 3300);
 });
 
+test('CourseBrain practice quiz prompt requires source citations and integrity reminder', () => {
+  const { brain } = loadCourseBrain();
+  const prompt = brain.__test.buildPracticeQuizPrompt('CS 61B');
+
+  assert.match(prompt, /CS 61B/);
+  assert.match(prompt, /citation like \[1\]/);
+  assert.match(prompt, /source-backed question/);
+  assert.match(prompt, /academic integrity reminder/);
+  assert.match(prompt, /verify AI-generated study aids/);
+});
+
 test('CourseBrain assignment bridge prompt turns course context into Lectra action plan', () => {
   const { brain } = loadCourseBrain();
   const prompt = brain.__test.buildAssignmentBridgePrompt(
