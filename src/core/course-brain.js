@@ -126,7 +126,15 @@
   function clipForPrompt(text, limit) {
     const value = String(text || '').trim();
     if (value.length <= limit) return { text: value, clipped: false };
-    return { text: value.slice(0, limit).trimEnd(), clipped: true };
+
+    const clipped = value.slice(0, limit).trimEnd();
+    const lastBreak = clipped.lastIndexOf('\n');
+    const minUsefulLength = Math.floor(limit * 0.55);
+    const lineBounded = lastBreak >= minUsefulLength
+      ? clipped.slice(0, lastBreak).trimEnd()
+      : clipped;
+
+    return { text: lineBounded, clipped: true };
   }
 
   function sourceLabel(source = {}) {
@@ -554,6 +562,7 @@ If the sources are thin, say what material is missing instead of inventing facts
     buildCodeTracePrompt,
     buildExamSprintPrompt,
     buildPracticeQuizPrompt,
+    clipForPrompt,
     parseTargetLetter,
     normName,
     nameMatch

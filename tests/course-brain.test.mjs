@@ -294,6 +294,20 @@ test('CourseBrain exam sprint prompt clips long contexts for responsiveness', ()
   assert.ok(prompt.length < 2300);
 });
 
+test('CourseBrain prompt clipping preserves complete source lines when possible', () => {
+  const { brain } = loadCourseBrain();
+  const clipped = brain.__test.clipForPrompt([
+    'Definition: heaps preserve a parent ordering invariant.',
+    'Example: insert 7, 3, 9 and bubble the 9 upward.',
+    'This third line should be omitted instead of cut halfway.'
+  ].join('\n'), 95);
+
+  assert.equal(clipped.clipped, true);
+  assert.equal(clipped.text, 'Definition: heaps preserve a parent ordering invariant.');
+  assert.doesNotMatch(clipped.text, /Example: insert 7, 3/);
+  assert.doesNotMatch(clipped.text, /halfway/);
+});
+
 test('CourseBrain practice quiz prompt adds spaced review and Lectra save guidance', () => {
   const { brain } = loadCourseBrain();
   const prompt = brain.__test.buildPracticeQuizPrompt('CS 201');
