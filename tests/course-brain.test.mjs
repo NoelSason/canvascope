@@ -158,6 +158,21 @@ test('CourseBrain source confidence badge distinguishes weak and anchored contex
   ]).level, 'strong');
 });
 
+test('CourseBrain due date urgency labels Canvas work by time remaining', () => {
+  const { brain } = loadCourseBrain();
+  const now = new Date('2026-07-04T12:00:00-07:00');
+
+  const unknown = brain.__test.formatDueDateUrgency('bad date', now);
+  assert.equal(unknown.lane, 'unknown');
+  assert.equal(unknown.label, 'No due date');
+  assert.equal(unknown.minutesUntil, null);
+  assert.equal(brain.__test.formatDueDateUrgency('2026-07-04T15:30:00-07:00', now).lane, 'today');
+  assert.equal(brain.__test.formatDueDateUrgency('2026-07-05T20:00:00-07:00', now).label, 'Due tomorrow (32h)');
+  assert.equal(brain.__test.formatDueDateUrgency('2026-07-09T12:00:00-07:00', now).lane, 'this-week');
+  assert.equal(brain.__test.formatDueDateUrgency('2026-07-20T12:00:00-07:00', now).lane, 'later');
+  assert.equal(brain.__test.formatDueDateUrgency('2026-07-04T10:00:00-07:00', now).label, 'Overdue by 2h');
+});
+
 test('CourseBrain study notes prompt is citation-first and Lectra-ready', () => {
   const { brain } = loadCourseBrain();
   const prompt = brain.__test.buildStudyNotesPrompt('CS 101 PDF pages 4-6');

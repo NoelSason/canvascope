@@ -175,6 +175,38 @@
     return { text: lineBounded, clipped: true };
   }
 
+  function formatDueDateUrgency(dueAt, now = new Date()) {
+    const due = dueAt instanceof Date ? dueAt : new Date(dueAt);
+    const current = now instanceof Date ? now : new Date(now);
+    if (Number.isNaN(due.getTime()) || Number.isNaN(current.getTime())) {
+      return { lane: 'unknown', label: 'No due date', minutesUntil: null };
+    }
+
+    const minutesUntil = Math.round((due.getTime() - current.getTime()) / 60000);
+    const absMinutes = Math.abs(minutesUntil);
+    const hours = Math.round(absMinutes / 60);
+    const days = Math.round(absMinutes / 1440);
+    const relative = absMinutes < 90
+      ? `${absMinutes}m`
+      : hours < 36
+        ? `${hours}h`
+        : `${days}d`;
+
+    if (minutesUntil < 0) {
+      return { lane: 'overdue', label: `Overdue by ${relative}`, minutesUntil };
+    }
+    if (minutesUntil <= 24 * 60) {
+      return { lane: 'today', label: `Due in ${relative}`, minutesUntil };
+    }
+    if (minutesUntil <= 48 * 60) {
+      return { lane: 'tomorrow', label: `Due tomorrow (${relative})`, minutesUntil };
+    }
+    if (minutesUntil <= 7 * 24 * 60) {
+      return { lane: 'this-week', label: `Due this week (${relative})`, minutesUntil };
+    }
+    return { lane: 'later', label: `Due later (${relative})`, minutesUntil };
+  }
+
   function sourceLabel(source = {}) {
     const parts = [source.title || 'Canvas/PDF source'];
     const details = [];
@@ -677,6 +709,7 @@ are thin, say what lecture, page, rubric, or file is missing instead of inventin
     buildPracticeQuizPrompt,
     buildFlashcardPackPrompt,
     summarizeSourceConfidence,
+    formatDueDateUrgency,
     clipForPrompt,
     parseTargetLetter,
     normName,
