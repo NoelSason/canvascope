@@ -238,6 +238,22 @@ test('CourseBrain flashcard pack prompt creates cited active-recall exports', ()
   assert.match(prompt, /instead of inventing facts/);
 });
 
+test('CourseBrain confusion map prompt audits uncertainty without hallucinating', () => {
+  const { brain } = loadCourseBrain();
+  const prompt = brain.__test.buildConfusionMapPrompt('CS 70 graph algorithms');
+
+  assert.match(prompt, /citation-first confusion map/);
+  assert.match(prompt, /CS 70 graph algorithms/);
+  assert.match(prompt, /Known facts/);
+  assert.match(prompt, /Confusing gaps/);
+  assert.match(prompt, /Contrast pairs/);
+  assert.match(prompt, /Questions to ask next/);
+  assert.match(prompt, /Lectra export/);
+  assert.match(prompt, /uncertainty calibration/);
+  assert.match(prompt, /Canvas item is missing/);
+  assert.match(prompt, /instead\s+of inventing facts/);
+});
+
 test('CourseBrain assignment bridge prompt turns course context into Lectra action plan', () => {
   const { brain } = loadCourseBrain();
   const prompt = brain.__test.buildAssignmentBridgePrompt(

@@ -675,6 +675,21 @@ cannot be tied to a visible source, replace it with a source-backed card. If the
 are thin, say what lecture, page, rubric, or file is missing instead of inventing facts.`;
   }
 
+  function buildConfusionMapPrompt(scopeLabel) {
+    return `Create a citation-first confusion map for ${scopeLabel}.
+
+Return exactly:
+1. Known facts: 3 to 5 source-backed statements with citation chips like [1].
+2. Confusing gaps: missing definitions, examples, rubric details, files, diagrams, or assumptions that block understanding.
+3. Contrast pairs: concepts, commands, APIs, algorithms, formulas, or proof steps the student may be mixing up.
+4. Questions to ask next: office-hours, TA, Canvas discussion, or self-test questions grounded in the retrieved sources.
+5. Lectra export: weak-topic tags, flashcards, checklist items, or notebook-cell titles to save.
+
+Prefer uncertainty calibration and concrete next actions over generic summaries. If the
+sources are thin, say which lecture, page, rubric, file, or Canvas item is missing instead
+of inventing facts.`;
+  }
+
   /**
    * Generate a grounded practice quiz from the current Brain scope.
    * Rides the same retrieval + router path as ask().
@@ -708,6 +723,7 @@ are thin, say what lecture, page, rubric, or file is missing instead of inventin
     buildUpcomingWorkTriagePrompt,
     buildPracticeQuizPrompt,
     buildFlashcardPackPrompt,
+    buildConfusionMapPrompt,
     summarizeSourceConfidence,
     formatDueDateUrgency,
     clipForPrompt,
