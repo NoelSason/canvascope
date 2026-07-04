@@ -294,6 +294,32 @@ test('CourseBrain exam sprint prompt clips long contexts for responsiveness', ()
   assert.ok(prompt.length < 2300);
 });
 
+test('CourseBrain office hours prep prompt creates cited help-seeking plan', () => {
+  const { brain } = loadCourseBrain();
+  const prompt = brain.__test.buildOfficeHoursPrepPrompt(
+    'Project 4 autograder fails hidden tests and the rubric says analyze edge cases before Friday.',
+    { title: 'Project 4 Rubric', course: 'CS 201', page: 2, url: 'https://canvas.example/project4' }
+  );
+
+  assert.match(prompt, /office-hours prep sheet/);
+  assert.match(prompt, /Project 4 Rubric \(CS 201 · p\. 2 · https:\/\/canvas\.example\/project4\)/);
+  assert.match(prompt, /Top 3 questions to ask/);
+  assert.match(prompt, /citation like \[1\]/);
+  assert.match(prompt, /already tried/);
+  assert.match(prompt, /Assignment, grade, or deadline risk/);
+  assert.match(prompt, /CS debugging\/repro detail/);
+  assert.match(prompt, /Lectra handoff/);
+  assert.match(prompt, /Canvas page, rubric, grade item, or lecture note is missing/);
+});
+
+test('CourseBrain office hours prep prompt clips long contexts for responsiveness', () => {
+  const { brain } = loadCourseBrain();
+  const prompt = brain.__test.buildOfficeHoursPrepPrompt('debug log\n'.repeat(400), { title: 'Long Help Request' });
+
+  assert.match(prompt, /clipped for speed/);
+  assert.ok(prompt.length < 2600);
+});
+
 test('CourseBrain prompt clipping preserves complete source lines when possible', () => {
   const { brain } = loadCourseBrain();
   const clipped = brain.__test.clipForPrompt([

@@ -234,8 +234,7 @@ Do not invent hidden requirements.`;
     const clipped = clipForPrompt(topic, 1200);
     return `Create a 25-minute exam sprint from this Canvas/PDF context.
 Source: ${sourceLabel(source)}
-${clipped.clipped ? 'Note: the topic/context was clipped for speed; ask for missing pages if needed.\n' : ''}
-Context:
+${clipped.clipped ? 'Note: the topic/context was clipped for speed; ask for missing pages if needed.\n' : ''}Context:
 ${clipped.text}
 
 Return:
@@ -246,6 +245,23 @@ Return:
 - One performance/lag angle if the topic involves code, tools, PDFs, or notebooks
 
 Use only the cited context first; say what source is missing instead of inventing facts.`;
+  }
+
+  function buildOfficeHoursPrepPrompt(context, source) {
+    const clipped = clipForPrompt(context, 1500);
+    return `Create a concise office-hours prep sheet from this Canvas/PDF course context.
+Source: ${sourceLabel(source)}
+${clipped.clipped ? 'Note: the context was clipped for speed; ask for the missing tail if needed.\n' : ''}Context:
+${clipped.text}
+
+Return:
+- Top 3 questions to ask, each tied to a citation like [1]
+- What I already tried or should try before attending
+- Assignment, grade, or deadline risk to clarify
+- CS debugging/repro detail to bring if this involves code
+- Lectra handoff: note title, checklist, or notebook cell to save after office hours
+
+Use only the provided context first. If there is not enough evidence, say what Canvas page, rubric, grade item, or lecture note is missing.`;
   }
 
   // Questions like "what do I need to get an A" are answered by the deterministic
@@ -561,6 +577,7 @@ If the sources are thin, say what material is missing instead of inventing facts
     buildConceptDrillPrompt,
     buildCodeTracePrompt,
     buildExamSprintPrompt,
+    buildOfficeHoursPrepPrompt,
     buildPracticeQuizPrompt,
     clipForPrompt,
     parseTargetLetter,
