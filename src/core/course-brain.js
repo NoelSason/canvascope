@@ -813,6 +813,21 @@ sources are thin, say which lecture, page, rubric, code file, or Canvas item is 
 of inventing facts.`;
   }
 
+  function buildWarmStartPrompt(scopeLabel) {
+    return `Create a citation-first 10-minute warm start for resuming work in ${scopeLabel}.
+
+Return exactly:
+1. Reopen first: one source, page, heading, assignment, file, command, or Canvas item to open before reading broadly.
+2. One-minute recall: 2 to 3 questions the student should answer from memory before seeing the explanation.
+3. Resume action: the first verb-led action to restart the assignment, review, proof, or debug loop.
+4. Friction check: the blocker, missing source, stale assumption, failing test, deadline, or edge case to verify before spending more time.
+5. Lectra export: exact flashcard, checklist, weak-topic tag, or notebook-cell title to save after the warm start.
+
+Prioritize quick re-entry, active recall, source anchors, and low-friction CS workflow recovery over broad summaries. If the retrieved
+sources are thin, say which lecture, page, rubric, code file, grade item, or Canvas item is missing instead
+of inventing facts.`;
+  }
+
   /**
    * Generate a grounded practice quiz from the current Brain scope.
    * Rides the same retrieval + router path as ask().
@@ -853,6 +868,7 @@ of inventing facts.`;
     buildConfusionMapPrompt,
     buildAnkiExportPrompt,
     buildSocraticWalkthroughPrompt,
+    buildWarmStartPrompt,
     summarizeSourceConfidence,
     classifyAssignmentWorkload,
     formatDueDateUrgency,

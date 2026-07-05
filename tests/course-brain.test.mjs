@@ -640,6 +640,22 @@ test('CourseBrain Socratic walkthrough prompt builds a cited guided ladder', () 
   assert.match(prompt, /instead\s+of inventing facts/);
 });
 
+test('CourseBrain warm start prompt creates fast re-entry guidance', () => {
+  const { brain } = loadCourseBrain();
+  const prompt = brain.__test.buildWarmStartPrompt('CS 201 graph project');
+
+  assert.match(prompt, /citation-first 10-minute warm start/);
+  assert.match(prompt, /CS 201 graph project/);
+  assert.match(prompt, /Reopen first/);
+  assert.match(prompt, /One-minute recall/);
+  assert.match(prompt, /Resume action/);
+  assert.match(prompt, /Friction check/);
+  assert.match(prompt, /Lectra export/);
+  assert.match(prompt, /quick re-entry/);
+  assert.match(prompt, /low-friction CS workflow recovery/);
+  assert.match(prompt, /instead\s+of inventing facts/);
+});
+
 test('CourseBrain grade target parser handles for-a-letter phrasing', () => {
   const { brain } = loadCourseBrain();
 
