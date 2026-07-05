@@ -222,6 +222,8 @@
     if (/\b(rubric|points?|grade|graded|criteria)\b/.test(text)) signals.push('rubric/grade-risk');
     if (/\b(submit|upload|turn in|gradescope|canvas submission)\b/.test(text)) signals.push('submission-check-needed');
     if (/\b(stuck|blocked|confused|unclear|office hours|ta|professor|help session|discussion section)\b/.test(text)) signals.push('office-hours-prep');
+    if (/\b(group|team|partner|peer review|pair programming|collaborat(?:e|ion|ive))\b/.test(text)) signals.push('collaboration-coordination');
+    if (/\b(ai policy|chatgpt|copilot|llm|generative ai|academic integrity|cite ai|ai tools?)\b/.test(text)) signals.push('ai-policy-check');
 
     if (!matched) return { lane: 'unknown', label: 'Unknown workload', signals };
     return { lane: matched.lane, label: matched.label, signals };

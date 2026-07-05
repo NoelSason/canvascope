@@ -490,6 +490,17 @@ test('CourseBrain assignment workload classifier spots office-hours blockers', (
   assert.deepEqual(Array.from(workload.signals), ['rubric/grade-risk', 'office-hours-prep']);
 });
 
+test('CourseBrain assignment workload classifier spots collaboration and AI policy risks', () => {
+  const { brain } = loadCourseBrain();
+  const workload = brain.__test.classifyAssignmentWorkload(
+    'Group project requires peer review and the academic integrity AI policy says cite Copilot usage.'
+  );
+
+  assert.equal(workload.lane, 'project/exam prep');
+  assert.equal(workload.label, 'Multi-session project');
+  assert.deepEqual(Array.from(workload.signals), ['collaboration-coordination', 'ai-policy-check']);
+});
+
 test('CourseBrain upcoming work triage prompt clips long assignment context for responsiveness', () => {
   const { brain } = loadCourseBrain();
   const prompt = brain.__test.buildUpcomingWorkTriagePrompt('rubric line\n'.repeat(500), { title: 'Long Assignment' });
