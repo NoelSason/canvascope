@@ -765,6 +765,19 @@ sources are thin, say which lecture, page, rubric, file, or Canvas item is missi
 of inventing facts.`;
   }
 
+  function buildAnkiExportPrompt(scopeLabel) {
+    return `Create an Anki-ready active-recall export plan for ${scopeLabel}.
+
+Return exactly:
+1. TSV header: Front\tBack\tTags\tSource.
+2. 6 source-backed cards formatted as TSV rows, with one idea per Front and a citation like [1] in every Back.
+3. Tags: include normalized course/topic tags plus one card-type tag such as concept, code-trace, complexity, bug, formula, proof, or rubric.
+4. Quality check: flag any vague card, multi-idea card, or card without a visible source so it can be rewritten before export.
+5. Lectra save: notebook-cell or flashcard-pack title to keep beside the source material.
+
+Do not invent cards from thin retrieval. If the sources are thin, say what lecture, page, rubric, code file, or Canvas item is missing instead of fabricating rows.`;
+  }
+
   /**
    * Generate a grounded practice quiz from the current Brain scope.
    * Rides the same retrieval + router path as ask().
@@ -802,6 +815,7 @@ of inventing facts.`;
     buildPracticeQuizPrompt,
     buildFlashcardPackPrompt,
     buildConfusionMapPrompt,
+    buildAnkiExportPrompt,
     summarizeSourceConfidence,
     classifyAssignmentWorkload,
     formatDueDateUrgency,

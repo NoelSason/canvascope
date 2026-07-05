@@ -581,6 +581,21 @@ test('CourseBrain practice quiz prompt adds spaced review and Lectra save guidan
   assert.match(prompt, /instead of inventing facts/i);
 });
 
+test('CourseBrain Anki export prompt creates source-backed TSV guidance', () => {
+  const { brain } = loadCourseBrain();
+  const prompt = brain.__test.buildAnkiExportPrompt('CS 201 graph algorithms');
+
+  assert.match(prompt, /Anki-ready active-recall export plan/);
+  assert.match(prompt, /CS 201 graph algorithms/);
+  assert.match(prompt, /Front\tBack\tTags\tSource/);
+  assert.match(prompt, /6 source-backed cards/);
+  assert.match(prompt, /citation like \[1\] in every Back/);
+  assert.match(prompt, /concept, code-trace, complexity, bug, formula, proof, or rubric/);
+  assert.match(prompt, /Quality check/);
+  assert.match(prompt, /Lectra save/);
+  assert.match(prompt, /instead of fabricating rows/);
+});
+
 test('CourseBrain grade target parser handles for-a-letter phrasing', () => {
   const { brain } = loadCourseBrain();
 
