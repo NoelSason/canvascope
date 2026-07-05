@@ -435,6 +435,7 @@ test('CourseBrain upcoming work triage prompt creates actionable Canvas checklis
   assert.match(prompt, /24-48 hours/);
   assert.match(prompt, /Starter checklist/);
   assert.match(prompt, /commands\/tests to run/);
+  assert.match(prompt, /Help-seeking checkpoint/);
   assert.match(prompt, /Submission sanity check/);
   assert.match(prompt, /Lectra handoff/);
   assert.match(prompt, /instead of inventing requirements/);
@@ -449,6 +450,16 @@ test('CourseBrain assignment workload classifier spots deadline and submission r
   assert.equal(workload.lane, 'medium task');
   assert.equal(workload.label, 'Lab or code task');
   assert.deepEqual(Array.from(workload.signals), ['deadline-sensitive', 'rubric/grade-risk', 'submission-check-needed']);
+});
+
+test('CourseBrain assignment workload classifier spots office-hours blockers', () => {
+  const { brain } = loadCourseBrain();
+  const workload = brain.__test.classifyAssignmentWorkload(
+    'I am stuck on the proof and confused about the rubric, so I need a TA office hours question.'
+  );
+
+  assert.equal(workload.lane, 'unknown');
+  assert.deepEqual(Array.from(workload.signals), ['rubric/grade-risk', 'office-hours-prep']);
 });
 
 test('CourseBrain upcoming work triage prompt clips long assignment context for responsiveness', () => {

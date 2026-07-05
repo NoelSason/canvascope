@@ -221,6 +221,7 @@
     if (/\b(due|deadline|11:59|tomorrow|today|tonight)\b/.test(text)) signals.push('deadline-sensitive');
     if (/\b(rubric|points?|grade|graded|criteria)\b/.test(text)) signals.push('rubric/grade-risk');
     if (/\b(submit|upload|turn in|gradescope|canvas submission)\b/.test(text)) signals.push('submission-check-needed');
+    if (/\b(stuck|blocked|confused|unclear|office hours|ta|professor|help session|discussion section)\b/.test(text)) signals.push('office-hours-prep');
 
     if (!matched) return { lane: 'unknown', label: 'Unknown workload', signals };
     return { lane: matched.lane, label: matched.label, signals };
@@ -384,6 +385,7 @@ Return:
 - Priority lane: quick task, medium task, project/exam prep, or unknown — start from the detected workload hint, then correct it only if the cited context proves otherwise
 - Due-soon risk: what must happen in the next 24-48 hours, if anything
 - Starter checklist: first concrete actions, files/links to open, commands/tests to run, or questions to ask
+- Help-seeking checkpoint: if blocked, list the exact TA/office-hours question and evidence to bring
 - Submission sanity check: how to verify upload, timestamp, gradebook status, or external-tool completion
 - Lectra handoff: note title, checklist, or notebook cell to create for this work
 
