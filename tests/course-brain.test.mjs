@@ -522,6 +522,33 @@ test('CourseBrain rubric calibration prompt clips long contexts for responsivene
   assert.ok(prompt.length < 3000);
 });
 
+test('CourseBrain teach-back prompt creates cited oral retrieval plan', () => {
+  const { brain } = loadCourseBrain();
+  const prompt = brain.__test.buildTeachBackPrompt(
+    'Lecture 8: BFS queue invariant; hidden tests failed on disconnected graphs.',
+    { title: 'Graph Lecture', course: 'CS 201', page: 8, url: 'https://canvas.example/graph-lecture' }
+  );
+
+  assert.match(prompt, /cited teach-back script/);
+  assert.match(prompt, /Graph Lecture \(CS 201 · p\. 8 · https:\/\/canvas\.example\/graph-lecture\)/);
+  assert.match(prompt, /One-minute explanation/);
+  assert.match(prompt, /Check my understanding/);
+  assert.match(prompt, /Tiny replay/);
+  assert.match(prompt, /If I get stuck/);
+  assert.match(prompt, /Lectra handoff/);
+  assert.match(prompt, /oral retrieval practice/);
+  assert.match(prompt, /BFS queue invariant/);
+  assert.match(prompt, /instead of inventing facts/);
+});
+
+test('CourseBrain teach-back prompt clips long contexts for responsiveness', () => {
+  const { brain } = loadCourseBrain();
+  const prompt = brain.__test.buildTeachBackPrompt('lecture note\n'.repeat(500), { title: 'Long Lecture' });
+
+  assert.match(prompt, /clipped for speed/);
+  assert.ok(prompt.length < 2700);
+});
+
 test('CourseBrain prompt clipping preserves complete source lines when possible', () => {
   const { brain } = loadCourseBrain();
   const clipped = brain.__test.clipForPrompt([

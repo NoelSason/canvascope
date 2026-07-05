@@ -426,6 +426,23 @@ Return:
 If no rubric or feedback is visible, say "rubric source missing" and name the closest Canvas/PDF source to fetch next instead of inventing criteria.`;
   }
 
+  function buildTeachBackPrompt(context, source) {
+    const clipped = clipForPrompt(context, 1500);
+    return `Create a cited teach-back script from this Canvas/PDF context.
+Source: ${sourceLabel(source)}
+${clipped.clipped ? 'Note: the context was clipped for speed; ask for missing pages if the explanation has gaps.\n' : ''}Context:
+${clipped.text}
+
+Return:
+- One-minute explanation: what the student should say aloud, grounded in citation [1]
+- Check my understanding: 3 self-questions that expose definitions, assumptions, edge cases, or misconceptions
+- Tiny replay: one trace, proof step, command, calculation, or notebook cell to redo from memory
+- If I get stuck: the page, heading, rubric line, file, or Canvas item to reopen first
+- Lectra handoff: exact flashcard, weak-topic tag, or notebook-cell title to save for spaced review
+
+Prefer oral retrieval practice and small reproducible CS examples over polished summaries. If the source is thin, say what evidence is missing instead of inventing facts.`;
+  }
+
   // Questions like "what do I need to get an A" are answered by the deterministic
   // grade-target calculator (grade-target.js), NOT the LLM — LLMs are unreliable
   // at the weighted arithmetic. Schedule/policy questions fall through to the
@@ -781,6 +798,7 @@ of inventing facts.`;
     buildUpcomingWorkTriagePrompt,
     buildSourceGapPlanPrompt,
     buildRubricCalibrationPrompt,
+    buildTeachBackPrompt,
     buildPracticeQuizPrompt,
     buildFlashcardPackPrompt,
     buildConfusionMapPrompt,
