@@ -484,6 +484,8 @@ test('CourseBrain upcoming work triage prompt creates actionable Canvas checklis
   assert.match(prompt, /24-48 hours/);
   assert.match(prompt, /Starter checklist/);
   assert.match(prompt, /commands\/tests to run/);
+  assert.match(prompt, /Prerequisite checkpoint/);
+  assert.match(prompt, /smallest background concept\/source to refresh/);
   assert.match(prompt, /Help-seeking checkpoint/);
   assert.match(prompt, /Submission sanity check/);
   assert.match(prompt, /Lectra handoff/);
@@ -522,12 +524,34 @@ test('CourseBrain assignment workload classifier spots collaboration and AI poli
   assert.deepEqual(Array.from(workload.signals), ['collaboration-coordination', 'ai-policy-check']);
 });
 
+test('CourseBrain assignment workload classifier spots prerequisite gaps', () => {
+  const { brain } = loadCourseBrain();
+  const workload = brain.__test.classifyAssignmentWorkload(
+    'Before starting the dynamic programming project, refresh recursion trees and review prerequisite graph notation.'
+  );
+
+  assert.equal(workload.lane, 'project/exam prep');
+  assert.deepEqual(Array.from(workload.signals), ['prerequisite-gap']);
+});
+
+test('CourseBrain upcoming work triage prompt carries prerequisite-gap signal into the checklist', () => {
+  const { brain } = loadCourseBrain();
+  const prompt = brain.__test.buildUpcomingWorkTriagePrompt(
+    'Before attempting Project 4, review prerequisite heap invariants and refresh priority queue operations.',
+    { title: 'Project 4 Brief' }
+  );
+
+  assert.match(prompt, /Signals: prerequisite-gap/);
+  assert.match(prompt, /Prerequisite checkpoint/);
+  assert.match(prompt, /smallest background concept/);
+});
+
 test('CourseBrain upcoming work triage prompt clips long assignment context for responsiveness', () => {
   const { brain } = loadCourseBrain();
   const prompt = brain.__test.buildUpcomingWorkTriagePrompt('rubric line\n'.repeat(500), { title: 'Long Assignment' });
 
   assert.match(prompt, /clipped for speed/);
-  assert.ok(prompt.length < 2900);
+  assert.ok(prompt.length < 3050);
 });
 
 test('CourseBrain source gap plan prompt audits evidence before study aid generation', () => {
