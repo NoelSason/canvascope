@@ -385,6 +385,23 @@ Return:
 Do not fill gaps with plausible facts. Prefer saying what source is missing instead of inventing requirements.`;
   }
 
+  function buildRubricCalibrationPrompt(context, source) {
+    const clipped = clipForPrompt(context, 1700);
+    return `Create a rubric-calibrated Canvas-to-Lectra checklist from this course context.
+Source: ${sourceLabel(source)}
+${clipped.clipped ? 'Note: the context was clipped for speed; flag any missing rubric or feedback details.\n' : ''}Context:
+${clipped.text}
+
+Return:
+- Graded evidence: exact rubric lines, due dates, feedback, files, commands, tests, or Canvas submission requirements with citation [1]
+- Success criteria: 3 to 6 objective checks to run before trusting notes, code, proof work, or the final upload
+- Risky gaps: hidden tests, missing starter files, unclear grading policy, absent examples, or feedback that should not be guessed
+- Practice loop: one active-recall, code-replay, proof-replay, or submission-check step for today plus one after-sleep follow-up
+- Lectra handoff: exact checklist title, weak-topic tag, flashcard, or notebook cell to save
+
+If no rubric or feedback is visible, say "rubric source missing" and name the closest Canvas/PDF source to fetch next instead of inventing criteria.`;
+  }
+
   // Questions like "what do I need to get an A" are answered by the deterministic
   // grade-target calculator (grade-target.js), NOT the LLM — LLMs are unreliable
   // at the weighted arithmetic. Schedule/policy questions fall through to the
@@ -739,6 +756,7 @@ of inventing facts.`;
     buildMistakeReplayPrompt,
     buildUpcomingWorkTriagePrompt,
     buildSourceGapPlanPrompt,
+    buildRubricCalibrationPrompt,
     buildPracticeQuizPrompt,
     buildFlashcardPackPrompt,
     buildConfusionMapPrompt,

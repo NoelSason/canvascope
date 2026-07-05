@@ -471,6 +471,32 @@ test('CourseBrain source gap plan prompt clips long contexts for responsiveness'
   assert.ok(prompt.length < 2700);
 });
 
+test('CourseBrain rubric calibration prompt creates grade-risk checklist', () => {
+  const { brain } = loadCourseBrain();
+  const prompt = brain.__test.buildRubricCalibrationPrompt(
+    'Rubric: submit graph.py with pytest output and explain the Dijkstra edge-case analysis before Friday.',
+    { title: 'Project 7 Rubric', course: 'CS 201', page: 5, url: 'https://canvas.example/project7-rubric' }
+  );
+
+  assert.match(prompt, /rubric-calibrated Canvas-to-Lectra checklist/);
+  assert.match(prompt, /Project 7 Rubric \(CS 201 · p\. 5 · https:\/\/canvas\.example\/project7-rubric\)/);
+  assert.match(prompt, /Graded evidence/);
+  assert.match(prompt, /Success criteria/);
+  assert.match(prompt, /Risky gaps/);
+  assert.match(prompt, /Practice loop/);
+  assert.match(prompt, /Lectra handoff/);
+  assert.match(prompt, /rubric source missing/);
+  assert.match(prompt, /graph\.py/);
+});
+
+test('CourseBrain rubric calibration prompt clips long contexts for responsiveness', () => {
+  const { brain } = loadCourseBrain();
+  const prompt = brain.__test.buildRubricCalibrationPrompt('rubric line\n'.repeat(500), { title: 'Long Rubric' });
+
+  assert.match(prompt, /clipped for speed/);
+  assert.ok(prompt.length < 3000);
+});
+
 test('CourseBrain prompt clipping preserves complete source lines when possible', () => {
   const { brain } = loadCourseBrain();
   const clipped = brain.__test.clipForPrompt([
