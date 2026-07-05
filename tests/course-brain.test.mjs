@@ -37,7 +37,8 @@ function loadCourseBrain() {
           className: '',
           title: '',
           innerHTML: '',
-          appendChild() {},
+          children: [],
+          appendChild(child) { this.children.push(child); },
           addEventListener() {}
         };
       }
@@ -143,6 +144,26 @@ test('CourseBrain citation decoration leaves unknown markers unchanged', () => {
   const html = brain.__test.decorateCitations('Use [1] and [9]', [{ n: 1, title: 'Escaped <Source>' }]);
 
   assert.equal(html, 'Use <button class="brain-cite" data-cite="1" title="Escaped &lt;Source&gt;">1</button> and [9]');
+});
+
+test('CourseBrain source chips escape untrusted provenance fields', () => {
+  const { brain } = loadCourseBrain();
+  const appended = [];
+  const container = { appendChild(child) { appended.push(child); } };
+
+  brain.__test.renderSourceChips(container, [{
+    n: '<img src=x onerror=alert(1)>',
+    title: '<script>alert(1)</script>',
+    page: '4"><img src=x onerror=alert(2)>'
+  }]);
+
+  const rail = appended[0];
+  const chip = rail.children.find(child => child.className === 'brain-source-chip');
+  assert.ok(chip.innerHTML.includes('&lt;script&gt;alert(1)&lt;/script&gt;'));
+  assert.ok(chip.innerHTML.includes('p.4&quot;&gt;&lt;img src=x onerror=alert(2)&gt;'));
+  assert.ok(chip.innerHTML.includes('&lt;img src=x onerror=alert(1)&gt;'));
+  assert.equal(chip.innerHTML.includes('<script>'), false);
+  assert.equal(chip.innerHTML.includes('<img'), false);
 });
 
 test('CourseBrain source confidence badge distinguishes weak and anchored context', () => {

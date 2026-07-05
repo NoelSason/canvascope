@@ -61,8 +61,8 @@
       const chip = document.createElement(source.url ? 'button' : 'span');
       chip.className = 'brain-source-chip' + (source.url ? ' is-link' : '');
       chip.dataset.n = String(source.n);
-      const loc = source.page ? ` · p.${source.page}` : '';
-      chip.innerHTML = `<span class="chip-n">${source.n}</span>${escapeHtml(source.title)}${loc}`;
+      const loc = source.page ? ` · p.${escapeHtml(source.page)}` : '';
+      chip.innerHTML = `<span class="chip-n">${escapeHtml(source.n)}</span>${escapeHtml(source.title)}${loc}`;
       if (source.url) {
         chip.title = source.url;
         chip.addEventListener('click', () => chrome.tabs.create({ url: source.url }));
@@ -850,6 +850,7 @@ of inventing facts.`;
 
   const api = { init, ask, quiz, refresh: populateCoursePicker, isBusy: () => busy };
   api.__test = {
+    renderSourceChips,
     decorateCitations,
     createThrottledBrainRenderer,
     buildStudyNotesPrompt,
