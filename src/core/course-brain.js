@@ -778,6 +778,21 @@ Return exactly:
 Do not invent cards from thin retrieval. If the sources are thin, say what lecture, page, rubric, code file, or Canvas item is missing instead of fabricating rows.`;
   }
 
+  function buildSocraticWalkthroughPrompt(scopeLabel) {
+    return `Create a citation-first Socratic walkthrough for ${scopeLabel}.
+
+Return exactly:
+1. Start here: one low-friction prerequisite question before any explanation.
+2. Guided ladder: 4 to 6 questions that move from definition, to tiny worked example, to edge case, implementation tradeoff, or proof step.
+3. Expected student moves: terse answers/checks after each step with citation chips like [1].
+4. Rescue hints: one hint per step that nudges without giving away the full answer.
+5. Lectra export: weak-topic tag, flashcard title, checklist, or notebook-cell title to save after the walkthrough.
+
+Make the student retrieve, trace, and explain before seeing polished answers. If the retrieved
+sources are thin, say which lecture, page, rubric, code file, or Canvas item is missing instead
+of inventing facts.`;
+  }
+
   /**
    * Generate a grounded practice quiz from the current Brain scope.
    * Rides the same retrieval + router path as ask().
@@ -816,6 +831,7 @@ Do not invent cards from thin retrieval. If the sources are thin, say what lectu
     buildFlashcardPackPrompt,
     buildConfusionMapPrompt,
     buildAnkiExportPrompt,
+    buildSocraticWalkthroughPrompt,
     summarizeSourceConfidence,
     classifyAssignmentWorkload,
     formatDueDateUrgency,

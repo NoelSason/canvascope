@@ -596,6 +596,22 @@ test('CourseBrain Anki export prompt creates source-backed TSV guidance', () => 
   assert.match(prompt, /instead of fabricating rows/);
 });
 
+test('CourseBrain Socratic walkthrough prompt builds a cited guided ladder', () => {
+  const { brain } = loadCourseBrain();
+  const prompt = brain.__test.buildSocraticWalkthroughPrompt('CS 70 induction proofs');
+
+  assert.match(prompt, /citation-first Socratic walkthrough/);
+  assert.match(prompt, /CS 70 induction proofs/);
+  assert.match(prompt, /Start here/);
+  assert.match(prompt, /Guided ladder/);
+  assert.match(prompt, /Expected student moves/);
+  assert.match(prompt, /citation chips like \[1\]/);
+  assert.match(prompt, /Rescue hints/);
+  assert.match(prompt, /Lectra export/);
+  assert.match(prompt, /retrieve, trace, and explain/);
+  assert.match(prompt, /instead\s+of inventing facts/);
+});
+
 test('CourseBrain grade target parser handles for-a-letter phrasing', () => {
   const { brain } = loadCourseBrain();
 
