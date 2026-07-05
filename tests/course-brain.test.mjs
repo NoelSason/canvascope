@@ -426,6 +426,9 @@ test('CourseBrain upcoming work triage prompt creates actionable Canvas checklis
 
   assert.match(prompt, /upcoming-work triage plan/);
   assert.match(prompt, /Project 5 Assignment \(CS 201 · p\. 1 · https:\/\/canvas\.example\/project5\)/);
+  assert.match(prompt, /Detected workload hint: project\/exam prep — Multi-session project/);
+  assert.match(prompt, /deadline-sensitive/);
+  assert.match(prompt, /submission-check-needed/);
   assert.match(prompt, /Priority lane/);
   assert.match(prompt, /quick task, medium task, project\/exam prep, or unknown/);
   assert.match(prompt, /Due-soon risk/);
@@ -435,6 +438,17 @@ test('CourseBrain upcoming work triage prompt creates actionable Canvas checklis
   assert.match(prompt, /Submission sanity check/);
   assert.match(prompt, /Lectra handoff/);
   assert.match(prompt, /instead of inventing requirements/);
+});
+
+test('CourseBrain assignment workload classifier spots deadline and submission risk', () => {
+  const { brain } = loadCourseBrain();
+  const workload = brain.__test.classifyAssignmentWorkload(
+    'Lab notebook is due tonight; upload pytest output and follow the rubric criteria.'
+  );
+
+  assert.equal(workload.lane, 'medium task');
+  assert.equal(workload.label, 'Lab or code task');
+  assert.deepEqual(Array.from(workload.signals), ['deadline-sensitive', 'rubric/grade-risk', 'submission-check-needed']);
 });
 
 test('CourseBrain upcoming work triage prompt clips long assignment context for responsiveness', () => {
