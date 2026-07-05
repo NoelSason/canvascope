@@ -417,6 +417,34 @@ test('CourseBrain mistake replay prompt clips long feedback for responsiveness',
   assert.ok(prompt.length < 2700);
 });
 
+test('CourseBrain next action prompt extracts a verb-led first step', () => {
+  const { brain } = loadCourseBrain();
+  const prompt = brain.__test.buildNextActionPrompt(
+    'Project 5 is due tomorrow at 11:59 PM. Submit files on Gradescope and include pytest output.',
+    { title: 'Project 5 Assignment', course: 'CS 201', page: 1, url: 'https://canvas.example/project5' }
+  );
+
+  assert.match(prompt, /next concrete action/);
+  assert.match(prompt, /Project 5 Assignment \(CS 201 · p\. 1 · https:\/\/canvas\.example\/project5\)/);
+  assert.match(prompt, /Detected workload hint: project\/exam prep — Multi-session project/);
+  assert.match(prompt, /deadline-sensitive/);
+  assert.match(prompt, /submission-check-needed/);
+  assert.match(prompt, /Next action: one specific thing to do first/);
+  assert.match(prompt, /Why now/);
+  assert.match(prompt, /Evidence to open/);
+  assert.match(prompt, /Done check/);
+  assert.match(prompt, /Lectra handoff/);
+  assert.match(prompt, /instead of inventing requirements/);
+});
+
+test('CourseBrain next action prompt clips long contexts for responsiveness', () => {
+  const { brain } = loadCourseBrain();
+  const prompt = brain.__test.buildNextActionPrompt('assignment line\n'.repeat(500), { title: 'Long Assignment' });
+
+  assert.match(prompt, /clipped for speed/);
+  assert.ok(prompt.length < 2700);
+});
+
 test('CourseBrain upcoming work triage prompt creates actionable Canvas checklist', () => {
   const { brain } = loadCourseBrain();
   const prompt = brain.__test.buildUpcomingWorkTriagePrompt(

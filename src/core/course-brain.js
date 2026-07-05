@@ -371,6 +371,26 @@ Return:
 Use only the provided context first. If evidence is thin, say what source, rubric, code, log, or lecture note is missing instead of inventing facts.`;
   }
 
+  function buildNextActionPrompt(context, source) {
+    const clipped = clipForPrompt(context, 1500);
+    const workload = classifyAssignmentWorkload(clipped.text);
+    const signalLine = workload.signals.length ? ` Signals: ${workload.signals.join(', ')}.` : '';
+    return `Extract the next concrete action from this Canvas/PDF course context.
+Source: ${sourceLabel(source)}
+Detected workload hint: ${workload.lane} — ${workload.label}.${signalLine}
+${clipped.clipped ? 'Note: the context was clipped for speed; flag any missing due-date, rubric, or submission details.\n' : ''}Context:
+${clipped.text}
+
+Return exactly:
+- Next action: one specific thing to do first, phrased as a verb-led checklist item
+- Why now: cite the due date, rubric, blocker, or course source that makes it important
+- Evidence to open: the Canvas page, PDF section, file, command, or notebook cell to inspect
+- Done check: how to know this action is complete before moving on
+- Lectra handoff: concise note/checklist title to save
+
+Use only the provided context first. If there is not enough evidence, say what Canvas item, rubric, due date, or source is missing instead of inventing requirements.`;
+  }
+
   function buildUpcomingWorkTriagePrompt(context, source) {
     const clipped = clipForPrompt(context, 1700);
     const workload = classifyAssignmentWorkload(clipped.text);
@@ -823,6 +843,7 @@ of inventing facts.`;
     buildExamSprintPrompt,
     buildOfficeHoursPrepPrompt,
     buildMistakeReplayPrompt,
+    buildNextActionPrompt,
     buildUpcomingWorkTriagePrompt,
     buildSourceGapPlanPrompt,
     buildRubricCalibrationPrompt,
