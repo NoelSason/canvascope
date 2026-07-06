@@ -225,7 +225,9 @@
       'submission-check-needed',
       'office-hours-prep',
       'prerequisite-gap',
-      'confidence-calibration'
+      'confidence-calibration',
+      'ai-policy-check',
+      'passive-summary-risk'
     ].includes(signal));
 
     let level = 'safe';

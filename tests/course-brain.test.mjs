@@ -225,6 +225,21 @@ test('CourseBrain assignment risk estimator combines deadline, workload, and blo
   assert.equal(safe.level, 'safe');
 });
 
+test('CourseBrain assignment risk treats AI policy and passive summaries as source-check risk', () => {
+  const { brain } = loadCourseBrain();
+  const now = new Date('2026-07-04T12:00:00-07:00');
+
+  const risk = brain.__test.estimateAssignmentRisk(
+    'AI policy says cite ChatGPT and Copilot usage. AI-generated notes summary needs source verification.',
+    '2026-07-12T12:00:00-07:00',
+    now
+  );
+
+  assert.equal(risk.level, 'start-soon');
+  assert.ok(risk.reasons.includes('ai-policy-check'));
+  assert.ok(risk.reasons.includes('passive-summary-risk'));
+});
+
 test('CourseBrain study notes prompt is citation-first and Lectra-ready', () => {
   const { brain } = loadCourseBrain();
   const prompt = brain.__test.buildStudyNotesPrompt('CS 101 PDF pages 4-6');
