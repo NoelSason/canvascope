@@ -246,10 +246,27 @@ test('CourseBrain study notes prompt is citation-first and Lectra-ready', () => 
 
   assert.match(prompt, /CS 101 PDF pages 4-6/);
   assert.match(prompt, /citation like \[1\]/);
+  assert.match(prompt, /Source support contract/);
+  assert.match(prompt, /not found in course materials/);
+  assert.match(prompt, /Do not invent due dates, rubric details, professor policies/);
   assert.match(prompt, /Edge cases \/ common mistakes/);
   assert.match(prompt, /Confusion checkpoint/);
   assert.match(prompt, /Lectra handoff/);
   assert.match(prompt, /if the sources are thin, say what is missing/i);
+});
+
+test('CourseBrain source gap plan prompt requires explicit support labels', () => {
+  const { brain } = loadCourseBrain();
+  const prompt = brain.__test.buildSourceGapPlanPrompt(
+    'Syllabus mentions Project 2, but the rubric is missing.',
+    { title: 'Syllabus', course: 'CS 201', page: 5 }
+  );
+
+  assert.match(prompt, /supported/);
+  assert.match(prompt, /partially supported/);
+  assert.match(prompt, /not found in course materials/);
+  assert.match(prompt, /Syllabus \(CS 201 · p\. 5\)/);
+  assert.match(prompt, /rubric/);
 });
 
 test('CourseBrain selection study note prompt is structured and citation preserving', () => {

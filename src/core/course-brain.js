@@ -293,8 +293,14 @@
     return details.length ? `${parts[0]} (${details.join(' · ')})` : parts[0];
   }
 
+  function sourceSupportContract(noun = 'answer') {
+    return `Source support contract: label each ${noun} as "supported", "partially supported", or "not found in course materials". Do not invent due dates, rubric details, professor policies, or implementation requirements when the retrieved sources do not explicitly support them.`;
+  }
+
   function buildStudyNotesPrompt(topic) {
     return `Create citation-first study notes for: ${String(topic || '').trim()}.
+${sourceSupportContract('study-note claim')}
+
 
 Use the course/PDF sources and include a citation like [1] on every factual bullet. Structure:
 1. Key concepts and definitions
@@ -473,8 +479,9 @@ Use only the provided Canvas/PDF context first. If evidence is thin, say what sy
   }
 
   function buildSourceGapPlanPrompt(context, source) {
-    const clipped = clipForPrompt(context, 1600);
+    const clipped = clipForPrompt(context, 1300);
     return `Audit this Canvas/PDF context for missing evidence before creating study aids.
+${sourceSupportContract('evidence claim')}
 Source: ${sourceLabel(source)}
 ${clipped.clipped ? 'Note: the context was clipped for speed; ask for missing pages or files if needed.\n' : ''}Context:
 ${clipped.text}
@@ -930,6 +937,7 @@ of inventing facts.`;
     buildAnkiExportPrompt,
     buildSocraticWalkthroughPrompt,
     buildWarmStartPrompt,
+    sourceSupportContract,
     summarizeSourceConfidence,
     classifyAssignmentWorkload,
     estimateAssignmentRisk,
