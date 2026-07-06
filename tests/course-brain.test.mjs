@@ -534,6 +534,16 @@ test('CourseBrain assignment workload classifier spots prerequisite gaps', () =>
   assert.deepEqual(Array.from(workload.signals), ['prerequisite-gap']);
 });
 
+test('CourseBrain assignment workload classifier spots confidence calibration needs', () => {
+  const { brain } = loadCourseBrain();
+  const workload = brain.__test.classifyAssignmentWorkload(
+    'Quiz feedback: I was confident about Dijkstra on negative edges but got it wrong, so I need a self-check.'
+  );
+
+  assert.equal(workload.lane, 'quick task');
+  assert.deepEqual(Array.from(workload.signals), ['confidence-calibration']);
+});
+
 test('CourseBrain upcoming work triage prompt carries prerequisite-gap signal into the checklist', () => {
   const { brain } = loadCourseBrain();
   const prompt = brain.__test.buildUpcomingWorkTriagePrompt(
@@ -544,6 +554,18 @@ test('CourseBrain upcoming work triage prompt carries prerequisite-gap signal in
   assert.match(prompt, /Signals: prerequisite-gap/);
   assert.match(prompt, /Prerequisite checkpoint/);
   assert.match(prompt, /smallest background concept/);
+});
+
+test('CourseBrain upcoming work triage prompt carries confidence calibration into the checklist', () => {
+  const { brain } = loadCourseBrain();
+  const prompt = brain.__test.buildUpcomingWorkTriagePrompt(
+    'Practice quiz feedback says I was confident about Dijkstra with negative edges but got it wrong.',
+    { title: 'Quiz Feedback' }
+  );
+
+  assert.match(prompt, /Signals: confidence-calibration/);
+  assert.match(prompt, /Confidence checkpoint/);
+  assert.match(prompt, /low\/medium\/high confidence mark/);
 });
 
 test('CourseBrain upcoming work triage prompt clips long assignment context for responsiveness', () => {

@@ -225,6 +225,7 @@
     if (/\b(group|team|partner|peer review|pair programming|collaborat(?:e|ion|ive))\b/.test(text)) signals.push('collaboration-coordination');
     if (/\b(prereq(?:uisite)?s?|required background|assumes?|review before|refresh|before starting|before attempting|should already know)\b/.test(text)) signals.push('prerequisite-gap');
     if (/\b(ai policy|chatgpt|copilot|llm|generative ai|academic integrity|cite ai|ai tools?)\b/.test(text)) signals.push('ai-policy-check');
+    if (/\b(confiden(?:ce|t)|not sure|uncertain|guess(?:ed|ing)?|got (?:it|this) wrong|missed|wrong answer|quiz feedback|practice score|self[- ]?check)\b/.test(text)) signals.push('confidence-calibration');
 
     if (!matched) return { lane: 'unknown', label: 'Unknown workload', signals };
     return { lane: matched.lane, label: matched.label, signals };
@@ -406,9 +407,10 @@ ${clipped.text}
 
 Return:
 - Priority lane: quick task, medium task, project/exam prep, or unknown — start from the detected workload hint, then correct it only if the cited context proves otherwise
-- Due-soon risk: what must happen in the next 24-48 hours, if anything
-- Starter checklist: first concrete actions, files/links to open, commands/tests to run, or questions to ask
+- Due-soon risk: next 24-48 hours action, if any
+- Starter checklist: first actions, files/links, commands/tests to run, or questions
 - Prerequisite checkpoint: if the detected signals include prerequisite-gap, name the smallest background concept/source to refresh before harder work
+- Confidence checkpoint: if confidence-calibration, ask for a low/medium/high confidence mark before source check
 - Help-seeking checkpoint: if blocked, list the exact TA/office-hours question and evidence to bring
 - Submission sanity check: how to verify upload, timestamp, gradebook status, or external-tool completion
 - Lectra handoff: note title, checklist, or notebook cell to create for this work
