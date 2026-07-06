@@ -207,6 +207,56 @@
     return { lane: 'later', label: `Due later (${relative})`, minutesUntil };
   }
 
+  function estimateAssignmentRisk(context = '', dueAt = null, now = new Date()) {
+    const urgency = dueAt ? formatDueDateUrgency(dueAt, now) : { lane: 'unknown', label: 'No due date', minutesUntil: null };
+    const workload = classifyAssignmentWorkload(context);
+    const effortHoursByLane = {
+      'quick task': 1,
+      'medium task': 3,
+      'project/exam prep': 8,
+      unknown: 2
+    };
+    const effortHours = effortHoursByLane[workload.lane] || effortHoursByLane.unknown;
+    const hoursUntil = typeof urgency.minutesUntil === 'number' ? urgency.minutesUntil / 60 : null;
+    const text = String(context || '').toLowerCase();
+    const isStarted = /\b(started|draft|implemented|completed|submitted|finished|done|passed tests?)\b/.test(text);
+    const riskSignals = workload.signals.filter(signal => [
+      'rubric/grade-risk',
+      'submission-check-needed',
+      'office-hours-prep',
+      'prerequisite-gap',
+      'confidence-calibration'
+    ].includes(signal));
+
+    let level = 'safe';
+    if (hoursUntil != null && hoursUntil < 0) level = 'critical';
+    else if (hoursUntil != null && hoursUntil < effortHours * 1.5) level = 'critical';
+    else if (hoursUntil != null && hoursUntil < effortHours * 3) level = 'at-risk';
+    else if (!isStarted && hoursUntil != null && hoursUntil <= 72) level = 'start-soon';
+    else if (riskSignals.length >= 2) level = 'start-soon';
+
+    const labels = {
+      safe: 'Safe',
+      'start-soon': 'Start soon',
+      'at-risk': 'At risk',
+      critical: 'Critical'
+    };
+    const reasons = [];
+    if (urgency.lane !== 'unknown') reasons.push(urgency.label);
+    reasons.push(workload.label);
+    if (!isStarted) reasons.push('not clearly started');
+    riskSignals.slice(0, 3).forEach(signal => reasons.push(signal));
+
+    return {
+      level,
+      label: labels[level],
+      urgency,
+      workload,
+      estimatedEffortHours: effortHours,
+      reasons
+    };
+  }
+
   function classifyAssignmentWorkload(context = '') {
     const text = String(context || '').toLowerCase();
     const categories = [
@@ -880,6 +930,7 @@ of inventing facts.`;
     buildWarmStartPrompt,
     summarizeSourceConfidence,
     classifyAssignmentWorkload,
+    estimateAssignmentRisk,
     formatDueDateUrgency,
     clipForPrompt,
     parseTargetLetter,

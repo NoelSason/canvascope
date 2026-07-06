@@ -194,6 +194,37 @@ test('CourseBrain due date urgency labels Canvas work by time remaining', () => 
   assert.equal(brain.__test.formatDueDateUrgency('2026-07-04T10:00:00-07:00', now).label, 'Overdue by 2h');
 });
 
+test('CourseBrain assignment risk estimator combines deadline, workload, and blocker signals', () => {
+  const { brain } = loadCourseBrain();
+  const now = new Date('2026-07-04T12:00:00-07:00');
+
+  const critical = brain.__test.estimateAssignmentRisk(
+    'Project rubric: submit graph.py, hidden tests failed, confused about requirements.',
+    '2026-07-04T20:00:00-07:00',
+    now
+  );
+  assert.equal(critical.level, 'critical');
+  assert.equal(critical.label, 'Critical');
+  assert.equal(critical.estimatedEffortHours, 8);
+  assert.ok(critical.reasons.includes('rubric/grade-risk'));
+  assert.ok(critical.reasons.includes('submission-check-needed'));
+
+  const startSoon = brain.__test.estimateAssignmentRisk(
+    'Discussion post with confidence calibration note; not sure about the reading.',
+    '2026-07-06T12:00:00-07:00',
+    now
+  );
+  assert.equal(startSoon.level, 'start-soon');
+  assert.equal(startSoon.label, 'Start soon');
+
+  const safe = brain.__test.estimateAssignmentRisk(
+    'Quiz completed and submitted.',
+    '2026-07-20T12:00:00-07:00',
+    now
+  );
+  assert.equal(safe.level, 'safe');
+});
+
 test('CourseBrain study notes prompt is citation-first and Lectra-ready', () => {
   const { brain } = loadCourseBrain();
   const prompt = brain.__test.buildStudyNotesPrompt('CS 101 PDF pages 4-6');
