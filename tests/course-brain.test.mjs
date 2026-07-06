@@ -265,8 +265,11 @@ test('CourseBrain source gap plan prompt requires explicit support labels', () =
   assert.match(prompt, /supported/);
   assert.match(prompt, /partially supported/);
   assert.match(prompt, /not found in course materials/);
+  assert.match(prompt, /nearest line, paragraph, page, timestamp, or heading quote/);
   assert.match(prompt, /Syllabus \(CS 201 · p\. 5\)/);
   assert.match(prompt, /rubric/);
+  assert.match(prompt, /Evidence ledger/);
+  assert.match(prompt, /missing line-level support/);
 });
 
 test('CourseBrain selection study note prompt is structured and citation preserving', () => {

@@ -294,7 +294,7 @@
   }
 
   function sourceSupportContract(noun = 'answer') {
-    return `Source support contract: label each ${noun} as "supported", "partially supported", or "not found in course materials". Do not invent due dates, rubric details, professor policies, or implementation requirements when the retrieved sources do not explicitly support them.`;
+    return `Source support contract: label each ${noun} as "supported", "partially supported", or "not found in course materials". Include the nearest line, paragraph, page, timestamp, or heading quote when the source exposes one. Do not invent due dates, rubric details, professor policies, or implementation requirements when the retrieved sources do not explicitly support them.`;
   }
 
   function buildStudyNotesPrompt(topic) {
@@ -479,7 +479,7 @@ Use only the provided Canvas/PDF context first. If evidence is thin, say what sy
   }
 
   function buildSourceGapPlanPrompt(context, source) {
-    const clipped = clipForPrompt(context, 1300);
+    const clipped = clipForPrompt(context, 1100);
     return `Audit this Canvas/PDF context for missing evidence before creating study aids.
 ${sourceSupportContract('evidence claim')}
 Source: ${sourceLabel(source)}
@@ -488,6 +488,7 @@ ${clipped.text}
 
 Return:
 - Evidence available: cite the exact page, heading, timestamp, command, file, or Canvas item currently visible
+- Evidence ledger: quote or paraphrase the nearest line/paragraph support for each important claim, and mark missing line-level support explicitly
 - Missing sources: lectures, rubrics, code files, diagrams, feedback, due dates, datasets, or assignment links needed before trusting the answer
 - Safe next study action: one active-recall, code-replay, or checklist step that uses only the available evidence
 - Questions to ask: TA, office-hours, Canvas discussion, or self-check questions that would close the gaps
