@@ -486,6 +486,8 @@ test('CourseBrain upcoming work triage prompt creates actionable Canvas checklis
   assert.match(prompt, /commands\/tests to run/);
   assert.match(prompt, /Prerequisite checkpoint/);
   assert.match(prompt, /smallest background concept\/source to refresh/);
+  assert.match(prompt, /Passive-summary checkpoint/);
+  assert.match(prompt, /retrieval questions/);
   assert.match(prompt, /Help-seeking checkpoint/);
   assert.match(prompt, /Submission sanity check/);
   assert.match(prompt, /Lectra handoff/);
@@ -501,6 +503,16 @@ test('CourseBrain assignment workload classifier spots deadline and submission r
   assert.equal(workload.lane, 'medium task');
   assert.equal(workload.label, 'Lab or code task');
   assert.deepEqual(Array.from(workload.signals), ['deadline-sensitive', 'rubric/grade-risk', 'submission-check-needed']);
+});
+
+test('CourseBrain assignment workload classifier flags passive AI summaries', () => {
+  const { brain } = loadCourseBrain();
+  const workload = brain.__test.classifyAssignmentWorkload(
+    'AI notes summary from the lecture recording covers dynamic programming before the quiz.'
+  );
+
+  assert.equal(workload.lane, 'quick task');
+  assert.deepEqual(Array.from(workload.signals), ['passive-summary-risk']);
 });
 
 test('CourseBrain assignment workload classifier spots office-hours blockers', () => {
@@ -573,7 +585,7 @@ test('CourseBrain upcoming work triage prompt clips long assignment context for 
   const prompt = brain.__test.buildUpcomingWorkTriagePrompt('rubric line\n'.repeat(500), { title: 'Long Assignment' });
 
   assert.match(prompt, /clipped for speed/);
-  assert.ok(prompt.length < 3050);
+  assert.ok(prompt.length < 3200);
 });
 
 test('CourseBrain source gap plan prompt audits evidence before study aid generation', () => {

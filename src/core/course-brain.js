@@ -226,6 +226,7 @@
     if (/\b(prereq(?:uisite)?s?|required background|assumes?|review before|refresh|before starting|before attempting|should already know)\b/.test(text)) signals.push('prerequisite-gap');
     if (/\b(ai policy|chatgpt|copilot|llm|generative ai|academic integrity|cite ai|ai tools?)\b/.test(text)) signals.push('ai-policy-check');
     if (/\b(confiden(?:ce|t)|not sure|uncertain|guess(?:ed|ing)?|got (?:it|this) wrong|missed|wrong answer|quiz feedback|practice score|self[- ]?check)\b/.test(text)) signals.push('confidence-calibration');
+    if (/\b(ai notes?|ai-generated notes?|summary|summari[sz]e|transcript|recording|lecture capture|coconote)\b/.test(text)) signals.push('passive-summary-risk');
 
     if (!matched) return { lane: 'unknown', label: 'Unknown workload', signals };
     return { lane: matched.lane, label: matched.label, signals };
@@ -410,6 +411,7 @@ Return:
 - Due-soon risk: next 24-48 hours action, if any
 - Starter checklist: first actions, files/links, commands/tests to run, or questions
 - Prerequisite checkpoint: if the detected signals include prerequisite-gap, name the smallest background concept/source to refresh before harder work
+- Passive-summary checkpoint: if passive-summary-risk, turn summaries or transcripts into retrieval questions before presenting polished notes
 - Confidence checkpoint: if confidence-calibration, ask for a low/medium/high confidence mark before source check
 - Help-seeking checkpoint: if blocked, list the exact TA/office-hours question and evidence to bring
 - Submission sanity check: how to verify upload, timestamp, gradebook status, or external-tool completion
