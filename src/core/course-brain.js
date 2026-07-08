@@ -227,7 +227,8 @@
       'prerequisite-gap',
       'confidence-calibration',
       'ai-policy-check',
-      'passive-summary-risk'
+      'passive-summary-risk',
+      'worked-example-gap'
     ].includes(signal));
 
     let level = 'safe';
@@ -259,6 +260,11 @@
     };
   }
 
+  function hasWorkloadTerm(text, term) {
+    const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+');
+    return new RegExp(`\\b${escaped}\\b`).test(text);
+  }
+
   function classifyAssignmentWorkload(context = '') {
     const text = String(context || '').toLowerCase();
     const categories = [
@@ -268,7 +274,7 @@
       { lane: 'medium task', label: 'Written/problem-set work', terms: ['homework', 'problem set', 'pset', 'essay', 'report', 'reflection'] },
       { lane: 'quick task', label: 'Short quiz/check-in', terms: ['quiz', 'discussion post', 'check-in', 'survey'] }
     ];
-    const matched = categories.find(category => category.terms.some(term => text.includes(term)));
+    const matched = categories.find(category => category.terms.some(term => hasWorkloadTerm(text, term)));
     const signals = [];
     if (/\b(due|deadline|11:59|tomorrow|today|tonight)\b/.test(text)) signals.push('deadline-sensitive');
     if (/\b(rubric|points?|grade|graded|criteria)\b/.test(text)) signals.push('rubric/grade-risk');
@@ -279,6 +285,7 @@
     if (/\b(ai policy|chatgpt|copilot|llm|generative ai|academic integrity|cite ai|ai tools?)\b/.test(text)) signals.push('ai-policy-check');
     if (/\b(confiden(?:ce|t)|not sure|uncertain|guess(?:ed|ing)?|got (?:it|this) wrong|missed|wrong answer|quiz feedback|practice score|self[- ]?check)\b/.test(text)) signals.push('confidence-calibration');
     if (/\b(ai notes?|ai-generated notes?|summary|summari[sz]e|transcript|recording|lecture capture|coconote)\b/.test(text)) signals.push('passive-summary-risk');
+    if (/\b(no examples?|missing examples?|example missing|worked examples? missing|need(?:s)? examples?|test cases? missing|no test cases?|trace missing|missing trace|counterexamples? missing)\b/.test(text)) signals.push('worked-example-gap');
 
     if (!matched) return { lane: 'unknown', label: 'Unknown workload', signals };
     return { lane: matched.lane, label: matched.label, signals };
@@ -465,11 +472,12 @@ ${clipped.clipped ? 'Note: the context was clipped for speed; flag any missing r
 ${clipped.text}
 
 Return:
-- Priority lane: quick task, medium task, project/exam prep, or unknown — start from the detected workload hint, then correct it only if the cited context proves otherwise
+- Priority lane: quick task, medium task, project/exam prep, or unknown — use the detected hint unless cited context proves otherwise
 - Due-soon risk: next 24-48 hours action, if any
-- Starter checklist: first actions, files/links, commands/tests to run, or questions
-- Prerequisite checkpoint: if the detected signals include prerequisite-gap, name the smallest background concept/source to refresh before harder work
-- Passive-summary checkpoint: if passive-summary-risk, turn summaries or transcripts into retrieval questions before presenting polished notes
+- Starter checklist: first actions, files/links, commands/tests, or questions
+- Prerequisite checkpoint: if prerequisite-gap, name the smallest background source to refresh
+- Passive-summary checkpoint: if passive-summary-risk, turn summaries/transcripts into retrieval questions
+- Example checkpoint: if worked-example-gap, create or fetch a tiny source-backed example, trace, counterexample, or test case before trusting the explanation
 - Confidence checkpoint: if confidence-calibration, ask for a low/medium/high confidence mark before source check
 - Help-seeking checkpoint: if blocked, list the exact TA/office-hours question and evidence to bring
 - Submission sanity check: how to verify upload, timestamp, gradebook status, or external-tool completion

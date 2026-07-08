@@ -549,9 +549,9 @@ test('CourseBrain upcoming work triage prompt creates actionable Canvas checklis
   assert.match(prompt, /Due-soon risk/);
   assert.match(prompt, /24-48 hours/);
   assert.match(prompt, /Starter checklist/);
-  assert.match(prompt, /commands\/tests to run/);
+  assert.match(prompt, /commands\/tests/);
   assert.match(prompt, /Prerequisite checkpoint/);
-  assert.match(prompt, /smallest background concept\/source to refresh/);
+  assert.match(prompt, /smallest background source/);
   assert.match(prompt, /Passive-summary checkpoint/);
   assert.match(prompt, /retrieval questions/);
   assert.match(prompt, /Help-seeking checkpoint/);
@@ -622,6 +622,28 @@ test('CourseBrain assignment workload classifier spots confidence calibration ne
   assert.deepEqual(Array.from(workload.signals), ['confidence-calibration']);
 });
 
+test('CourseBrain assignment workload classifier spots worked-example gaps', () => {
+  const { brain } = loadCourseBrain();
+  const workload = brain.__test.classifyAssignmentWorkload(
+    'The lecture summary has no examples and the recursion trace is missing before the problem set.'
+  );
+
+  assert.equal(workload.lane, 'medium task');
+  assert.deepEqual(Array.from(workload.signals), ['passive-summary-risk', 'worked-example-gap']);
+});
+
+test('CourseBrain upcoming work triage carries worked-example gaps into the checklist', () => {
+  const { brain } = loadCourseBrain();
+  const prompt = brain.__test.buildUpcomingWorkTriagePrompt(
+    'Problem set review says the worked example is missing and there are no test cases for the DP recurrence.',
+    { title: 'DP Problem Set Review' }
+  );
+
+  assert.match(prompt, /Signals: worked-example-gap/);
+  assert.match(prompt, /Example checkpoint/);
+  assert.match(prompt, /tiny source-backed example, trace, counterexample, or test case/);
+});
+
 test('CourseBrain upcoming work triage prompt carries prerequisite-gap signal into the checklist', () => {
   const { brain } = loadCourseBrain();
   const prompt = brain.__test.buildUpcomingWorkTriagePrompt(
@@ -631,7 +653,7 @@ test('CourseBrain upcoming work triage prompt carries prerequisite-gap signal in
 
   assert.match(prompt, /Signals: prerequisite-gap/);
   assert.match(prompt, /Prerequisite checkpoint/);
-  assert.match(prompt, /smallest background concept/);
+  assert.match(prompt, /smallest background source/);
 });
 
 test('CourseBrain upcoming work triage prompt carries confidence calibration into the checklist', () => {
