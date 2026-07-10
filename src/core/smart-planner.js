@@ -111,6 +111,47 @@
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
   }
 
+  function nextStudyWindowStart(nowMs) {
+    const d = new Date(nowMs);
+    d.setSeconds(0, 0);
+    const hour = d.getHours();
+    if (hour < 9) {
+      d.setHours(9, 0, 0, 0);
+      return d.getTime();
+    }
+    if (hour >= 21) {
+      d.setDate(d.getDate() + 1);
+      d.setHours(9, 0, 0, 0);
+      return d.getTime();
+    }
+    return d.getTime() + 30 * 60 * 1000;
+  }
+
+  function normalizeStudyBlocks(rawBlocks, deadlines, nowMs = Date.now()) {
+    const deadlineTimes = (Array.isArray(deadlines) ? deadlines : [])
+      .map(item => Number(item && item.ts))
+      .filter(Number.isFinite);
+    const lastDeadline = deadlineTimes.length ? Math.max(...deadlineTimes) : nowMs + 14 * MS_DAY;
+    const fallbackStart = nextStudyWindowStart(nowMs);
+
+    return (Array.isArray(rawBlocks) ? rawBlocks : [])
+      .map(block => {
+        if (!block || !block.title) return null;
+        const parsedStart = new Date(block.startAt).getTime();
+        const startAt = Number.isFinite(parsedStart) && parsedStart > nowMs ? parsedStart : fallbackStart;
+        if (!Number.isFinite(startAt) || startAt > lastDeadline) return null;
+        const minutes = Math.max(30, Math.min(120, Number(block.minutes) || 60));
+        return {
+          title: String(block.title).trim(),
+          startAt: new Date(startAt).toISOString(),
+          minutes,
+          course: String(block.course || '').trim()
+        };
+      })
+      .filter(block => block && block.title)
+      .slice(0, 10);
+  }
+
   async function draftWeek() {
     if (busy) return;
     busy = true;
@@ -152,9 +193,7 @@
       const raw = await AIRouter.complete(prompt, profileBlock
         ? { system: AIRouter.getState().systemInstruction + profileBlock }
         : {});
-      const blocks = extractJsonArray(raw)
-        .filter(b => b && b.title && b.startAt && Number.isFinite(new Date(b.startAt).getTime()))
-        .slice(0, 10);
+      const blocks = normalizeStudyBlocks(extractJsonArray(raw), deadlines, Date.now());
 
       if (!blocks.length) {
         output.innerHTML = `<div class="plan-empty">Couldn't draft a plan from the model output. Try again.</div>`;
@@ -290,5 +329,10 @@
     refresh();
   }
 
-  window.SmartPlanner = { init, refresh, draftWeek };
+  window.SmartPlanner = {
+    init,
+    refresh,
+    draftWeek,
+    __test: { extractJsonArray, nextStudyWindowStart, normalizeStudyBlocks, toLocalInputValue }
+  };
 })();
