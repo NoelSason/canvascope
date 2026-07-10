@@ -132,3 +132,34 @@ test('SmartPlanner classifyDeadline labels urgency and likely effort', () => {
   assert.equal(discussion.urgency, 'soon');
   assert.equal(discussion.effort, 'quick');
 });
+
+test('SmartPlanner buildPlannerPrompt includes triage hints and source notes', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00');
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'Final project milestone',
+      courseName: 'CS 61B',
+      ts: new Date('2026-07-10T18:00:00-07:00').getTime(),
+      description: 'Submit design doc, implementation notes, and test evidence from the starter repo.'
+    },
+    {
+      title: 'Reading reflection',
+      courseName: 'History',
+      ts: new Date('2026-07-13T09:00:00-07:00').getTime(),
+      text: 'Two paragraph response on the assigned chapter.'
+    }
+  ], now);
+
+  assert.match(prompt, /urgency=today, effort=high/);
+  assert.match(prompt, /notes: Submit design doc, implementation notes/);
+  assert.match(prompt, /Prioritize overdue\/today items first/);
+  assert.match(prompt, /use the notes as source grounding/);
+  assert.match(prompt, /Return ONLY a valid JSON array/);
+});
+
+test('SmartPlanner compactDeadlineText trims noisy source notes', () => {
+  const planner = loadSmartPlanner();
+  const snippet = planner.__test.compactDeadlineText({ description: 'Alpha\n\nBeta   Gamma Delta' }, 16);
+  assert.equal(snippet, 'Alpha Beta Gamm…');
+});

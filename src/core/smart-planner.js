@@ -60,6 +60,30 @@
     return { urgency, effort };
   }
 
+  function compactDeadlineText(item, maxLength = 180) {
+    const text = String((item && (item.description || item.text || item.content)) || '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!text) return '';
+    return text.length > maxLength ? `${text.slice(0, maxLength - 1).trim()}…` : text;
+  }
+
+  function buildPlannerPrompt(deadlines, now = new Date()) {
+    const nowMs = now.getTime();
+    const lines = deadlines.slice(0, 15).map(d => {
+      const triage = classifyDeadline(d, nowMs);
+      const dueLabel = new Date(d.ts).toLocaleString();
+      const evidence = compactDeadlineText(d);
+      const hint = `urgency=${triage.urgency}, effort=${triage.effort}`;
+      return `- "${d.title}" (${d.courseName || 'General'}) due ${dueLabel}; ${hint}${evidence ? `; notes: ${evidence}` : ''}`;
+    }).join('\n');
+
+    return `You are an academic planner. Today is ${now.toLocaleString()}.\n` +
+      `Here are the student's upcoming deadlines, including local triage hints and source notes when available:\n${lines}\n\n` +
+      `Propose 4-8 study blocks between now and the last deadline. Prioritize overdue/today items first, split high-effort items (essays, projects, exams) into multiple blocks (e.g. outline, draft, practice, review), keep quick items lightweight, and use the notes as source grounding instead of inventing requirements. Schedule blocks before their deadline, between 09:00 and 21:00 local time, 60-120 minutes each, leaving at least 30 minutes before a due time for submission checks and handoff.\n` +
+      `Return ONLY a valid JSON array, no prose, each element: {"title": string, "startAt": ISO datetime string, "minutes": number, "course": string}.`;
+  }
+
   function renderDeadlineList(items) {
     const list = $('plan-deadline-list');
     const count = $('plan-deadline-count');
@@ -242,14 +266,7 @@
       }
 
       const today = new Date();
-      const lines = deadlines.slice(0, 15).map(d =>
-        `- "${d.title}" (${d.courseName || 'General'}) due ${new Date(d.ts).toLocaleString()}`
-      ).join('\n');
-
-      const prompt = `You are an academic planner. Today is ${today.toLocaleString()}.\n` +
-        `Here are the student's upcoming deadlines:\n${lines}\n\n` +
-        `Propose 4-8 study blocks between now and the last deadline. Split large items (essays, projects, exams) into multiple blocks (e.g. outline, draft, review). Schedule blocks before their deadline, between 09:00 and 21:00 local time, 60-120 minutes each, leaving at least 30 minutes before a due time for submission checks and handoff.\n` +
-        `Return ONLY a valid JSON array, no prose, each element: {"title": string, "startAt": ISO datetime string, "minutes": number, "course": string}.`;
+      const prompt = buildPlannerPrompt(deadlines, today);
 
       // Profile rides in system only; the prompt stays strict-JSON-focused.
       const profileBlock = (window.StudentProfile && StudentProfile.compileContextBlock()) || '';
@@ -396,6 +413,6 @@
     init,
     refresh,
     draftWeek,
-    __test: { classifyDeadline, extractJsonArray, nextStudyWindowStart, normalizeStudyBlocks, toLocalInputValue }
+    __test: { classifyDeadline, compactDeadlineText, buildPlannerPrompt, extractJsonArray, nextStudyWindowStart, normalizeStudyBlocks, toLocalInputValue }
   };
 })();
