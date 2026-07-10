@@ -98,6 +98,22 @@ test('SmartPlanner normalizeStudyBlocks moves late-night repaired starts to next
   assert.equal(new Date(blocks[0].startAt).getTime(), new Date('2026-07-11T09:00:00-07:00').getTime());
 });
 
+test('SmartPlanner normalizeStudyBlocks keeps submission buffer before deadlines', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00').getTime();
+  const deadline = new Date('2026-07-10T12:00:00-07:00').getTime();
+
+  const blocks = planner.__test.normalizeStudyBlocks([
+    { title: 'Finish and submit lab', startAt: '2026-07-10T11:00:00-07:00', minutes: 90, course: 'CS 61B' },
+    { title: 'Too close to deadline', startAt: '2026-07-10T11:45:00-07:00', minutes: 30, course: 'CS 61B' }
+  ], [{ ts: deadline }], now);
+
+  assert.equal(blocks.length, 1);
+  assert.equal(blocks[0].title, 'Finish and submit lab');
+  assert.equal(blocks[0].minutes, 30);
+  assert.equal(new Date(blocks[0].startAt).getTime(), new Date('2026-07-10T11:00:00-07:00').getTime());
+});
+
 test('SmartPlanner classifyDeadline labels urgency and likely effort', () => {
   const planner = loadSmartPlanner();
   const now = new Date('2026-07-10T10:00:00-07:00').getTime();

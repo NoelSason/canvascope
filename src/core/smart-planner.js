@@ -11,6 +11,7 @@
 
   const $ = (id) => document.getElementById(id);
   const MS_DAY = 24 * 60 * 60 * 1000;
+  const DEADLINE_HANDOFF_BUFFER_MINUTES = 30;
 
   function escapeHtml(s) {
     return String(s == null ? '' : s)
@@ -192,11 +193,15 @@
 
     for (const block of (Array.isArray(rawBlocks) ? rawBlocks : [])) {
       if (!block || !block.title) continue;
-      const minutes = Math.max(30, Math.min(120, Number(block.minutes) || 60));
+      const requestedMinutes = Math.max(30, Math.min(120, Number(block.minutes) || 60));
       const parsedStart = new Date(block.startAt).getTime();
       const requestedStart = Number.isFinite(parsedStart) && parsedStart > nowMs ? parsedStart : cursor;
       const startAt = nextStudyBlockStart(requestedStart, cursor);
-      if (!Number.isFinite(startAt) || startAt > lastDeadline) continue;
+      const latestEnd = lastDeadline - DEADLINE_HANDOFF_BUFFER_MINUTES * 60 * 1000;
+      if (!Number.isFinite(startAt) || startAt > latestEnd) continue;
+      const availableMinutes = Math.floor((latestEnd - startAt) / 60000);
+      if (availableMinutes < 30) continue;
+      const minutes = Math.min(requestedMinutes, availableMinutes);
       normalized.push({
         title: String(block.title).trim(),
         startAt: new Date(startAt).toISOString(),
@@ -243,7 +248,7 @@
 
       const prompt = `You are an academic planner. Today is ${today.toLocaleString()}.\n` +
         `Here are the student's upcoming deadlines:\n${lines}\n\n` +
-        `Propose 4-8 study blocks between now and the last deadline. Split large items (essays, projects, exams) into multiple blocks (e.g. outline, draft, review). Schedule blocks before their deadline, between 09:00 and 21:00 local time, 60-120 minutes each.\n` +
+        `Propose 4-8 study blocks between now and the last deadline. Split large items (essays, projects, exams) into multiple blocks (e.g. outline, draft, review). Schedule blocks before their deadline, between 09:00 and 21:00 local time, 60-120 minutes each, leaving at least 30 minutes before a due time for submission checks and handoff.\n` +
         `Return ONLY a valid JSON array, no prose, each element: {"title": string, "startAt": ISO datetime string, "minutes": number, "course": string}.`;
 
       // Profile rides in system only; the prompt stays strict-JSON-focused.
