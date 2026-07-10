@@ -304,6 +304,18 @@
     return `Source support contract: label each ${noun} as "supported", "partially supported", or "not found in course materials". Include the nearest line, paragraph, page, timestamp, or heading quote when the source exposes one. Do not invent due dates, rubric details, professor policies, or implementation requirements when the retrieved sources do not explicitly support them.`;
   }
 
+  function buildSourceCoverageGuardrail(sources = []) {
+    const sourceList = Array.isArray(sources) ? sources : [];
+    const anchored = sourceList.filter(source => source && (source.url || source.page || source.course || source.title)).length;
+    if (!sourceList.length) {
+      return 'Source coverage guardrail: no retrieved course sources are available. Start by saying what Canvas page, PDF, lecture, rubric, code file, or grade item is missing; do not present polished notes, deadlines, policies, or requirements as facts.';
+    }
+    if (sourceList.length < 2 || anchored < 1) {
+      return 'Source coverage guardrail: retrieval is thin. Put a short "source gap" note before the answer, label uncertain claims, and avoid turning weak context into confident study notes or assignment requirements.';
+    }
+    return 'Source coverage guardrail: use the retrieved sources directly, keep citations attached to factual claims, and call out any missing rubric, deadline, code, lecture, or grade evidence before recommending next actions.';
+  }
+
   function buildStudyNotesPrompt(topic) {
     return `Create citation-first study notes for: ${String(topic || '').trim()}.
 ${sourceSupportContract('study-note claim')}
@@ -767,7 +779,12 @@ Prefer oral retrieval practice and small reproducible CS examples over polished 
       });
       const dateBlock = `\n\nToday's date is ${today}. Treat this as the current date for any time-relative question ("this week", "so far"). The student's indexed materials reflect their ACTUAL, current enrollment — never claim a course "hasn't started" or "isn't active yet" based on its term name or your own sense of the year; if sources are present, summarize what they contain.`;
       const profileBlock = (window.StudentProfile && StudentProfile.compileContextBlock()) || '';
-      const system = AIRouter.getState().systemInstruction + dateBlock + profileBlock;
+      const system = [
+        AIRouter.getState().systemInstruction,
+        dateBlock,
+        buildSourceCoverageGuardrail(sources),
+        profileBlock
+      ].filter(Boolean).join('');
 
       let full = '';
       const renderer = createThrottledBrainRenderer(body, sources);
@@ -960,6 +977,7 @@ Sort by urgency and consequence, not by recency alone. Do not invent Canvas stat
     buildSocraticWalkthroughPrompt,
     buildWarmStartPrompt,
     buildWeeklyDigestPrompt,
+    buildSourceCoverageGuardrail,
     sourceSupportContract,
     summarizeSourceConfidence,
     classifyAssignmentWorkload,

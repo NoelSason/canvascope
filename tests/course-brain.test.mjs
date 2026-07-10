@@ -272,6 +272,26 @@ test('CourseBrain source gap plan prompt requires explicit support labels', () =
   assert.match(prompt, /missing line-level support/);
 });
 
+test('CourseBrain source coverage guardrail escalates thin retrieval into source-gap behavior', () => {
+  const { brain } = loadCourseBrain();
+
+  const none = brain.__test.buildSourceCoverageGuardrail([]);
+  assert.match(none, /no retrieved course sources/i);
+  assert.match(none, /do not present polished notes, deadlines, policies, or requirements as facts/);
+
+  const thin = brain.__test.buildSourceCoverageGuardrail([{ n: 1 }]);
+  assert.match(thin, /retrieval is thin/i);
+  assert.match(thin, /source gap/);
+  assert.match(thin, /label uncertain claims/);
+
+  const grounded = brain.__test.buildSourceCoverageGuardrail([
+    { n: 1, title: 'Lecture 4' },
+    { n: 2, page: 7 }
+  ]);
+  assert.match(grounded, /keep citations attached to factual claims/);
+  assert.match(grounded, /missing rubric, deadline, code, lecture, or grade evidence/);
+});
+
 test('CourseBrain selection study note prompt is structured and citation preserving', () => {
   const { brain } = loadCourseBrain();
   const prompt = brain.__test.buildSelectionStudyNotePrompt(
