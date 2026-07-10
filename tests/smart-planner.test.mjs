@@ -67,3 +67,22 @@ test('SmartPlanner normalizeStudyBlocks drops model blocks scheduled after last 
   assert.equal(blocks[0].title, 'Valid morning sprint');
   assert.equal(blocks[0].minutes, 30);
 });
+
+test('SmartPlanner classifyDeadline labels urgency and likely effort', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00').getTime();
+
+  const project = planner.__test.classifyDeadline({
+    title: 'Final project milestone',
+    ts: new Date('2026-07-10T18:00:00-07:00').getTime()
+  }, now);
+  assert.equal(project.urgency, 'today');
+  assert.equal(project.effort, 'high');
+
+  const discussion = planner.__test.classifyDeadline({
+    title: 'Discussion check-in',
+    ts: new Date('2026-07-12T09:00:00-07:00').getTime()
+  }, now);
+  assert.equal(discussion.urgency, 'soon');
+  assert.equal(discussion.effort, 'quick');
+});

@@ -38,6 +38,27 @@
     });
   }
 
+  function classifyDeadline(item, nowMs = Date.now()) {
+    const ts = Number(item && item.ts);
+    const hoursUntilDue = Number.isFinite(ts) ? (ts - nowMs) / (60 * 60 * 1000) : Infinity;
+    const title = String((item && item.title) || '').toLowerCase();
+    const body = `${title} ${String((item && (item.description || item.text || item.content)) || '').toLowerCase()}`;
+
+    let urgency = 'later';
+    if (hoursUntilDue < 0) urgency = 'overdue';
+    else if (hoursUntilDue <= 24) urgency = 'today';
+    else if (hoursUntilDue <= 72) urgency = 'soon';
+
+    let effort = 'normal';
+    if (/\b(exam|midterm|final|project|presentation|essay|paper|lab|portfolio|capstone|research)\b/.test(body)) {
+      effort = 'high';
+    } else if (/\b(quiz|worksheet|discussion|reading|reflection|survey|exit ticket|check[- ]?in)\b/.test(body)) {
+      effort = 'quick';
+    }
+
+    return { urgency, effort };
+  }
+
   function renderDeadlineList(items) {
     const list = $('plan-deadline-list');
     const count = $('plan-deadline-count');
@@ -57,10 +78,15 @@
       row.style.animationDelay = `${Math.min(i * 28, 280)}ms`;
       const overdue = item.ts < now;
       const dateLabel = new Date(item.ts).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+      const triage = classifyDeadline(item, now);
+      const effortLabel = triage.effort === 'high' ? 'deep work' : triage.effort;
+      row.dataset.urgency = triage.urgency;
+      row.dataset.effort = triage.effort;
       row.innerHTML = `
         <span class="plan-deadline-date${overdue ? ' is-overdue' : ''}">${overdue ? 'OVERDUE' : dateLabel}</span>
         <span class="plan-deadline-title">${escapeHtml(item.title)}</span>
         <span class="plan-deadline-course">${escapeHtml(item.courseName || '')}</span>
+        <span class="plan-deadline-triage" title="Planner triage: ${escapeHtml(triage.urgency)} / ${escapeHtml(effortLabel)}">${escapeHtml(triage.urgency)} · ${escapeHtml(effortLabel)}</span>
       `;
       if (item.url) row.addEventListener('click', () => chrome.tabs.create({ url: item.url }));
       list.appendChild(row);
@@ -333,6 +359,6 @@
     init,
     refresh,
     draftWeek,
-    __test: { extractJsonArray, nextStudyWindowStart, normalizeStudyBlocks, toLocalInputValue }
+    __test: { classifyDeadline, extractJsonArray, nextStudyWindowStart, normalizeStudyBlocks, toLocalInputValue }
   };
 })();
