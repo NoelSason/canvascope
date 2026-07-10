@@ -153,29 +153,61 @@
     return d.getTime() + 30 * 60 * 1000;
   }
 
+  function alignToStudyHours(ts) {
+    const d = new Date(ts);
+    if (Number.isNaN(d.getTime())) return NaN;
+    d.setSeconds(0, 0);
+    const hour = d.getHours();
+    if (hour < 9) {
+      d.setHours(9, 0, 0, 0);
+      return d.getTime();
+    }
+    if (hour >= 21) {
+      d.setDate(d.getDate() + 1);
+      d.setHours(9, 0, 0, 0);
+      return d.getTime();
+    }
+    return d.getTime();
+  }
+
+  function nextStudyBlockStart(candidateMs, earliestMs) {
+    let start = Math.max(Number(candidateMs) || 0, Number(earliestMs) || 0);
+    for (let i = 0; i < 3; i++) {
+      const aligned = alignToStudyHours(start);
+      if (!Number.isFinite(aligned)) return NaN;
+      if (aligned >= start) return aligned;
+      start = Math.max(aligned, earliestMs);
+    }
+    return alignToStudyHours(start);
+  }
+
   function normalizeStudyBlocks(rawBlocks, deadlines, nowMs = Date.now()) {
     const deadlineTimes = (Array.isArray(deadlines) ? deadlines : [])
       .map(item => Number(item && item.ts))
       .filter(Number.isFinite);
     const lastDeadline = deadlineTimes.length ? Math.max(...deadlineTimes) : nowMs + 14 * MS_DAY;
     const fallbackStart = nextStudyWindowStart(nowMs);
+    let cursor = fallbackStart;
+    const normalized = [];
 
-    return (Array.isArray(rawBlocks) ? rawBlocks : [])
-      .map(block => {
-        if (!block || !block.title) return null;
-        const parsedStart = new Date(block.startAt).getTime();
-        const startAt = Number.isFinite(parsedStart) && parsedStart > nowMs ? parsedStart : fallbackStart;
-        if (!Number.isFinite(startAt) || startAt > lastDeadline) return null;
-        const minutes = Math.max(30, Math.min(120, Number(block.minutes) || 60));
-        return {
-          title: String(block.title).trim(),
-          startAt: new Date(startAt).toISOString(),
-          minutes,
-          course: String(block.course || '').trim()
-        };
-      })
-      .filter(block => block && block.title)
-      .slice(0, 10);
+    for (const block of (Array.isArray(rawBlocks) ? rawBlocks : [])) {
+      if (!block || !block.title) continue;
+      const minutes = Math.max(30, Math.min(120, Number(block.minutes) || 60));
+      const parsedStart = new Date(block.startAt).getTime();
+      const requestedStart = Number.isFinite(parsedStart) && parsedStart > nowMs ? parsedStart : cursor;
+      const startAt = nextStudyBlockStart(requestedStart, cursor);
+      if (!Number.isFinite(startAt) || startAt > lastDeadline) continue;
+      normalized.push({
+        title: String(block.title).trim(),
+        startAt: new Date(startAt).toISOString(),
+        minutes,
+        course: String(block.course || '').trim()
+      });
+      cursor = startAt + (minutes + 15) * 60 * 1000;
+      if (normalized.length >= 10) break;
+    }
+
+    return normalized;
   }
 
   async function draftWeek() {

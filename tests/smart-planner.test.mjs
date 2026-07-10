@@ -68,6 +68,36 @@ test('SmartPlanner normalizeStudyBlocks drops model blocks scheduled after last 
   assert.equal(blocks[0].minutes, 30);
 });
 
+test('SmartPlanner normalizeStudyBlocks staggers repaired starts to avoid calendar collisions', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00').getTime();
+  const deadline = new Date('2026-07-12T23:59:00-07:00').getTime();
+
+  const blocks = planner.__test.normalizeStudyBlocks([
+    { title: 'Outline project', startAt: '2026-07-09T12:00:00-07:00', minutes: 60, course: 'CS 61B' },
+    { title: 'Implement project', startAt: 'not-a-date', minutes: 90, course: 'CS 61B' },
+    { title: 'Review tests', startAt: '2026-07-10T10:45:00-07:00', minutes: 30, course: 'CS 61B' }
+  ], [{ ts: deadline }], now);
+
+  assert.equal(blocks.length, 3);
+  assert.equal(new Date(blocks[0].startAt).getTime(), now + 30 * 60 * 1000);
+  assert.equal(new Date(blocks[1].startAt).getTime(), now + 105 * 60 * 1000);
+  assert.equal(new Date(blocks[2].startAt).getTime(), now + 210 * 60 * 1000);
+});
+
+test('SmartPlanner normalizeStudyBlocks moves late-night repaired starts to next morning', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T20:45:00-07:00').getTime();
+  const deadline = new Date('2026-07-12T23:59:00-07:00').getTime();
+
+  const blocks = planner.__test.normalizeStudyBlocks([
+    { title: 'Morning review', startAt: 'invalid', minutes: 45, course: 'Math' }
+  ], [{ ts: deadline }], now);
+
+  assert.equal(blocks.length, 1);
+  assert.equal(new Date(blocks[0].startAt).getTime(), new Date('2026-07-11T09:00:00-07:00').getTime());
+});
+
 test('SmartPlanner classifyDeadline labels urgency and likely effort', () => {
   const planner = loadSmartPlanner();
   const now = new Date('2026-07-10T10:00:00-07:00').getTime();
