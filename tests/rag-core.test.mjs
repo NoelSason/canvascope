@@ -370,3 +370,32 @@ test('RAGCore prompts structure concept maps and prerequisite gap checks', async
     mockTabUrl = prevTabUrl;
   }
 });
+
+test('RAGCore prompts build prioritized cram plans for upcoming assessments', async () => {
+  assert.equal(RAGCore.hasExamCramIntent('make a last-minute midterm study plan for tonight'), true);
+  assert.equal(RAGCore.hasExamCramIntent('review this quiz before class'), true);
+  assert.equal(RAGCore.hasExamCramIntent('summarize the reading'), false);
+
+  const prevIndexed = mockStorage.indexedContent;
+  const prevTabUrl = mockTabUrl;
+  mockTabUrl = 'https://google.com';
+  mockStorage.indexedContent = [
+    {
+      title: 'Dynamic programming review sheet',
+      courseName: 'CS 170',
+      type: 'file',
+      content: 'Optimal substructure, recurrence design, memoization, and tabulation practice.'
+    }
+  ];
+
+  try {
+    const compiled = await RAGCore.compileUnifiedPrompt('make a last-minute final cram plan for dynamic programming tonight');
+    assert.match(compiled.prompt, /prioritized cram plan/i);
+    assert.match(compiled.prompt, /20-30 minute blocks/i);
+    assert.match(compiled.prompt, /active-recall checks/i);
+    assert.match(compiled.prompt, /what to skip if time runs short/i);
+  } finally {
+    mockStorage.indexedContent = prevIndexed;
+    mockTabUrl = prevTabUrl;
+  }
+});
