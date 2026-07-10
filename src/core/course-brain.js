@@ -904,6 +904,19 @@ sources are thin, say which lecture, page, rubric, code file, grade item, or Can
 of inventing facts.`;
   }
 
+  function buildWeeklyDigestPrompt(scopeLabel) {
+    return `Create a citation-first weekly Canvas command-center digest for ${scopeLabel}.
+
+Return exactly:
+1. This week's highest-priority items: assignments, quizzes, feedback, announcements, files, or modules, each with citation chips like [1].
+2. Risk tags: Due soon, Overdue, Large point value, No submission yet, Feedback returned, Group work, Requires external tool, or Source gap — only when supported by retrieved sources.
+3. Study loop: 2 to 4 active-recall, code-replay, or worked-example steps based on recent lecture/material changes.
+4. Missing evidence: rubric lines, due dates, submission status, comments, files, or announcements that must be opened before trusting the plan.
+5. Lectra handoff: exact checklist, flashcard pack, weak-topic tag, or notebook-cell title to save for the week.
+
+Sort by urgency and consequence, not by recency alone. Do not invent Canvas state; if the sources are thin, say which course page, assignment, rubric, gradebook item, or announcement is missing.`;
+  }
+
   /**
    * Generate a grounded practice quiz from the current Brain scope.
    * Rides the same retrieval + router path as ask().
@@ -946,6 +959,7 @@ of inventing facts.`;
     buildAnkiExportPrompt,
     buildSocraticWalkthroughPrompt,
     buildWarmStartPrompt,
+    buildWeeklyDigestPrompt,
     sourceSupportContract,
     summarizeSourceConfidence,
     classifyAssignmentWorkload,

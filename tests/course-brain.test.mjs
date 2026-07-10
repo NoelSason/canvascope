@@ -834,6 +834,25 @@ test('CourseBrain warm start prompt creates fast re-entry guidance', () => {
   assert.match(prompt, /instead\s+of inventing facts/);
 });
 
+test('CourseBrain weekly digest prompt builds a cited Canvas command center', () => {
+  const { brain } = loadCourseBrain();
+  const prompt = brain.__test.buildWeeklyDigestPrompt('CS 201 and Math 54');
+
+  assert.match(prompt, /weekly Canvas command-center digest/);
+  assert.match(prompt, /CS 201 and Math 54/);
+  assert.match(prompt, /highest-priority items/);
+  assert.match(prompt, /citation chips like \[1\]/);
+  assert.match(prompt, /Risk tags/);
+  assert.match(prompt, /Due soon/);
+  assert.match(prompt, /No submission yet/);
+  assert.match(prompt, /Study loop/);
+  assert.match(prompt, /active-recall, code-replay, or worked-example/);
+  assert.match(prompt, /Missing evidence/);
+  assert.match(prompt, /Lectra handoff/);
+  assert.match(prompt, /Sort by urgency and consequence/);
+  assert.match(prompt, /Do not invent Canvas state/);
+});
+
 test('CourseBrain grade target parser handles for-a-letter phrasing', () => {
   const { brain } = loadCourseBrain();
 
