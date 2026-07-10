@@ -239,6 +239,42 @@
     return normalized;
   }
 
+  function buildFallbackStudyBlocks(deadlines, nowMs = Date.now()) {
+    const items = (Array.isArray(deadlines) ? deadlines : [])
+      .filter(item => item && Number.isFinite(Number(item.ts)) && Number(item.ts) > nowMs)
+      .slice()
+      .sort((a, b) => Number(a.ts) - Number(b.ts));
+    let cursor = nextStudyWindowStart(nowMs);
+    const blocks = [];
+
+    for (const item of items) {
+      const triage = classifyDeadline(item, nowMs);
+      const latestEnd = Number(item.ts) - DEADLINE_HANDOFF_BUFFER_MINUTES * 60 * 1000;
+      const phases = triage.effort === 'high'
+        ? ['Outline and unblock', 'Deep work']
+        : [triage.effort === 'quick' ? 'Finish' : 'Work on'];
+      const minutes = triage.effort === 'high' ? 90 : triage.effort === 'quick' ? 45 : 60;
+
+      for (const phase of phases) {
+        const startAt = nextStudyBlockStart(cursor, cursor);
+        if (!Number.isFinite(startAt) || startAt > latestEnd) break;
+        const availableMinutes = Math.floor((latestEnd - startAt) / 60000);
+        if (availableMinutes < 30) break;
+        const blockMinutes = Math.min(minutes, availableMinutes);
+        blocks.push({
+          title: `${phase}: ${String(item.title || 'upcoming deadline').trim()}`,
+          startAt: new Date(startAt).toISOString(),
+          minutes: blockMinutes,
+          course: String(item.courseName || item.course || '').trim()
+        });
+        cursor = startAt + (blockMinutes + 15) * 60 * 1000;
+        if (blocks.length >= 8) return blocks;
+      }
+    }
+
+    return blocks;
+  }
+
   async function draftWeek() {
     if (busy) return;
     busy = true;
@@ -273,7 +309,10 @@
       const raw = await AIRouter.complete(prompt, profileBlock
         ? { system: AIRouter.getState().systemInstruction + profileBlock }
         : {});
-      const blocks = normalizeStudyBlocks(extractJsonArray(raw), deadlines, Date.now());
+      let blocks = normalizeStudyBlocks(extractJsonArray(raw), deadlines, Date.now());
+      if (!blocks.length) {
+        blocks = buildFallbackStudyBlocks(deadlines, Date.now());
+      }
 
       if (!blocks.length) {
         output.innerHTML = `<div class="plan-empty">Couldn't draft a plan from the model output. Try again.</div>`;
@@ -413,6 +452,6 @@
     init,
     refresh,
     draftWeek,
-    __test: { classifyDeadline, compactDeadlineText, buildPlannerPrompt, extractJsonArray, nextStudyWindowStart, normalizeStudyBlocks, toLocalInputValue }
+    __test: { classifyDeadline, compactDeadlineText, buildPlannerPrompt, extractJsonArray, nextStudyWindowStart, normalizeStudyBlocks, buildFallbackStudyBlocks, toLocalInputValue }
   };
 })();

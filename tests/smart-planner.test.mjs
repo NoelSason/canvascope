@@ -163,3 +163,33 @@ test('SmartPlanner compactDeadlineText trims noisy source notes', () => {
   const snippet = planner.__test.compactDeadlineText({ description: 'Alpha\n\nBeta   Gamma Delta' }, 16);
   assert.equal(snippet, 'Alpha Beta Gamm…');
 });
+
+test('SmartPlanner buildFallbackStudyBlocks creates deadline-safe blocks when model output is unusable', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00').getTime();
+  const deadline = new Date('2026-07-10T15:00:00-07:00').getTime();
+
+  const blocks = planner.__test.buildFallbackStudyBlocks([
+    { title: 'Final project checkpoint', courseName: 'CS 61B', ts: deadline }
+  ], now);
+
+  assert.equal(blocks.length, 2);
+  assert.equal(blocks[0].title, 'Outline and unblock: Final project checkpoint');
+  assert.equal(blocks[0].course, 'CS 61B');
+  assert.equal(blocks[0].minutes, 90);
+  assert.equal(new Date(blocks[0].startAt).getTime(), new Date('2026-07-10T10:30:00-07:00').getTime());
+  assert.equal(blocks[1].title, 'Deep work: Final project checkpoint');
+  assert.ok(new Date(blocks[1].startAt).getTime() + blocks[1].minutes * 60 * 1000 <= deadline - 30 * 60 * 1000);
+});
+
+test('SmartPlanner buildFallbackStudyBlocks skips impossible same-day deadlines', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00').getTime();
+  const deadline = new Date('2026-07-10T10:45:00-07:00').getTime();
+
+  const blocks = planner.__test.buildFallbackStudyBlocks([
+    { title: 'Quick quiz', courseName: 'Physics', ts: deadline }
+  ], now);
+
+  assert.equal(blocks.length, 0);
+});
