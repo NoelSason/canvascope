@@ -154,6 +154,14 @@ class RAGCore {
     return planning && study;
   }
 
+  static hasTeachBackIntent(question) {
+    const q = String(question || '').toLowerCase();
+    if (!q) return false;
+    const teachBack = /\b(teach[- ]?back|feynman|explain (?:it|this|back)|say it back|oral exam|recite|talk through|walk me through my understanding)\b/.test(q);
+    const metacognitive = /\b(check my understanding|do i understand|spot gaps?|find gaps?|misconceptions?|what am i missing|self[- ]?explain|explain in my own words)\b/.test(q);
+    return teachBack || metacognitive;
+  }
+
   static activeRecallGuidance(question) {
     if (!this.hasActiveRecallIntent(question)) return '';
     return ' Because the student is asking for active recall, format the answer as 5-8 quick retrieval prompts with answers hidden or immediately below each prompt, include one cloze-style card when possible, cite source-specific cards inline, and end with a short Lectra-ready review loop (what to ink, what to quiz tomorrow).';
@@ -167,6 +175,11 @@ class RAGCore {
   static studyPlanGuidance(question) {
     if (!this.hasStudyPlanIntent(question)) return '';
     return ' Because the student is asking for a study plan, turn the available tasks and sources into short timeboxed blocks: name the goal for each block, the exact source/task to open, one active-recall check, and a realistic next-session carryover. Keep it adaptive when due dates or time available are missing.';
+  }
+
+  static teachBackGuidance(question) {
+    if (!this.hasTeachBackIntent(question)) return '';
+    return ' Because the student is asking for a teach-back/check-my-understanding flow, respond like a Socratic study coach: ask for or draft a 60-second explanation in the student\'s own words, identify 2-3 likely gaps or misconceptions from the sources, include a simple rubric for a strong explanation, and end with one follow-up question to test transfer.';
   }
 
   static conceptMapGuidance(question) {
@@ -777,7 +790,8 @@ class RAGCore {
       : '';
     const activeRecallGuidance = this.activeRecallGuidance(promptText);
     const studyPlanGuidance = this.studyPlanGuidance(promptText);
-    compiledPrompt += `=== QUESTION ===\nAnswer the student's request. Use the sections above as authoritative context for their personal specifics (tasks/deadlines, document pages) — prefer those over the general active-page text, and match tasks by topic even if the course code differs from the page. For conceptual or "explain/teach me" questions, answer fully from your general knowledge even when the sections don't cover the topic, and tie the explanation to the student's profile and course materials where relevant. Do not refuse a concept question for lack of a matching section.${lectraHandoff}${activeRecallGuidance}${studyPlanGuidance} Request: ${promptText}`;
+    const teachBackGuidance = this.teachBackGuidance(promptText);
+    compiledPrompt += `=== QUESTION ===\nAnswer the student's request. Use the sections above as authoritative context for their personal specifics (tasks/deadlines, document pages) — prefer those over the general active-page text, and match tasks by topic even if the course code differs from the page. For conceptual or "explain/teach me" questions, answer fully from your general knowledge even when the sections don't cover the topic, and tie the explanation to the student's profile and course materials where relevant. Do not refuse a concept question for lack of a matching section.${lectraHandoff}${activeRecallGuidance}${studyPlanGuidance}${teachBackGuidance} Request: ${promptText}`;
 
     return compiledPrompt;
   }
@@ -1005,7 +1019,8 @@ class RAGCore {
     const conceptMapGuidance = this.conceptMapGuidance(question);
     const examCramGuidance = this.examCramGuidance(question);
     const studyPlanGuidance = this.studyPlanGuidance(question);
-    prompt += `=== QUESTION ===\nAnswer the student's question. Ground claims in the numbered sources when they cover it, citing inline like [1] or [2]. When the sources only partially cover the topic (or are merely related, e.g. labs on the concept), fill the gaps from your general knowledge — clearly grounded teaching is better than refusing — and connect the explanation back to the course materials where helpful. For material-summary questions such as "what did we study this week", use source titles, folders, module names, dates, and week labels to summarize what the available materials indicate, even when body text is sparse.${drillGuidance}${complexityGuidance}${activeRecallGuidance}${conceptMapGuidance}${examCramGuidance}${studyPlanGuidance} Only attach [n] citations to claims actually drawn from the sources; never fabricate a citation. For facts specific to this course (due dates, grading, instructions), rely strictly on the sources and say so if they're missing. Be concise (2-5 sentences or a short list). Question: ${question}`;
+    const teachBackGuidance = this.teachBackGuidance(question);
+    prompt += `=== QUESTION ===\nAnswer the student's question. Ground claims in the numbered sources when they cover it, citing inline like [1] or [2]. When the sources only partially cover the topic (or are merely related, e.g. labs on the concept), fill the gaps from your general knowledge — clearly grounded teaching is better than refusing — and connect the explanation back to the course materials where helpful. For material-summary questions such as "what did we study this week", use source titles, folders, module names, dates, and week labels to summarize what the available materials indicate, even when body text is sparse.${drillGuidance}${complexityGuidance}${activeRecallGuidance}${conceptMapGuidance}${examCramGuidance}${studyPlanGuidance}${teachBackGuidance} Only attach [n] citations to claims actually drawn from the sources; never fabricate a citation. For facts specific to this course (due dates, grading, instructions), rely strictly on the sources and say so if they're missing. Be concise (2-5 sentences or a short list). Question: ${question}`;
 
     return { prompt, sources };
   }
@@ -1094,7 +1109,8 @@ class RAGCore {
     const conceptMapGuidance = this.conceptMapGuidance(question);
     const examCramGuidance = this.examCramGuidance(question);
     const studyPlanGuidance = this.studyPlanGuidance(question);
-    prompt += `=== QUESTION ===\nAnswer the student's question. Use the active course scope first${effectiveCourseName ? ` (${effectiveCourseName})` : ''}; do not pull supporting links or materials from other courses unless the student explicitly asks for them. For material-summary questions such as "what am I learning this week?", explain the actual topics in plain language rather than summarizing source numbers. Prefer parsed PDF/OCR content over title-only metadata; when only titles/folders are available, say "based on the indexed file list" and avoid inventing slide details.${drillGuidance}${complexityGuidance}${activeRecallGuidance}${conceptMapGuidance}${examCramGuidance}${studyPlanGuidance} Do not include a bibliography or source list in the answer. Use citations sparingly only when a specific claim needs verification; never fabricate a citation. For facts specific to this course (due dates, grading, instructions) rely strictly on the sources and say so plainly if they are missing. Be concise: 3-5 bullets or 2-5 sentences. Question: ${question}`;
+    const teachBackGuidance = this.teachBackGuidance(question);
+    prompt += `=== QUESTION ===\nAnswer the student's question. Use the active course scope first${effectiveCourseName ? ` (${effectiveCourseName})` : ''}; do not pull supporting links or materials from other courses unless the student explicitly asks for them. For material-summary questions such as "what am I learning this week?", explain the actual topics in plain language rather than summarizing source numbers. Prefer parsed PDF/OCR content over title-only metadata; when only titles/folders are available, say "based on the indexed file list" and avoid inventing slide details.${drillGuidance}${complexityGuidance}${activeRecallGuidance}${conceptMapGuidance}${examCramGuidance}${studyPlanGuidance}${teachBackGuidance} Do not include a bibliography or source list in the answer. Use citations sparingly only when a specific claim needs verification; never fabricate a citation. For facts specific to this course (due dates, grading, instructions) rely strictly on the sources and say so plainly if they are missing. Be concise: 3-5 bullets or 2-5 sentences. Question: ${question}`;
 
     return {
       prompt,

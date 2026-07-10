@@ -421,3 +421,33 @@ test('RAGCore prompts build prioritized cram plans for upcoming assessments', as
     mockTabUrl = prevTabUrl;
   }
 });
+
+test('RAGCore prompts add teach-back coaching for check-my-understanding requests', async () => {
+  assert.equal(RAGCore.hasTeachBackIntent('use the Feynman technique to check my understanding'), true);
+  assert.equal(RAGCore.hasTeachBackIntent('can I explain this back for an oral exam?'), true);
+  assert.equal(RAGCore.hasTeachBackIntent('summarize the reading'), false);
+
+  const prevIndexed = mockStorage.indexedContent;
+  const prevTabUrl = mockTabUrl;
+  mockTabUrl = 'https://google.com';
+  mockStorage.indexedContent = [
+    {
+      title: 'Red-black tree lecture',
+      courseName: 'CS 61B',
+      type: 'file',
+      content: 'Balancing invariants, rotations, black-height, and insertion fix-up cases.'
+    }
+  ];
+
+  try {
+    const compiled = await RAGCore.compileUnifiedPrompt('check my understanding with a Feynman teach-back for red-black trees');
+    assert.match(compiled.prompt, /Socratic study coach/i);
+    assert.match(compiled.prompt, /60-second explanation/i);
+    assert.match(compiled.prompt, /likely gaps or misconceptions/i);
+    assert.match(compiled.prompt, /simple rubric/i);
+    assert.match(compiled.prompt, /follow-up question to test transfer/i);
+  } finally {
+    mockStorage.indexedContent = prevIndexed;
+    mockTabUrl = prevTabUrl;
+  }
+});
