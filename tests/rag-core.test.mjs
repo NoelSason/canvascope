@@ -139,6 +139,28 @@ test('RAGCore unified prompts include active recall guidance for quiz requests',
   assert.match(compiled.prompt, /what to quiz tomorrow/);
 });
 
+test('RAGCore study plan guidance creates timeboxed blocks for planning requests', async () => {
+  mockTabUrl = 'https://google.com';
+  assert.equal(RAGCore.hasStudyPlanIntent('make me a Pomodoro study plan for this class'), true);
+  assert.equal(RAGCore.hasStudyPlanIntent('explain recursion'), false);
+
+  const compiled = await RAGCore.compileUnifiedPrompt('make me a Pomodoro study plan for this class');
+  assert.match(compiled.prompt, /short timeboxed blocks/);
+  assert.match(compiled.prompt, /active-recall check/);
+  assert.match(compiled.prompt, /next-session carryover/);
+});
+
+test('RAGCore legacy RAG prompts include study plan guidance', async () => {
+  mockTabUrl = 'https://google.com';
+  const compiled = await RAGCore.compileRAGPrompt('schedule study blocks for my homework');
+  assert.match(compiled, /exact source\/task to open/);
+});
+
+test('RAGCore course brain prompts include study plan guidance', async () => {
+  const compiled = await RAGCore.compileBrainPrompt('build a study sprint plan for my quiz');
+  assert.match(compiled.prompt, /short timeboxed blocks/);
+});
+
 test('RAGCore.retrieveLocalContext surfaces tasks for schedule queries with no keyword match', async () => {
   // "what do I need to do?" does not lexically match any stored title/course,
   // but the context-aware fallback should still surface the pending to-do.
