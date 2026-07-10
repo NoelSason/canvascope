@@ -228,7 +228,8 @@
       'confidence-calibration',
       'ai-policy-check',
       'passive-summary-risk',
-      'worked-example-gap'
+      'worked-example-gap',
+      'submission-buffer-needed'
     ].includes(signal));
 
     let level = 'safe';
@@ -236,6 +237,7 @@
     else if (hoursUntil != null && hoursUntil < effortHours * 1.5) level = 'critical';
     else if (hoursUntil != null && hoursUntil < effortHours * 3) level = 'at-risk';
     else if (!isStarted && hoursUntil != null && hoursUntil <= 72) level = 'start-soon';
+    else if (riskSignals.includes('submission-buffer-needed') && hoursUntil != null && hoursUntil <= 10 * 24) level = 'start-soon';
     else if (riskSignals.length >= 2) level = 'start-soon';
 
     const labels = {
@@ -286,6 +288,7 @@
     if (/\b(confiden(?:ce|t)|not sure|uncertain|guess(?:ed|ing)?|got (?:it|this) wrong|missed|wrong answer|quiz feedback|practice score|self[- ]?check)\b/.test(text)) signals.push('confidence-calibration');
     if (/\b(ai notes?|ai-generated notes?|summary|summari[sz]e|transcript|recording|lecture capture|coconote)\b/.test(text)) signals.push('passive-summary-risk');
     if (/\b(no examples?|missing examples?|example missing|worked examples? missing|need(?:s)? examples?|test cases? missing|no test cases?|trace missing|missing trace|counterexamples? missing)\b/.test(text)) signals.push('worked-example-gap');
+    if (/\b(buffer|backup plan|contingency|submit early|early submission|dry run|smoke test|final check|sanity check|before the deadline|late penalty|grace period|extension)\b/.test(text)) signals.push('submission-buffer-needed');
 
     if (!matched) return { lane: 'unknown', label: 'Unknown workload', signals };
     return { lane: matched.lane, label: matched.label, signals };
@@ -474,7 +477,7 @@ Use only the provided context first. If there is not enough evidence, say what C
   }
 
   function buildUpcomingWorkTriagePrompt(context, source) {
-    const clipped = clipForPrompt(context, 1700);
+    const clipped = clipForPrompt(context, 1500);
     const workload = classifyAssignmentWorkload(clipped.text);
     const signalLine = workload.signals.length ? ` Signals: ${workload.signals.join(', ')}.` : '';
     return `Turn this Canvas assignment/deadline context into an upcoming-work triage plan.
@@ -490,6 +493,7 @@ Return:
 - Prerequisite checkpoint: if prerequisite-gap, name the smallest background source to refresh
 - Passive-summary checkpoint: if passive-summary-risk, turn summaries/transcripts into retrieval questions
 - Example checkpoint: if worked-example-gap, create or fetch a tiny source-backed example, trace, counterexample, or test case before trusting the explanation
+- Submission buffer: if submission-buffer-needed, schedule dry run, upload/smoke-test, and backup before the deadline
 - Confidence checkpoint: if confidence-calibration, ask for a low/medium/high confidence mark before source check
 - Help-seeking checkpoint: if blocked, list the exact TA/office-hours question and evidence to bring
 - Submission sanity check: how to verify upload, timestamp, gradebook status, or external-tool completion

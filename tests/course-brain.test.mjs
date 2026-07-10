@@ -240,6 +240,20 @@ test('CourseBrain assignment risk treats AI policy and passive summaries as sour
   assert.ok(risk.reasons.includes('passive-summary-risk'));
 });
 
+test('CourseBrain assignment risk treats missing submission buffers as planning risk', () => {
+  const { brain } = loadCourseBrain();
+  const now = new Date('2026-07-04T12:00:00-07:00');
+
+  const risk = brain.__test.estimateAssignmentRisk(
+    'Project requires a final check, smoke test, and backup plan before the deadline.',
+    '2026-07-12T12:00:00-07:00',
+    now
+  );
+
+  assert.equal(risk.level, 'start-soon');
+  assert.ok(risk.reasons.includes('submission-buffer-needed'));
+});
+
 test('CourseBrain study notes prompt is citation-first and Lectra-ready', () => {
   const { brain } = loadCourseBrain();
   const prompt = brain.__test.buildStudyNotesPrompt('CS 101 PDF pages 4-6');
@@ -662,6 +676,18 @@ test('CourseBrain upcoming work triage carries worked-example gaps into the chec
   assert.match(prompt, /Signals: worked-example-gap/);
   assert.match(prompt, /Example checkpoint/);
   assert.match(prompt, /tiny source-backed example, trace, counterexample, or test case/);
+});
+
+test('CourseBrain upcoming work triage carries submission buffer needs into the checklist', () => {
+  const { brain } = loadCourseBrain();
+  const prompt = brain.__test.buildUpcomingWorkTriagePrompt(
+    'Project 6 has a late penalty, so do an early submission dry run and final smoke test before the deadline.',
+    { title: 'Project 6 Brief' }
+  );
+
+  assert.match(prompt, /Signals: deadline-sensitive, submission-buffer-needed/);
+  assert.match(prompt, /Submission buffer/);
+  assert.match(prompt, /dry run, upload\/smoke-test, and backup/);
 });
 
 test('CourseBrain upcoming work triage prompt carries prerequisite-gap signal into the checklist', () => {
