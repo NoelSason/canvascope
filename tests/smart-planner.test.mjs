@@ -283,6 +283,38 @@ test('SmartPlanner buildPlannerPrompt includes study phase hints for model groun
   assert.match(prompt, /suggested phases: Active recall drill, Practice problems, Review weak spots/);
 });
 
+test('SmartPlanner inferPlannerRiskFlags surfaces deadline and submission risks', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00').getTime();
+  const sharedDay = new Date('2026-07-11T18:00:00-07:00').getTime();
+  const item = {
+    title: 'Final project Gradescope upload',
+    courseName: 'CS 61B',
+    ts: sharedDay
+  };
+
+  const flags = planner.__test.inferPlannerRiskFlags(item, [
+    item,
+    { title: 'Reading quiz', ts: new Date('2026-07-11T09:00:00-07:00').getTime() },
+    { title: 'Lab report', ts: new Date('2026-07-11T12:00:00-07:00').getTime() }
+  ], now);
+
+  assert.deepEqual(Array.from(flags), ['start now', 'link notes', 'busy day']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes planner risk flags', () => {
+  const planner = loadSmartPlanner();
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'Final project Gradescope upload',
+      courseName: 'CS 61B',
+      ts: new Date('2026-07-11T18:00:00-07:00').getTime()
+    }
+  ], new Date('2026-07-10T10:00:00-07:00'));
+
+  assert.match(prompt, /risk: start now, link notes, submission check/);
+});
+
 test('SmartPlanner buildFallbackStudyBlocks skips impossible same-day deadlines', () => {
   const planner = loadSmartPlanner();
   const now = new Date('2026-07-10T10:00:00-07:00').getTime();
