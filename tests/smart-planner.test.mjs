@@ -200,6 +200,16 @@ test('SmartPlanner inferConceptReviewHints detects CS weak-spot topics', () => {
   assert.deepEqual(Array.from(hints), ['concurrency pitfalls', 'memory model']);
 });
 
+test('SmartPlanner inferConceptReviewHints detects networking and security review topics', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferConceptReviewHints({
+    title: 'Internet protocols and auth review',
+    description: 'Trace TCP, HTTP, DNS routing, encryption, OAuth, and hashing before the quiz.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['networking fundamentals', 'security model']);
+});
+
 test('SmartPlanner recommendNextStudyAction prioritizes high-effort urgent work transparently', () => {
   const planner = loadSmartPlanner();
   const now = new Date('2026-07-10T10:00:00-07:00').getTime();

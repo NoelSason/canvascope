@@ -93,6 +93,8 @@
     if (/\b(graphs?|dfs|bfs|shortest path|dijkstra|topological|mst|minimum spanning)\b/.test(source)) add('graph traversal');
     if (/\b(dynamic programming|\bdp\b|memo(?:ization|ize)|knapsack|optimal substructure)\b/.test(source)) add('dynamic programming');
     if (/\b(sql|database|joins?|normalization|index(?:es|ing)?|transactions?)\b/.test(source)) add('database queries');
+    if (/\b(networks?|networking|internet|tcp|udp|http|dns|routing|sockets?|packet|latency|bandwidth)\b/.test(source)) add('networking fundamentals');
+    if (/\b(security|cryptograph(?:y|ic)|crypto\b|encryption|authentication|authorization|oauth|hash(?:ing)?|xss|csrf|injection)\b/.test(source)) add('security model');
     if (/\b(concurrency|parallel|threads?|locks?|mutex|semaphore|race condition|deadlock)\b/.test(source)) add('concurrency pitfalls');
     if (/\b(memory|pointers?|heap|stack|malloc|free|segfault|garbage collection)\b/.test(source)) add('memory model');
     if (/\b(probability|bayes|regression|gradient|matrix|linear algebra|statistics)\b/.test(source)) add('math foundations');
