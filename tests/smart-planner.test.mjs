@@ -245,13 +245,42 @@ test('SmartPlanner buildFallbackStudyBlocks creates deadline-safe blocks when mo
     { title: 'Final project checkpoint', courseName: 'CS 61B', ts: deadline }
   ], now);
 
-  assert.equal(blocks.length, 2);
+  assert.equal(blocks.length, 3);
   assert.equal(blocks[0].title, 'Outline and unblock: Final project checkpoint');
   assert.equal(blocks[0].course, 'CS 61B');
   assert.equal(blocks[0].minutes, 90);
   assert.equal(new Date(blocks[0].startAt).getTime(), new Date('2026-07-10T10:30:00-07:00').getTime());
-  assert.equal(blocks[1].title, 'Deep work: Final project checkpoint');
-  assert.ok(new Date(blocks[1].startAt).getTime() + blocks[1].minutes * 60 * 1000 <= deadline - 30 * 60 * 1000);
+  assert.equal(blocks[1].title, 'Build or solve: Final project checkpoint');
+  assert.equal(blocks[2].title, 'Test and submit: Final project checkpoint');
+  assert.ok(new Date(blocks[2].startAt).getTime() + blocks[2].minutes * 60 * 1000 <= deadline - 30 * 60 * 1000);
+});
+
+test('SmartPlanner inferStudyPhases favors active recall and workflow-specific phases', () => {
+  const planner = loadSmartPlanner();
+
+  assert.deepEqual(Array.from(planner.__test.inferStudyPhases({
+    title: 'Data structures midterm',
+    description: 'Covers trees, heaps, graph traversals, and runtime analysis.'
+  })), ['Active recall drill', 'Practice problems', 'Review weak spots']);
+
+  assert.deepEqual(Array.from(planner.__test.inferStudyPhases({
+    title: 'Research paper draft',
+    description: 'Submit annotated citations and a polished write-up.'
+  })), ['Outline argument', 'Draft', 'Revise and cite']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes study phase hints for model grounding', () => {
+  const planner = loadSmartPlanner();
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'Algorithms midterm',
+      courseName: 'CS 170',
+      ts: new Date('2026-07-11T12:00:00-07:00').getTime(),
+      description: 'Practice graph shortest path and dynamic programming problems.'
+    }
+  ], new Date('2026-07-10T10:00:00-07:00'));
+
+  assert.match(prompt, /suggested phases: Active recall drill, Practice problems, Review weak spots/);
 });
 
 test('SmartPlanner buildFallbackStudyBlocks skips impossible same-day deadlines', () => {

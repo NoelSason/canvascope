@@ -100,6 +100,32 @@
     return hints.slice(0, 3);
   }
 
+  function inferStudyPhases(item) {
+    const source = `${item?.title || ''} ${item?.description || item?.text || item?.content || ''}`.toLowerCase();
+    const phases = [];
+    const add = (label) => { if (!phases.includes(label)) phases.push(label); };
+
+    const isProjectLike = /\b(project|portfolio|capstone|milestone|implementation|coding|lab)\b/.test(source);
+    if (/\b(exam|midterm|final|test)\b/.test(source) && !isProjectLike) {
+      add('Active recall drill');
+      add('Practice problems');
+      add('Review weak spots');
+    } else if (isProjectLike) {
+      add('Outline and unblock');
+      add('Build or solve');
+      add('Test and submit');
+    } else if (/\b(essay|paper|research|report|write[- ]?up|reflection)\b/.test(source)) {
+      add('Outline argument');
+      add('Draft');
+      add('Revise and cite');
+    } else if (/\b(reading|chapter|lecture|notes?)\b/.test(source)) {
+      add('Read and annotate');
+      add('Self-quiz from notes');
+    }
+
+    return phases.slice(0, 3);
+  }
+
   function recommendNextStudyAction(items, nowMs = Date.now()) {
     const candidates = (Array.isArray(items) ? items : [])
       .filter(item => item && !item.done && Number.isFinite(Number(item.ts)))
@@ -217,9 +243,11 @@
       const evidence = compactDeadlineText(d);
       const checklist = inferSubmissionChecklist(d);
       const reviewHints = inferConceptReviewHints(d);
+      const studyPhases = inferStudyPhases(d);
       const checklistHint = checklist.length ? `; checklist: ${checklist.join(', ')}` : '';
       const reviewHint = reviewHints.length ? `; review: ${reviewHints.join(', ')}` : '';
-      const hint = `urgency=${triage.urgency}, effort=${triage.effort}${checklistHint}${reviewHint}`;
+      const phaseHint = studyPhases.length ? `; suggested phases: ${studyPhases.join(', ')}` : '';
+      const hint = `urgency=${triage.urgency}, effort=${triage.effort}${checklistHint}${reviewHint}${phaseHint}`;
       return `- "${d.title}" (${d.courseName || 'General'}) due ${dueLabel}; ${hint}${evidence ? `; notes: ${evidence}` : ''}`;
     }).join('\n');
 
@@ -414,9 +442,12 @@
     for (const item of items) {
       const triage = classifyDeadline(item, nowMs);
       const latestEnd = Number(item.ts) - DEADLINE_HANDOFF_BUFFER_MINUTES * 60 * 1000;
-      const phases = triage.effort === 'high'
-        ? ['Outline and unblock', 'Deep work']
-        : [triage.effort === 'quick' ? 'Finish' : 'Work on'];
+      const inferredPhases = inferStudyPhases(item);
+      const phases = inferredPhases.length
+        ? inferredPhases
+        : (triage.effort === 'high'
+          ? ['Outline and unblock', 'Deep work']
+          : [triage.effort === 'quick' ? 'Finish' : 'Work on']);
       const minutes = triage.effort === 'high' ? 90 : triage.effort === 'quick' ? 45 : 60;
 
       for (const phase of phases) {
@@ -616,6 +647,6 @@
     init,
     refresh,
     draftWeek,
-    __test: { classifyDeadline, compactDeadlineText, inferSubmissionChecklist, inferConceptReviewHints, recommendNextStudyAction, buildWorkloadTimeline, buildPlannerPrompt, extractJsonArray, nextStudyWindowStart, normalizeStudyBlocks, buildFallbackStudyBlocks, toLocalInputValue }
+    __test: { classifyDeadline, compactDeadlineText, inferSubmissionChecklist, inferConceptReviewHints, inferStudyPhases, recommendNextStudyAction, buildWorkloadTimeline, buildPlannerPrompt, extractJsonArray, nextStudyWindowStart, normalizeStudyBlocks, buildFallbackStudyBlocks, toLocalInputValue }
   };
 })();
