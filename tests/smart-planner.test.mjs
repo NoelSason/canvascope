@@ -164,6 +164,31 @@ test('SmartPlanner compactDeadlineText trims noisy source notes', () => {
   assert.equal(snippet, 'Alpha Beta Gamm…');
 });
 
+test('SmartPlanner inferSubmissionChecklist detects CS workflow requirements', () => {
+  const planner = loadSmartPlanner();
+  const checklist = planner.__test.inferSubmissionChecklist({
+    title: 'Project 2 GitHub checkpoint',
+    description: 'Push your repo, run unit tests, submit to Gradescope, and include a README write-up.'
+  });
+
+  assert.deepEqual(Array.from(checklist), ['push repo', 'submit autograder', 'attach write-up', 'run tests']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes submission checklist hints', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00');
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'Programming project',
+      courseName: 'CS 61B',
+      ts: new Date('2026-07-10T18:00:00-07:00').getTime(),
+      description: 'Push the GitHub repo, run pytest, submit on Gradescope, and attach the PDF write-up.'
+    }
+  ], now);
+
+  assert.match(prompt, /checklist: push repo, submit autograder, attach write-up, run tests/);
+});
+
 test('SmartPlanner recommendNextStudyAction prioritizes high-effort urgent work transparently', () => {
   const planner = loadSmartPlanner();
   const now = new Date('2026-07-10T10:00:00-07:00').getTime();

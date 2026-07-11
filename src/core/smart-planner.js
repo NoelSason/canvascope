@@ -68,6 +68,21 @@
     return text.length > maxLength ? `${text.slice(0, maxLength - 1).trim()}…` : text;
   }
 
+  function inferSubmissionChecklist(item) {
+    const source = `${item?.title || ''} ${item?.description || item?.text || item?.content || ''}`.toLowerCase();
+    const checks = [];
+    const add = (label) => { if (!checks.includes(label)) checks.push(label); };
+
+    if (/\b(github|git\b|commit|push|pull request|repo(?:sitory)?|branch)\b/.test(source)) add('push repo');
+    if (/\b(gradescope|autograder|auto[- ]?grader|submitty|codegrade)\b/.test(source)) add('submit autograder');
+    if (/\b(readme|write[- ]?up|report|reflection|design doc|implementation notes?)\b/.test(source)) add('attach write-up');
+    if (/\b(test cases?|unit tests?|pytest|npm test|xcodebuild|junit|coverage)\b/.test(source)) add('run tests');
+    if (/\b(pdf|slides?|screenshot|screen recording|demo video|presentation)\b/.test(source)) add('upload artifact');
+    if (/\b(partner|team|group|peer review|collab(?:oration)?)\b/.test(source)) add('coordinate team');
+
+    return checks.slice(0, 4);
+  }
+
   function recommendNextStudyAction(items, nowMs = Date.now()) {
     const candidates = (Array.isArray(items) ? items : [])
       .filter(item => item && !item.done && Number.isFinite(Number(item.ts)))
@@ -120,7 +135,9 @@
       const triage = classifyDeadline(d, nowMs);
       const dueLabel = new Date(d.ts).toLocaleString();
       const evidence = compactDeadlineText(d);
-      const hint = `urgency=${triage.urgency}, effort=${triage.effort}`;
+      const checklist = inferSubmissionChecklist(d);
+      const checklistHint = checklist.length ? `; checklist: ${checklist.join(', ')}` : '';
+      const hint = `urgency=${triage.urgency}, effort=${triage.effort}${checklistHint}`;
       return `- "${d.title}" (${d.courseName || 'General'}) due ${dueLabel}; ${hint}${evidence ? `; notes: ${evidence}` : ''}`;
     }).join('\n');
 
@@ -164,13 +181,15 @@
       const dateLabel = new Date(item.ts).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
       const triage = classifyDeadline(item, now);
       const effortLabel = triage.effort === 'high' ? 'deep work' : triage.effort;
+      const checklist = inferSubmissionChecklist(item);
+      const checklistLabel = checklist.length ? checklist.join(' · ') : `${triage.urgency} · ${effortLabel}`;
       row.dataset.urgency = triage.urgency;
       row.dataset.effort = triage.effort;
       row.innerHTML = `
         <span class="plan-deadline-date${overdue ? ' is-overdue' : ''}">${overdue ? 'OVERDUE' : dateLabel}</span>
         <span class="plan-deadline-title">${escapeHtml(item.title)}</span>
         <span class="plan-deadline-course">${escapeHtml(item.courseName || '')}</span>
-        <span class="plan-deadline-triage" title="Planner triage: ${escapeHtml(triage.urgency)} / ${escapeHtml(effortLabel)}">${escapeHtml(triage.urgency)} · ${escapeHtml(effortLabel)}</span>
+        <span class="plan-deadline-triage" title="Planner triage: ${escapeHtml(triage.urgency)} / ${escapeHtml(effortLabel)}${checklist.length ? `; suggested checks: ${escapeHtml(checklist.join(', '))}` : ''}">${escapeHtml(checklistLabel)}</span>
       `;
       if (item.url) row.addEventListener('click', () => chrome.tabs.create({ url: item.url }));
       list.appendChild(row);
@@ -511,6 +530,6 @@
     init,
     refresh,
     draftWeek,
-    __test: { classifyDeadline, compactDeadlineText, recommendNextStudyAction, buildPlannerPrompt, extractJsonArray, nextStudyWindowStart, normalizeStudyBlocks, buildFallbackStudyBlocks, toLocalInputValue }
+    __test: { classifyDeadline, compactDeadlineText, inferSubmissionChecklist, recommendNextStudyAction, buildPlannerPrompt, extractJsonArray, nextStudyWindowStart, normalizeStudyBlocks, buildFallbackStudyBlocks, toLocalInputValue }
   };
 })();
