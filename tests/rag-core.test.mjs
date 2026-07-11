@@ -161,6 +161,17 @@ test('RAGCore course brain prompts include study plan guidance', async () => {
   assert.match(compiled.prompt, /short timeboxed blocks/);
 });
 
+test('RAGCore source audit guidance separates evidence strength for grounded study notes', async () => {
+  mockTabUrl = 'https://google.com';
+  assert.equal(RAGCore.hasSourceAuditIntent('make source-backed study notes with an evidence checklist'), true);
+  assert.equal(RAGCore.hasSourceAuditIntent('which sources mention recursion?'), false);
+
+  const compiled = await RAGCore.compileUnifiedPrompt('make source-backed study notes with an evidence checklist');
+  assert.match(compiled.prompt, /source\/evidence audit/);
+  assert.match(compiled.prompt, /source-backed facts/);
+  assert.match(compiled.prompt, /weakly supported assumptions/);
+});
+
 test('RAGCore.retrieveLocalContext surfaces tasks for schedule queries with no keyword match', async () => {
   // "what do I need to do?" does not lexically match any stored title/course,
   // but the context-aware fallback should still surface the pending to-do.
