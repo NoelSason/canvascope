@@ -265,3 +265,24 @@ test('SmartPlanner buildFallbackStudyBlocks skips impossible same-day deadlines'
 
   assert.equal(blocks.length, 0);
 });
+
+test('SmartPlanner buildWorkloadTimeline buckets upcoming deadlines by local day', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00').getTime();
+  const timeline = planner.__test.buildWorkloadTimeline([
+    { title: 'Project milestone', ts: new Date('2026-07-10T18:00:00-07:00').getTime() },
+    { title: 'Reading quiz', ts: new Date('2026-07-11T09:00:00-07:00').getTime() },
+    { title: 'Done lab', done: true, ts: new Date('2026-07-11T12:00:00-07:00').getTime() },
+    { title: 'Future exam', ts: new Date('2026-07-20T12:00:00-07:00').getTime() }
+  ], now, 3);
+
+  assert.equal(timeline.length, 3);
+  assert.equal(timeline[0].count, 1);
+  assert.equal(timeline[0].highEffort, 1);
+  assert.equal(timeline[0].load, 'medium');
+  assert.equal(timeline[1].count, 1);
+  assert.equal(timeline[1].quick, 1);
+  assert.equal(timeline[1].load, 'light');
+  assert.equal(timeline[2].count, 0);
+  assert.equal(timeline[2].load, 'empty');
+});

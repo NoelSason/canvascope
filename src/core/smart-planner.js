@@ -146,6 +146,69 @@
     };
   }
 
+  function startOfLocalDay(ms) {
+    const d = new Date(ms);
+    d.setHours(0, 0, 0, 0);
+    return d.getTime();
+  }
+
+  function buildWorkloadTimeline(items, nowMs = Date.now(), days = 7) {
+    const safeDays = Math.max(1, Math.min(14, Number(days) || 7));
+    const todayStart = startOfLocalDay(nowMs);
+    const buckets = Array.from({ length: safeDays }, (_, offset) => {
+      const start = todayStart + offset * MS_DAY;
+      const d = new Date(start);
+      return {
+        start,
+        label: d.toLocaleDateString(undefined, { weekday: 'short' }),
+        dateLabel: d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
+        count: 0,
+        highEffort: 0,
+        quick: 0,
+        isToday: offset === 0,
+        load: 'empty'
+      };
+    });
+
+    for (const item of (Array.isArray(items) ? items : [])) {
+      if (!item || item.done) continue;
+      const ts = Number(item.ts);
+      if (!Number.isFinite(ts) || ts < todayStart || ts >= todayStart + safeDays * MS_DAY) continue;
+      const bucket = buckets[Math.floor((ts - todayStart) / MS_DAY)];
+      if (!bucket) continue;
+      const triage = classifyDeadline({ ...item, ts }, nowMs);
+      bucket.count += 1;
+      if (triage.effort === 'high') bucket.highEffort += 1;
+      if (triage.effort === 'quick') bucket.quick += 1;
+    }
+
+    return buckets.map(bucket => ({
+      ...bucket,
+      load: bucket.count === 0 ? 'empty' : bucket.count >= 4 || bucket.highEffort >= 2 ? 'heavy' : bucket.count >= 2 || bucket.highEffort === 1 ? 'medium' : 'light'
+    }));
+  }
+
+  function renderWorkloadTimeline(items, list, nowMs = Date.now()) {
+    const timeline = buildWorkloadTimeline(items, nowMs, 7);
+    if (!timeline.some(day => day.count > 0)) return;
+
+    const card = document.createElement('div');
+    card.className = 'plan-workload-strip animate-fade-in';
+    card.innerHTML = `
+      <div class="plan-section-head"><span class="plan-section-title">7-day workload</span><span class="plan-section-meta">deadlines by day</span></div>
+      <div class="plan-workload-days">
+        ${timeline.map(day => `
+          <div class="plan-workload-day is-${escapeHtml(day.load)}${day.isToday ? ' is-today' : ''}" title="${escapeHtml(day.dateLabel)}: ${day.count} deadline${day.count === 1 ? '' : 's'}${day.highEffort ? `, ${day.highEffort} high-effort` : ''}">
+            <span class="plan-workload-label">${escapeHtml(day.label)}</span>
+            <span class="plan-workload-count">${day.count}</span>
+            <span class="plan-workload-date">${escapeHtml(day.dateLabel)}</span>
+          </div>
+        `).join('')}
+      </div>
+    `;
+    list.appendChild(card);
+  }
+
   function buildPlannerPrompt(deadlines, now = new Date()) {
     const nowMs = now.getTime();
     const lines = deadlines.slice(0, 15).map(d => {
@@ -179,6 +242,8 @@
     }
 
     const now = Date.now();
+    renderWorkloadTimeline(items, list, now);
+
     const recommendation = recommendNextStudyAction(items, now);
     if (recommendation) {
       const next = document.createElement('div');
@@ -551,6 +616,6 @@
     init,
     refresh,
     draftWeek,
-    __test: { classifyDeadline, compactDeadlineText, inferSubmissionChecklist, inferConceptReviewHints, recommendNextStudyAction, buildPlannerPrompt, extractJsonArray, nextStudyWindowStart, normalizeStudyBlocks, buildFallbackStudyBlocks, toLocalInputValue }
+    __test: { classifyDeadline, compactDeadlineText, inferSubmissionChecklist, inferConceptReviewHints, recommendNextStudyAction, buildWorkloadTimeline, buildPlannerPrompt, extractJsonArray, nextStudyWindowStart, normalizeStudyBlocks, buildFallbackStudyBlocks, toLocalInputValue }
   };
 })();
