@@ -68,6 +68,52 @@
     return text.length > maxLength ? `${text.slice(0, maxLength - 1).trim()}…` : text;
   }
 
+  function recommendNextStudyAction(items, nowMs = Date.now()) {
+    const candidates = (Array.isArray(items) ? items : [])
+      .filter(item => item && !item.done && Number.isFinite(Number(item.ts)))
+      .map(item => {
+        const ts = Number(item.ts);
+        const hoursUntilDue = (ts - nowMs) / (60 * 60 * 1000);
+        const triage = classifyDeadline({ ...item, ts }, nowMs);
+        let score = 0;
+        const reasons = [];
+
+        if (hoursUntilDue < 0) { score += 100; reasons.push('overdue'); }
+        else if (hoursUntilDue <= 24) { score += 80; reasons.push('due today'); }
+        else if (hoursUntilDue <= 72) { score += 45; reasons.push('due soon'); }
+        else { score += Math.max(0, 20 - hoursUntilDue / 24); }
+
+        if (triage.effort === 'high') { score += 40; reasons.push('high effort'); }
+        else if (triage.effort === 'quick') { score += 8; reasons.push('quick win'); }
+
+        const sourceText = `${item.title || ''} ${item.description || item.text || item.content || ''}`.toLowerCase();
+        if (/\b(not started|starter|draft|proposal|milestone|checkpoint|practice|review)\b/.test(sourceText)) {
+          score += 10;
+          reasons.push('needs progress');
+        }
+
+        return { item, ts, triage, score, reasons };
+      })
+      .sort((a, b) => b.score - a.score || a.ts - b.ts);
+
+    if (!candidates.length) return null;
+    const best = candidates[0];
+    const title = String(best.item.title || 'upcoming deadline').trim();
+    const course = String(best.item.courseName || best.item.course || '').trim();
+    const verb = best.triage.effort === 'quick' ? 'Finish' : best.triage.effort === 'high' ? 'Do a 45-minute deep-work sprint on' : 'Spend 45 minutes on';
+    const reason = best.reasons.length ? best.reasons.slice(0, 3).join(' + ') : 'highest priority';
+    return {
+      title,
+      course,
+      reason,
+      action: `${verb} ${title}`,
+      urgency: best.triage.urgency,
+      effort: best.triage.effort,
+      dueAt: best.ts,
+      score: best.score
+    };
+  }
+
   function buildPlannerPrompt(deadlines, now = new Date()) {
     const nowMs = now.getTime();
     const lines = deadlines.slice(0, 15).map(d => {
@@ -97,6 +143,19 @@
     }
 
     const now = Date.now();
+    const recommendation = recommendNextStudyAction(items, now);
+    if (recommendation) {
+      const next = document.createElement('div');
+      next.className = 'plan-deadline-row plan-next-action animate-fade-in';
+      next.innerHTML = `
+        <span class="plan-deadline-date">NEXT</span>
+        <span class="plan-deadline-title">${escapeHtml(recommendation.action)}</span>
+        <span class="plan-deadline-course">${escapeHtml(recommendation.course)}</span>
+        <span class="plan-deadline-triage" title="Recommended because ${escapeHtml(recommendation.reason)}">${escapeHtml(recommendation.reason)}</span>
+      `;
+      list.appendChild(next);
+    }
+
     items.slice(0, 12).forEach((item, i) => {
       const row = document.createElement(item.url ? 'button' : 'div');
       row.className = 'plan-deadline-row stagger-in';
@@ -452,6 +511,6 @@
     init,
     refresh,
     draftWeek,
-    __test: { classifyDeadline, compactDeadlineText, buildPlannerPrompt, extractJsonArray, nextStudyWindowStart, normalizeStudyBlocks, buildFallbackStudyBlocks, toLocalInputValue }
+    __test: { classifyDeadline, compactDeadlineText, recommendNextStudyAction, buildPlannerPrompt, extractJsonArray, nextStudyWindowStart, normalizeStudyBlocks, buildFallbackStudyBlocks, toLocalInputValue }
   };
 })();

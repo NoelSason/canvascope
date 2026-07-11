@@ -164,6 +164,42 @@ test('SmartPlanner compactDeadlineText trims noisy source notes', () => {
   assert.equal(snippet, 'Alpha Beta Gamm…');
 });
 
+test('SmartPlanner recommendNextStudyAction prioritizes high-effort urgent work transparently', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00').getTime();
+  const recommendation = planner.__test.recommendNextStudyAction([
+    {
+      title: 'Discussion reply',
+      courseName: 'History',
+      ts: new Date('2026-07-10T16:00:00-07:00').getTime()
+    },
+    {
+      title: 'Project milestone checkpoint',
+      courseName: 'CS 61B',
+      description: 'Draft implementation plan and run starter tests.',
+      ts: new Date('2026-07-11T18:00:00-07:00').getTime()
+    }
+  ], now);
+
+  assert.equal(recommendation.title, 'Project milestone checkpoint');
+  assert.equal(recommendation.course, 'CS 61B');
+  assert.equal(recommendation.effort, 'high');
+  assert.match(recommendation.action, /^Do a 45-minute deep-work sprint/);
+  assert.match(recommendation.reason, /due soon/);
+  assert.match(recommendation.reason, /high effort/);
+  assert.match(recommendation.reason, /needs progress/);
+});
+
+test('SmartPlanner recommendNextStudyAction ignores completed or undated work', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00').getTime();
+
+  assert.equal(planner.__test.recommendNextStudyAction([
+    { title: 'Done lab', done: true, ts: new Date('2026-07-10T12:00:00-07:00').getTime() },
+    { title: 'No due date' }
+  ], now), null);
+});
+
 test('SmartPlanner buildFallbackStudyBlocks creates deadline-safe blocks when model output is unusable', () => {
   const planner = loadSmartPlanner();
   const now = new Date('2026-07-10T10:00:00-07:00').getTime();
