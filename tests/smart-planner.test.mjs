@@ -236,6 +236,48 @@ test('SmartPlanner recommendNextStudyAction ignores completed or undated work', 
   ], now), null);
 });
 
+test('SmartPlanner inferPlannerRiskFlags surfaces high-value assignments from Canvas points', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00').getTime();
+  const flags = planner.__test.inferPlannerRiskFlags({
+    title: 'Capstone design review',
+    description: 'Submit the design deck and demo notes.',
+    pointsPossible: 150,
+    ts: new Date('2026-07-12T18:00:00-07:00').getTime()
+  }, [], now);
+
+  assert.ok(flags.includes('large point value'));
+});
+
+test('SmartPlanner inferPlannerRiskFlags can read point value from assignment text', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00').getTime();
+  const flags = planner.__test.inferPlannerRiskFlags({
+    title: 'Project submission',
+    description: 'This is worth 120 points and requires a GitHub repo upload.',
+    ts: new Date('2026-07-15T18:00:00-07:00').getTime()
+  }, [], now);
+
+  assert.ok(flags.includes('large point value'));
+  assert.ok(flags.includes('submission check'));
+});
+
+test('SmartPlanner buildPlannerPrompt includes large point-value risk hints', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00');
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'Final project',
+      courseName: 'CS 61B',
+      pointsPossible: 200,
+      ts: new Date('2026-07-13T18:00:00-07:00').getTime(),
+      description: 'Implement the final feature and upload the report.'
+    }
+  ], now);
+
+  assert.match(prompt, /risk: large point value/);
+});
+
 test('SmartPlanner buildFallbackStudyBlocks creates deadline-safe blocks when model output is unusable', () => {
   const planner = loadSmartPlanner();
   const now = new Date('2026-07-10T10:00:00-07:00').getTime();

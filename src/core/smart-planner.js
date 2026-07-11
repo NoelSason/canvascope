@@ -107,7 +107,12 @@
     const hoursUntilDue = Number.isFinite(ts) ? (ts - nowMs) / (60 * 60 * 1000) : Infinity;
     const source = `${item?.title || ''} ${item?.description || item?.text || item?.content || ''}`.toLowerCase();
     const hasSourceNotes = Boolean(String(item?.description || item?.text || item?.content || '').trim());
+    const explicitPoints = Number(item?.pointsPossible ?? item?.points ?? item?.points_possible ?? item?.maxPoints);
+    const textPointMatches = Array.from(source.matchAll(/\b(\d{2,4})\s*(?:pts?|points?)\b/g), match => Number(match[1]))
+      .filter(Number.isFinite);
+    const pointValue = Number.isFinite(explicitPoints) ? explicitPoints : (textPointMatches.length ? Math.max(...textPointMatches) : NaN);
 
+    if (Number.isFinite(pointValue) && pointValue >= 100) add('large point value');
     if (hoursUntilDue < 0) add('overdue');
     else if (hoursUntilDue <= 48 && /\b(not started|starter|draft|proposal|milestone|checkpoint|practice|review|project|paper|essay|exam|final|lab)\b/.test(source)) {
       add('start now');
