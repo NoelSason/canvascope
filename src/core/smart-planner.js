@@ -198,6 +198,23 @@
     return phases.slice(0, 3);
   }
 
+  function inferLearningStrategyHints(item) {
+    const source = `${item?.title || ''} ${item?.description || item?.text || item?.content || ''}`.toLowerCase();
+    const hints = [];
+    const add = (label) => { if (!hints.includes(label)) hints.push(label); };
+
+    if (/\b(exam|midterm|final|test|quiz)\b/.test(source)) {
+      add('active recall');
+      add('spaced review');
+    }
+    if (/\b(practice|problem set|pset|worksheet|drill|leetcode|coding challenge)\b/.test(source)) add('practice reps');
+    if (/\b(lecture|slides?|chapter|reading|notes?|paper|article)\b/.test(source)) add('turn notes into questions');
+    if (/\b(project|lab|implementation|coding|programming|github|repo|autograder|debug)\b/.test(source)) add('debug log');
+    if (/\b(error analysis|postmortem|reflection|retrospective|mistakes?|wrong answers?)\b/.test(source)) add('mistake review');
+
+    return hints.slice(0, 3);
+  }
+
   function recommendNextStudyAction(items, nowMs = Date.now()) {
     const candidates = (Array.isArray(items) ? items : [])
       .filter(item => item && !item.done && Number.isFinite(Number(item.ts)))
@@ -316,12 +333,14 @@
       const checklist = inferSubmissionChecklist(d);
       const reviewHints = inferConceptReviewHints(d);
       const studyPhases = inferStudyPhases(d);
+      const learningHints = inferLearningStrategyHints(d);
       const riskFlags = inferPlannerRiskFlags(d, deadlines, nowMs);
       const checklistHint = checklist.length ? `; checklist: ${checklist.join(', ')}` : '';
       const reviewHint = reviewHints.length ? `; review: ${reviewHints.join(', ')}` : '';
+      const learningHint = learningHints.length ? `; learning strategy: ${learningHints.join(', ')}` : '';
       const phaseHint = studyPhases.length ? `; suggested phases: ${studyPhases.join(', ')}` : '';
       const riskHint = riskFlags.length ? `; risk: ${riskFlags.join(', ')}` : '';
-      const hint = `urgency=${triage.urgency}, effort=${triage.effort}${checklistHint}${reviewHint}${phaseHint}${riskHint}`;
+      const hint = `urgency=${triage.urgency}, effort=${triage.effort}${checklistHint}${reviewHint}${learningHint}${phaseHint}${riskHint}`;
       return `- "${d.title}" (${d.courseName || 'General'}) due ${dueLabel}; ${hint}${evidence ? `; notes: ${evidence}` : ''}`;
     }).join('\n');
 
@@ -369,16 +388,17 @@
       const effortLabel = triage.effort === 'high' ? 'deep work' : triage.effort;
       const checklist = inferSubmissionChecklist(item);
       const reviewHints = inferConceptReviewHints(item);
+      const learningHints = inferLearningStrategyHints(item);
       const riskFlags = inferPlannerRiskFlags(item, items, now);
       const checklistLabel = riskFlags.length ? `Risk: ${riskFlags.join(' · ')}` : (checklist.length ? checklist.join(' · ') : `${triage.urgency} · ${effortLabel}`);
-      const reviewLabel = reviewHints.length ? `Review: ${reviewHints.join(' · ')}` : '';
+      const reviewLabel = reviewHints.length ? `Review: ${reviewHints.join(' · ')}` : (learningHints.length ? `Study: ${learningHints.join(' · ')}` : '');
       row.dataset.urgency = triage.urgency;
       row.dataset.effort = triage.effort;
       row.innerHTML = `
         <span class="plan-deadline-date${overdue ? ' is-overdue' : ''}">${overdue ? 'OVERDUE' : dateLabel}</span>
         <span class="plan-deadline-title">${escapeHtml(item.title)}</span>
         <span class="plan-deadline-course">${escapeHtml(item.courseName || '')}</span>
-        <span class="plan-deadline-triage" title="Planner triage: ${escapeHtml(triage.urgency)} / ${escapeHtml(effortLabel)}${riskFlags.length ? `; risk flags: ${escapeHtml(riskFlags.join(', '))}` : ''}${checklist.length ? `; suggested checks: ${escapeHtml(checklist.join(', '))}` : ''}${reviewHints.length ? `; concepts to review: ${escapeHtml(reviewHints.join(', '))}` : ''}">${escapeHtml(reviewLabel || checklistLabel)}</span>
+        <span class="plan-deadline-triage" title="Planner triage: ${escapeHtml(triage.urgency)} / ${escapeHtml(effortLabel)}${riskFlags.length ? `; risk flags: ${escapeHtml(riskFlags.join(', '))}` : ''}${checklist.length ? `; suggested checks: ${escapeHtml(checklist.join(', '))}` : ''}${reviewHints.length ? `; concepts to review: ${escapeHtml(reviewHints.join(', '))}` : ''}${learningHints.length ? `; study strategy: ${escapeHtml(learningHints.join(', '))}` : ''}">${escapeHtml(reviewLabel || checklistLabel)}</span>
       `;
       if (item.url) row.addEventListener('click', () => chrome.tabs.create({ url: item.url }));
       list.appendChild(row);
@@ -722,6 +742,6 @@
     init,
     refresh,
     draftWeek,
-    __test: { classifyDeadline, compactDeadlineText, inferSubmissionChecklist, inferConceptReviewHints, inferSubmissionStatusFlags, inferPlannerRiskFlags, inferStudyPhases, recommendNextStudyAction, buildWorkloadTimeline, buildPlannerPrompt, extractJsonArray, nextStudyWindowStart, normalizeStudyBlocks, buildFallbackStudyBlocks, toLocalInputValue }
+    __test: { classifyDeadline, compactDeadlineText, inferSubmissionChecklist, inferConceptReviewHints, inferSubmissionStatusFlags, inferPlannerRiskFlags, inferStudyPhases, inferLearningStrategyHints, recommendNextStudyAction, buildWorkloadTimeline, buildPlannerPrompt, extractJsonArray, nextStudyWindowStart, normalizeStudyBlocks, buildFallbackStudyBlocks, toLocalInputValue }
   };
 })();

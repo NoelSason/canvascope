@@ -335,6 +335,34 @@ test('SmartPlanner buildPlannerPrompt includes study phase hints for model groun
   assert.match(prompt, /suggested phases: Active recall drill, Practice problems, Review weak spots/);
 });
 
+test('SmartPlanner inferLearningStrategyHints detects active recall and CS workflow strategies', () => {
+  const planner = loadSmartPlanner();
+
+  assert.deepEqual(Array.from(planner.__test.inferLearningStrategyHints({
+    title: 'Algorithms final exam',
+    description: 'Review lecture notes, practice problem set mistakes, and rerun graph drills.'
+  })), ['active recall', 'spaced review', 'practice reps']);
+
+  assert.deepEqual(Array.from(planner.__test.inferLearningStrategyHints({
+    title: 'Autograder debugging lab',
+    description: 'Push the GitHub repo after documenting wrong answers in an error analysis.'
+  })), ['debug log', 'mistake review']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes learning strategy hints', () => {
+  const planner = loadSmartPlanner();
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'Systems quiz',
+      courseName: 'CS 162',
+      ts: new Date('2026-07-11T12:00:00-07:00').getTime(),
+      description: 'Read the lecture notes and turn them into practice questions before the quiz.'
+    }
+  ], new Date('2026-07-10T10:00:00-07:00'));
+
+  assert.match(prompt, /learning strategy: active recall, spaced review, practice reps/);
+});
+
 test('SmartPlanner inferPlannerRiskFlags surfaces deadline and submission risks', () => {
   const planner = loadSmartPlanner();
   const now = new Date('2026-07-10T10:00:00-07:00').getTime();
