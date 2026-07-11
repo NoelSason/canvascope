@@ -100,6 +100,30 @@
     return hints.slice(0, 3);
   }
 
+  function inferSubmissionStatusFlags(item, nowMs = Date.now()) {
+    const flags = [];
+    const add = (label) => { if (!flags.includes(label)) flags.push(label); };
+    const submission = item?.submission || item?.submissionStatus || item?.submission_status || {};
+    const workflowState = String(submission.workflow_state || submission.workflowState || item?.workflowState || item?.workflow_state || '').toLowerCase();
+    const submittedAt = submission.submitted_at || submission.submittedAt || item?.submittedAt || item?.submitted_at;
+    const hasSubmission = Boolean(submittedAt || submission.submission_type || submission.submissionType || submission.url || submission.attachments?.length || item?.submitted === true);
+    const gradedAt = submission.graded_at || submission.gradedAt || item?.gradedAt || item?.graded_at;
+    const score = submission.score ?? item?.score ?? item?.grade;
+    const ts = Number(item && item.ts);
+    const isPastDue = Number.isFinite(ts) && ts < nowMs;
+    const source = `${item?.title || ''} ${item?.description || item?.text || item?.content || ''}`.toLowerCase();
+
+    if (workflowState === 'unsubmitted' || item?.missing === true || (isPastDue && !hasSubmission && /\b(submit|submission|upload|assignment|project|lab|quiz|discussion|paper|essay|report)\b/.test(source))) {
+      add('missing submission');
+    }
+    if (hasSubmission && !gradedAt && score == null && !/graded|complete/.test(workflowState)) add('awaiting grade');
+    if (workflowState === 'graded' || gradedAt || score != null) add('graded');
+    if (submission.late === true || item?.late === true || /\blate\b/.test(workflowState)) add('late');
+    if (submission.excused === true || item?.excused === true) add('excused');
+
+    return flags.slice(0, 2);
+  }
+
   function inferPlannerRiskFlags(item, peers = [], nowMs = Date.now()) {
     const flags = [];
     const add = (label) => { if (!flags.includes(label)) flags.push(label); };
@@ -112,6 +136,7 @@
       .filter(Number.isFinite);
     const pointValue = Number.isFinite(explicitPoints) ? explicitPoints : (textPointMatches.length ? Math.max(...textPointMatches) : NaN);
 
+    inferSubmissionStatusFlags(item, nowMs).forEach(add);
     if (Number.isFinite(pointValue) && pointValue >= 100) add('large point value');
     if (hoursUntilDue < 0) add('overdue');
     else if (hoursUntilDue <= 48 && /\b(not started|starter|draft|proposal|milestone|checkpoint|practice|review|project|paper|essay|exam|final|lab)\b/.test(source)) {
@@ -688,6 +713,6 @@
     init,
     refresh,
     draftWeek,
-    __test: { classifyDeadline, compactDeadlineText, inferSubmissionChecklist, inferConceptReviewHints, inferPlannerRiskFlags, inferStudyPhases, recommendNextStudyAction, buildWorkloadTimeline, buildPlannerPrompt, extractJsonArray, nextStudyWindowStart, normalizeStudyBlocks, buildFallbackStudyBlocks, toLocalInputValue }
+    __test: { classifyDeadline, compactDeadlineText, inferSubmissionChecklist, inferConceptReviewHints, inferSubmissionStatusFlags, inferPlannerRiskFlags, inferStudyPhases, recommendNextStudyAction, buildWorkloadTimeline, buildPlannerPrompt, extractJsonArray, nextStudyWindowStart, normalizeStudyBlocks, buildFallbackStudyBlocks, toLocalInputValue }
   };
 })();

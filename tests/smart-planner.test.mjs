@@ -389,3 +389,36 @@ test('SmartPlanner buildWorkloadTimeline buckets upcoming deadlines by local day
   assert.equal(timeline[2].count, 0);
   assert.equal(timeline[2].load, 'empty');
 });
+
+test('SmartPlanner inferSubmissionStatusFlags detects Canvas submission states', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00').getTime();
+
+  assert.deepEqual(Array.from(planner.__test.inferSubmissionStatusFlags({
+    title: 'Lab assignment',
+    description: 'Submit the lab report to Canvas.',
+    ts: new Date('2026-07-09T23:59:00-07:00').getTime(),
+    submission: { workflow_state: 'unsubmitted' }
+  }, now)), ['missing submission']);
+
+  assert.deepEqual(Array.from(planner.__test.inferSubmissionStatusFlags({
+    title: 'Essay draft',
+    ts: new Date('2026-07-11T23:59:00-07:00').getTime(),
+    submission: { submitted_at: '2026-07-10T09:30:00-07:00' }
+  }, now)), ['awaiting grade']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes missing submission risk hints', () => {
+  const planner = loadSmartPlanner();
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'Project upload',
+      courseName: 'CS 61B',
+      ts: new Date('2026-07-09T23:59:00-07:00').getTime(),
+      submission: { workflow_state: 'unsubmitted' },
+      description: 'Submit the project repo and report.'
+    }
+  ], new Date('2026-07-10T10:00:00-07:00'));
+
+  assert.match(prompt, /risk: missing submission/);
+});
