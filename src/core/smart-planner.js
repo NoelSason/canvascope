@@ -83,6 +83,23 @@
     return checks.slice(0, 4);
   }
 
+  function inferConceptReviewHints(item) {
+    const source = `${item?.title || ''} ${item?.description || item?.text || item?.content || ''}`.toLowerCase();
+    const hints = [];
+    const add = (label) => { if (!hints.includes(label)) hints.push(label); };
+
+    if (/\b(big[- ]?o|runtime|complexit(?:y|ies)|asymptotic|theta|omega)\b/.test(source)) add('Big-O/runtime');
+    if (/\b(recursion|recursive|backtracking|divide and conquer)\b/.test(source)) add('recursion patterns');
+    if (/\b(graphs?|dfs|bfs|shortest path|dijkstra|topological|mst|minimum spanning)\b/.test(source)) add('graph traversal');
+    if (/\b(dynamic programming|\bdp\b|memo(?:ization|ize)|knapsack|optimal substructure)\b/.test(source)) add('dynamic programming');
+    if (/\b(sql|database|joins?|normalization|index(?:es|ing)?|transactions?)\b/.test(source)) add('database queries');
+    if (/\b(concurrency|parallel|threads?|locks?|mutex|semaphore|race condition|deadlock)\b/.test(source)) add('concurrency pitfalls');
+    if (/\b(memory|pointers?|heap|stack|malloc|free|segfault|garbage collection)\b/.test(source)) add('memory model');
+    if (/\b(probability|bayes|regression|gradient|matrix|linear algebra|statistics)\b/.test(source)) add('math foundations');
+
+    return hints.slice(0, 3);
+  }
+
   function recommendNextStudyAction(items, nowMs = Date.now()) {
     const candidates = (Array.isArray(items) ? items : [])
       .filter(item => item && !item.done && Number.isFinite(Number(item.ts)))
@@ -136,8 +153,10 @@
       const dueLabel = new Date(d.ts).toLocaleString();
       const evidence = compactDeadlineText(d);
       const checklist = inferSubmissionChecklist(d);
+      const reviewHints = inferConceptReviewHints(d);
       const checklistHint = checklist.length ? `; checklist: ${checklist.join(', ')}` : '';
-      const hint = `urgency=${triage.urgency}, effort=${triage.effort}${checklistHint}`;
+      const reviewHint = reviewHints.length ? `; review: ${reviewHints.join(', ')}` : '';
+      const hint = `urgency=${triage.urgency}, effort=${triage.effort}${checklistHint}${reviewHint}`;
       return `- "${d.title}" (${d.courseName || 'General'}) due ${dueLabel}; ${hint}${evidence ? `; notes: ${evidence}` : ''}`;
     }).join('\n');
 
@@ -182,14 +201,16 @@
       const triage = classifyDeadline(item, now);
       const effortLabel = triage.effort === 'high' ? 'deep work' : triage.effort;
       const checklist = inferSubmissionChecklist(item);
+      const reviewHints = inferConceptReviewHints(item);
       const checklistLabel = checklist.length ? checklist.join(' · ') : `${triage.urgency} · ${effortLabel}`;
+      const reviewLabel = reviewHints.length ? `Review: ${reviewHints.join(' · ')}` : '';
       row.dataset.urgency = triage.urgency;
       row.dataset.effort = triage.effort;
       row.innerHTML = `
         <span class="plan-deadline-date${overdue ? ' is-overdue' : ''}">${overdue ? 'OVERDUE' : dateLabel}</span>
         <span class="plan-deadline-title">${escapeHtml(item.title)}</span>
         <span class="plan-deadline-course">${escapeHtml(item.courseName || '')}</span>
-        <span class="plan-deadline-triage" title="Planner triage: ${escapeHtml(triage.urgency)} / ${escapeHtml(effortLabel)}${checklist.length ? `; suggested checks: ${escapeHtml(checklist.join(', '))}` : ''}">${escapeHtml(checklistLabel)}</span>
+        <span class="plan-deadline-triage" title="Planner triage: ${escapeHtml(triage.urgency)} / ${escapeHtml(effortLabel)}${checklist.length ? `; suggested checks: ${escapeHtml(checklist.join(', '))}` : ''}${reviewHints.length ? `; concepts to review: ${escapeHtml(reviewHints.join(', '))}` : ''}">${escapeHtml(reviewLabel || checklistLabel)}</span>
       `;
       if (item.url) row.addEventListener('click', () => chrome.tabs.create({ url: item.url }));
       list.appendChild(row);
@@ -530,6 +551,6 @@
     init,
     refresh,
     draftWeek,
-    __test: { classifyDeadline, compactDeadlineText, inferSubmissionChecklist, recommendNextStudyAction, buildPlannerPrompt, extractJsonArray, nextStudyWindowStart, normalizeStudyBlocks, buildFallbackStudyBlocks, toLocalInputValue }
+    __test: { classifyDeadline, compactDeadlineText, inferSubmissionChecklist, inferConceptReviewHints, recommendNextStudyAction, buildPlannerPrompt, extractJsonArray, nextStudyWindowStart, normalizeStudyBlocks, buildFallbackStudyBlocks, toLocalInputValue }
   };
 })();

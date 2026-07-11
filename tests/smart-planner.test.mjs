@@ -174,7 +174,7 @@ test('SmartPlanner inferSubmissionChecklist detects CS workflow requirements', (
   assert.deepEqual(Array.from(checklist), ['push repo', 'submit autograder', 'attach write-up', 'run tests']);
 });
 
-test('SmartPlanner buildPlannerPrompt includes submission checklist hints', () => {
+test('SmartPlanner buildPlannerPrompt includes submission checklist and concept review hints', () => {
   const planner = loadSmartPlanner();
   const now = new Date('2026-07-10T10:00:00-07:00');
   const prompt = planner.__test.buildPlannerPrompt([
@@ -182,11 +182,22 @@ test('SmartPlanner buildPlannerPrompt includes submission checklist hints', () =
       title: 'Programming project',
       courseName: 'CS 61B',
       ts: new Date('2026-07-10T18:00:00-07:00').getTime(),
-      description: 'Push the GitHub repo, run pytest, submit on Gradescope, and attach the PDF write-up.'
+      description: 'Push the GitHub repo, run pytest, submit on Gradescope, and attach the PDF write-up. The project covers graph BFS/DFS runtime complexity.'
     }
   ], now);
 
   assert.match(prompt, /checklist: push repo, submit autograder, attach write-up, run tests/);
+  assert.match(prompt, /review: Big-O\/runtime, graph traversal/);
+});
+
+test('SmartPlanner inferConceptReviewHints detects CS weak-spot topics', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferConceptReviewHints({
+    title: 'Concurrency debugging lab',
+    description: 'Fix race conditions with locks and explain heap vs stack memory behavior.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['concurrency pitfalls', 'memory model']);
 });
 
 test('SmartPlanner recommendNextStudyAction prioritizes high-effort urgent work transparently', () => {
