@@ -422,3 +422,30 @@ test('SmartPlanner buildPlannerPrompt includes missing submission risk hints', (
 
   assert.match(prompt, /risk: missing submission/);
 });
+
+test('SmartPlanner inferPlannerRiskFlags surfaces setup and help-seeking blockers', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00').getTime();
+  const flags = planner.__test.inferPlannerRiskFlags({
+    title: 'ML project environment checkpoint',
+    description: 'Clone the starter repo, download the dataset, set up the API key, and ask on EdStem or office hours if blocked.',
+    ts: new Date('2026-07-13T18:00:00-07:00').getTime()
+  }, [], now);
+
+  assert.ok(flags.includes('setup first'));
+  assert.ok(flags.includes('ask for help'));
+});
+
+test('SmartPlanner buildPlannerPrompt includes setup blocker risk hints', () => {
+  const planner = loadSmartPlanner();
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'AI study app prototype',
+      courseName: 'CS 188',
+      ts: new Date('2026-07-13T18:00:00-07:00').getTime(),
+      description: 'Install the environment, load credentials, and coordinate with your project partner.'
+    }
+  ], new Date('2026-07-10T10:00:00-07:00'));
+
+  assert.match(prompt, /risk: setup first, ask for help/);
+});

@@ -160,6 +160,13 @@
       add('submission check');
     }
 
+    if (/\b(install|setup|set up|environment|starter code|starter repo|clone|dataset|data set|api key|token|credentials?|access code|license|download)\b/.test(source)) {
+      add('setup first');
+    }
+    if (/\b(stuck|blocked|office hours|piazza|edstem|ed discussion|ta\b|tutor|partner|group|peer review|collab(?:oration)?)\b/.test(source)) {
+      add('ask for help');
+    }
+
     return flags.slice(0, 3);
   }
 
