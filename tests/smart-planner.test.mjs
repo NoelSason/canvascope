@@ -461,6 +461,30 @@ test('SmartPlanner buildPlannerPrompt includes missing submission risk hints', (
   assert.match(prompt, /risk: missing submission/);
 });
 
+test('SmartPlanner inferPracticeArtifactHints detects active-practice study assets', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferPracticeArtifactHints({
+    title: 'Algorithms final exam review',
+    description: 'Redo the released practice exam, update the formula sheet, and drill wrong answers from the error log.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['generate practice questions', 'redo past exam', 'build study sheet']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes practice asset hints', () => {
+  const planner = loadSmartPlanner();
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'Systems quiz',
+      courseName: 'CS 162',
+      ts: new Date('2026-07-11T12:00:00-07:00').getTime(),
+      description: 'Review Quizlet flashcards and missed questions before the quiz.'
+    }
+  ], new Date('2026-07-10T10:00:00-07:00'));
+
+  assert.match(prompt, /practice assets: generate practice questions, review flashcards, drill missed questions/);
+});
+
 test('SmartPlanner inferAcademicIntegrityHints flags AI-policy and citation requirements', () => {
   const planner = loadSmartPlanner();
   const hints = planner.__test.inferAcademicIntegrityHints({
