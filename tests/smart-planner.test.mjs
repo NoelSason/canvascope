@@ -509,6 +509,30 @@ test('SmartPlanner buildPlannerPrompt includes academic integrity hints', () => 
   assert.match(prompt, /integrity: check AI policy, cite sources/);
 });
 
+test('SmartPlanner inferCodeDebugHints detects explicit code and error workflows', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferCodeDebugHints({
+    title: 'React API debugging lab',
+    description: 'Fix the TypeError stack trace, rerun npm test, and explain the async endpoint flow.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['explain error', 'write debug notes', 'trace API flow']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes code/debug hints', () => {
+  const planner = loadSmartPlanner();
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'Backend failing tests checkpoint',
+      courseName: 'CS 169',
+      ts: new Date('2026-07-12T18:00:00-07:00').getTime(),
+      description: 'Debug the pytest failure, verify the CLI commands, and document the API regression.'
+    }
+  ], new Date('2026-07-10T10:00:00-07:00'));
+
+  assert.match(prompt, /code\/debug: explain error, write debug notes, trace API flow/);
+});
+
 test('SmartPlanner inferPlannerRiskFlags surfaces setup and help-seeking blockers', () => {
   const planner = loadSmartPlanner();
   const now = new Date('2026-07-10T10:00:00-07:00').getTime();
