@@ -220,6 +220,31 @@ test('SmartPlanner inferTutorContextPackHints detects materials to gather for AI
   assert.deepEqual(Array.from(hints), ['attach rubric', 'include examples', 'include prior feedback']);
 });
 
+test('SmartPlanner inferTeachBackHints detects explain-aloud study needs', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferTeachBackHints({
+    title: 'Midterm concept review',
+    description: 'Practice explaining the protocol model to a study group and find weak spots.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['explain aloud', 'teach key concepts', 'find explanation gaps']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes teach-back hints for active recall', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00');
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'Algorithms oral exam',
+      courseName: 'CS 170',
+      ts: new Date('2026-07-11T18:00:00-07:00').getTime(),
+      description: 'Review theorem definitions and explain proof ideas aloud before office hours.'
+    }
+  ], now);
+
+  assert.match(prompt, /teach-back: explain aloud, teach key concepts, find explanation gaps/);
+});
+
 test('SmartPlanner buildPlannerPrompt includes tutor context pack hints', () => {
   const planner = loadSmartPlanner();
   const now = new Date('2026-07-10T10:00:00-07:00');
