@@ -634,3 +634,27 @@ test('SmartPlanner buildPlannerPrompt includes office-hours prep hints', () => {
 
   assert.match(prompt, /office hours prep: write specific question, bring error trace, summarize what you tried/);
 });
+
+test('SmartPlanner inferLectureCaptureHints detects lecture transcript workflows', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferLectureCaptureHints({
+    title: 'Recorded lecture catch-up before quiz',
+    description: 'Review the class transcript, extract action items from announcements, and mark unclear moments before the quiz.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['summarize lecture notes', 'extract action items', 'mark unclear moments']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes lecture capture hints', () => {
+  const planner = loadSmartPlanner();
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'Lecture recording review',
+      courseName: 'CS 188',
+      ts: new Date('2026-07-12T18:00:00-07:00').getTime(),
+      description: 'Use the transcript and slides to create follow-up action items for the review session.'
+    }
+  ], new Date('2026-07-10T10:00:00-07:00'));
+
+  assert.match(prompt, /lecture capture: summarize lecture notes, extract action items, turn transcript into quiz/);
+});
