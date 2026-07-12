@@ -734,16 +734,20 @@ class RAGCore {
     // Pending to-dos are always relevant regardless of date.
     const todos = corpus.filter(i => i.type === 'to-do' && !i.done);
 
-    // Assignments: keep recent (last 14 days) + all upcoming, soonest first.
+    // Canvas dated work: keep recent (last 14 days) + all upcoming, soonest first.
+    // Quizzes and discussions often carry due dates too, so include them in
+    // schedule fallback answers instead of hiding them behind assignment-only
+    // filtering.
     const fourteenDays = 14 * 24 * 60 * 60 * 1000;
-    const assignments = corpus
-      .filter(i => i.type === 'assignment' && i.dueAt)
+    const datedWorkTypes = new Set(['assignment', 'quiz', 'discussion']);
+    const datedWork = corpus
+      .filter(i => datedWorkTypes.has(i.type) && i.dueAt && !i.done)
       .filter(i => ts(i) > now - fourteenDays)
       .sort((a, b) => ts(a) - ts(b));
 
     const seen = new Set();
     const out = [];
-    [...todos, ...assignments].forEach(item => {
+    [...todos, ...datedWork].forEach(item => {
       const key = `${item.type}|${item.title}|${item.courseName}`;
       if (seen.has(key)) return;
       seen.add(key);

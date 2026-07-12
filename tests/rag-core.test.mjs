@@ -180,6 +180,33 @@ test('RAGCore.retrieveLocalContext surfaces tasks for schedule queries with no k
   assert.ok(matches.some(m => m.type === 'to-do' && m.title === 'Finish reading RAG paper'));
 });
 
+test('RAGCore.retrieveLocalContext schedule fallback includes upcoming quizzes and discussions', async () => {
+  const prevIndexed = mockStorage.indexedContent;
+  mockStorage.indexedContent = [
+    ...prevIndexed,
+    {
+      title: 'Chapter 5 readiness quiz',
+      courseName: 'Biology',
+      type: 'quiz',
+      dueAt: '2099-01-10T12:00:00.000Z'
+    },
+    {
+      title: 'Project proposal discussion',
+      courseName: 'CS 101',
+      type: 'discussion',
+      dueAt: '2099-01-11T12:00:00.000Z'
+    }
+  ];
+
+  try {
+    const matches = await RAGCore.retrieveLocalContext('what is coming up?');
+    assert.ok(matches.some(m => m.type === 'quiz' && m.title === 'Chapter 5 readiness quiz'));
+    assert.ok(matches.some(m => m.type === 'discussion' && m.title === 'Project proposal discussion'));
+  } finally {
+    mockStorage.indexedContent = prevIndexed;
+  }
+});
+
 test('RAGCore.retrieveLocalContext keyword precision still wins over fallback', async () => {
   // Even though "due" signals schedule intent, a strong keyword match should
   // return only the precise match (not the whole agenda).
