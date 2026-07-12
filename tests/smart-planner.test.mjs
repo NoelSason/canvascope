@@ -461,6 +461,30 @@ test('SmartPlanner buildPlannerPrompt includes missing submission risk hints', (
   assert.match(prompt, /risk: missing submission/);
 });
 
+test('SmartPlanner inferAcademicIntegrityHints flags AI-policy and citation requirements', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferAcademicIntegrityHints({
+    title: 'AI study app research brief',
+    description: 'Follow the course AI policy, disclose any ChatGPT help, include citations and a bibliography, and document partner contributions.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['check AI policy', 'cite sources', 'document collaboration']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes academic integrity hints', () => {
+  const planner = loadSmartPlanner();
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'Research paper draft',
+      courseName: 'Writing',
+      ts: new Date('2026-07-13T18:00:00-07:00').getTime(),
+      description: 'Use sources with citations and note whether generative AI tools are allowed.'
+    }
+  ], new Date('2026-07-10T10:00:00-07:00'));
+
+  assert.match(prompt, /integrity: check AI policy, cite sources/);
+});
+
 test('SmartPlanner inferPlannerRiskFlags surfaces setup and help-seeking blockers', () => {
   const planner = loadSmartPlanner();
   const now = new Date('2026-07-10T10:00:00-07:00').getTime();
