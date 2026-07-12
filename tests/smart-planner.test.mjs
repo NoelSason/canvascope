@@ -559,3 +559,26 @@ test('SmartPlanner buildPlannerPrompt includes setup blocker risk hints', () => 
 
   assert.match(prompt, /risk: setup first, ask for help/);
 });
+test('SmartPlanner inferOfficeHoursPrepHints builds a concise help-prep checklist', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferOfficeHoursPrepHints({
+    title: 'Gradescope wrong answer help',
+    description: 'I am stuck on the recursion lab after a partial attempt. Bring the failing autograder error and the rubric requirement to TA office hours.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['write specific question', 'bring error trace', 'summarize what you tried']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes office-hours prep hints', () => {
+  const planner = loadSmartPlanner();
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'Recursion lab blocker',
+      courseName: 'CS 61B',
+      ts: new Date('2026-07-11T18:00:00-07:00').getTime(),
+      description: 'Stuck after trying the starter code; ask a TA at office hours with the traceback and rubric requirement.'
+    }
+  ], new Date('2026-07-10T10:00:00-07:00'));
+
+  assert.match(prompt, /office hours prep: write specific question, bring error trace, summarize what you tried/);
+});
