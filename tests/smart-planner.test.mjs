@@ -569,6 +569,30 @@ test('SmartPlanner inferOfficeHoursPrepHints builds a concise help-prep checklis
   assert.deepEqual(Array.from(hints), ['write specific question', 'bring error trace', 'summarize what you tried']);
 });
 
+test('SmartPlanner inferCollaborationHandoffHints detects group project handoffs', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferCollaborationHandoffHints({
+    title: 'Team demo checkpoint',
+    description: 'Coordinate with your partner, merge the shared GitHub branch, rehearse the slide walkthrough, and close peer review feedback.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['confirm owners', 'sync branch early', 'rehearse demo handoff']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes collaboration handoff hints', () => {
+  const planner = loadSmartPlanner();
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'Group AI study app presentation',
+      courseName: 'CS 188',
+      ts: new Date('2026-07-13T18:00:00-07:00').getTime(),
+      description: 'Partner project with a shared repo, PR merge, and demo slides.'
+    }
+  ], new Date('2026-07-10T10:00:00-07:00'));
+
+  assert.match(prompt, /collaboration handoff: confirm owners, sync branch early, rehearse demo handoff/);
+});
+
 test('SmartPlanner buildPlannerPrompt includes office-hours prep hints', () => {
   const planner = loadSmartPlanner();
   const prompt = planner.__test.buildPlannerPrompt([

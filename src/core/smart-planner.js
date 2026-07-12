@@ -284,6 +284,27 @@
     return hints.slice(0, 3);
   }
 
+  function inferCollaborationHandoffHints(item) {
+    const source = `${item?.title || ''} ${item?.description || item?.text || item?.content || ''}`.toLowerCase();
+    const hints = [];
+    const add = (label) => { if (!hints.includes(label)) hints.push(label); };
+
+    if (/\b(group|partner|team|peer review|collab(?:oration)?|shared repo|pair programming)\b/.test(source)) {
+      add('confirm owners');
+    }
+    if (/\b(shared repo|branch|merge|pull request|pr\b|github|gitlab|commit|push|conflicts?)\b/.test(source)) {
+      add('sync branch early');
+    }
+    if (/\b(demo|presentation|slides?|walkthrough|recording|screencast|showcase)\b/.test(source)) {
+      add('rehearse demo handoff');
+    }
+    if (/\b(peer review|review comments?|feedback|critique|revision|revise)\b/.test(source)) {
+      add('close feedback loop');
+    }
+
+    return hints.slice(0, 3);
+  }
+
   function recommendNextStudyAction(items, nowMs = Date.now()) {
     const candidates = (Array.isArray(items) ? items : [])
       .filter(item => item && !item.done && Number.isFinite(Number(item.ts)))
@@ -407,6 +428,7 @@
       const integrityHints = inferAcademicIntegrityHints(d);
       const codeDebugHints = inferCodeDebugHints(d);
       const officeHoursHints = inferOfficeHoursPrepHints(d);
+      const collaborationHints = inferCollaborationHandoffHints(d);
       const riskFlags = inferPlannerRiskFlags(d, deadlines, nowMs);
       const checklistHint = checklist.length ? `; checklist: ${checklist.join(', ')}` : '';
       const reviewHint = reviewHints.length ? `; review: ${reviewHints.join(', ')}` : '';
@@ -415,9 +437,10 @@
       const integrityHint = integrityHints.length ? `; integrity: ${integrityHints.join(', ')}` : '';
       const codeDebugHint = codeDebugHints.length ? `; code/debug: ${codeDebugHints.join(', ')}` : '';
       const officeHoursHint = officeHoursHints.length ? `; office hours prep: ${officeHoursHints.join(', ')}` : '';
+      const collaborationHint = collaborationHints.length ? `; collaboration handoff: ${collaborationHints.join(', ')}` : '';
       const phaseHint = studyPhases.length ? `; suggested phases: ${studyPhases.join(', ')}` : '';
       const riskHint = riskFlags.length ? `; risk: ${riskFlags.join(', ')}` : '';
-      const hint = `urgency=${triage.urgency}, effort=${triage.effort}${checklistHint}${reviewHint}${learningHint}${practiceHint}${integrityHint}${codeDebugHint}${officeHoursHint}${phaseHint}${riskHint}`;
+      const hint = `urgency=${triage.urgency}, effort=${triage.effort}${checklistHint}${reviewHint}${learningHint}${practiceHint}${integrityHint}${codeDebugHint}${officeHoursHint}${collaborationHint}${phaseHint}${riskHint}`;
       return `- "${d.title}" (${d.courseName || 'General'}) due ${dueLabel}; ${hint}${evidence ? `; notes: ${evidence}` : ''}`;
     }).join('\n');
 
@@ -470,16 +493,17 @@
       const integrityHints = inferAcademicIntegrityHints(item);
       const codeDebugHints = inferCodeDebugHints(item);
       const officeHoursHints = inferOfficeHoursPrepHints(item);
+      const collaborationHints = inferCollaborationHandoffHints(item);
       const riskFlags = inferPlannerRiskFlags(item, items, now);
       const checklistLabel = riskFlags.length ? `Risk: ${riskFlags.join(' · ')}` : (checklist.length ? checklist.join(' · ') : `${triage.urgency} · ${effortLabel}`);
-      const reviewLabel = reviewHints.length ? `Review: ${reviewHints.join(' · ')}` : (codeDebugHints.length ? `Debug: ${codeDebugHints.join(' · ')}` : (officeHoursHints.length ? `Office hours: ${officeHoursHints.join(' · ')}` : (practiceHints.length ? `Practice: ${practiceHints.join(' · ')}` : (learningHints.length ? `Study: ${learningHints.join(' · ')}` : (integrityHints.length ? `Integrity: ${integrityHints.join(' · ')}` : '')))));
+      const reviewLabel = reviewHints.length ? `Review: ${reviewHints.join(' · ')}` : (codeDebugHints.length ? `Debug: ${codeDebugHints.join(' · ')}` : (officeHoursHints.length ? `Office hours: ${officeHoursHints.join(' · ')}` : (collaborationHints.length ? `Handoff: ${collaborationHints.join(' · ')}` : (practiceHints.length ? `Practice: ${practiceHints.join(' · ')}` : (learningHints.length ? `Study: ${learningHints.join(' · ')}` : (integrityHints.length ? `Integrity: ${integrityHints.join(' · ')}` : ''))))));
       row.dataset.urgency = triage.urgency;
       row.dataset.effort = triage.effort;
       row.innerHTML = `
         <span class="plan-deadline-date${overdue ? ' is-overdue' : ''}">${overdue ? 'OVERDUE' : dateLabel}</span>
         <span class="plan-deadline-title">${escapeHtml(item.title)}</span>
         <span class="plan-deadline-course">${escapeHtml(item.courseName || '')}</span>
-        <span class="plan-deadline-triage" title="Planner triage: ${escapeHtml(triage.urgency)} / ${escapeHtml(effortLabel)}${riskFlags.length ? `; risk flags: ${escapeHtml(riskFlags.join(', '))}` : ''}${checklist.length ? `; suggested checks: ${escapeHtml(checklist.join(', '))}` : ''}${reviewHints.length ? `; concepts to review: ${escapeHtml(reviewHints.join(', '))}` : ''}${codeDebugHints.length ? `; code/debug help: ${escapeHtml(codeDebugHints.join(', '))}` : ''}${officeHoursHints.length ? `; office hours prep: ${escapeHtml(officeHoursHints.join(', '))}` : ''}${practiceHints.length ? `; practice assets: ${escapeHtml(practiceHints.join(', '))}` : ''}${learningHints.length ? `; study strategy: ${escapeHtml(learningHints.join(', '))}` : ''}${integrityHints.length ? `; integrity checks: ${escapeHtml(integrityHints.join(', '))}` : ''}">${escapeHtml(reviewLabel || checklistLabel)}</span>
+        <span class="plan-deadline-triage" title="Planner triage: ${escapeHtml(triage.urgency)} / ${escapeHtml(effortLabel)}${riskFlags.length ? `; risk flags: ${escapeHtml(riskFlags.join(', '))}` : ''}${checklist.length ? `; suggested checks: ${escapeHtml(checklist.join(', '))}` : ''}${reviewHints.length ? `; concepts to review: ${escapeHtml(reviewHints.join(', '))}` : ''}${codeDebugHints.length ? `; code/debug help: ${escapeHtml(codeDebugHints.join(', '))}` : ''}${officeHoursHints.length ? `; office hours prep: ${escapeHtml(officeHoursHints.join(', '))}` : ''}${collaborationHints.length ? `; collaboration handoff: ${escapeHtml(collaborationHints.join(', '))}` : ''}${practiceHints.length ? `; practice assets: ${escapeHtml(practiceHints.join(', '))}` : ''}${learningHints.length ? `; study strategy: ${escapeHtml(learningHints.join(', '))}` : ''}${integrityHints.length ? `; integrity checks: ${escapeHtml(integrityHints.join(', '))}` : ''}">${escapeHtml(reviewLabel || checklistLabel)}</span>
       `;
       if (item.url) row.addEventListener('click', () => chrome.tabs.create({ url: item.url }));
       list.appendChild(row);
@@ -823,6 +847,6 @@
     init,
     refresh,
     draftWeek,
-    __test: { classifyDeadline, compactDeadlineText, inferSubmissionChecklist, inferConceptReviewHints, inferSubmissionStatusFlags, inferPlannerRiskFlags, inferStudyPhases, inferLearningStrategyHints, inferPracticeArtifactHints, inferAcademicIntegrityHints, inferCodeDebugHints, inferOfficeHoursPrepHints, recommendNextStudyAction, buildWorkloadTimeline, buildPlannerPrompt, extractJsonArray, nextStudyWindowStart, normalizeStudyBlocks, buildFallbackStudyBlocks, toLocalInputValue }
+    __test: { classifyDeadline, compactDeadlineText, inferSubmissionChecklist, inferConceptReviewHints, inferSubmissionStatusFlags, inferPlannerRiskFlags, inferStudyPhases, inferLearningStrategyHints, inferPracticeArtifactHints, inferAcademicIntegrityHints, inferCodeDebugHints, inferOfficeHoursPrepHints, inferCollaborationHandoffHints, recommendNextStudyAction, buildWorkloadTimeline, buildPlannerPrompt, extractJsonArray, nextStudyWindowStart, normalizeStudyBlocks, buildFallbackStudyBlocks, toLocalInputValue }
   };
 })();
