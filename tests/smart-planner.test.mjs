@@ -363,6 +363,34 @@ test('SmartPlanner buildPlannerPrompt includes learning strategy hints', () => {
   assert.match(prompt, /learning strategy: active recall, spaced review, practice reps/);
 });
 
+test('SmartPlanner inferRetrievalCalibrationHints detects confidence and interleaving cues', () => {
+  const planner = loadSmartPlanner();
+
+  assert.deepEqual(Array.from(planner.__test.inferRetrievalCalibrationHints({
+    title: 'Cumulative algorithms final review',
+    description: 'Work a mock exam, track wrong answers, and revisit weak spots across multiple chapters.'
+  })), ['rate confidence before answers', 'log why misses happened', 'mark red/yellow/green topics']);
+
+  assert.ok(planner.__test.inferRetrievalCalibrationHints({
+    title: 'Comprehensive systems review',
+    description: 'Interleaving threads, memory, and networking modules.'
+  }).includes('interleave old and new topics'));
+});
+
+test('SmartPlanner buildPlannerPrompt includes retrieval calibration hints', () => {
+  const planner = loadSmartPlanner();
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'Cumulative CS final',
+      courseName: 'CS 162',
+      ts: new Date('2026-07-11T12:00:00-07:00').getTime(),
+      description: 'Mock exam with wrong answers from multiple modules and weak spots to review.'
+    }
+  ], new Date('2026-07-10T10:00:00-07:00'));
+
+  assert.match(prompt, /retrieval calibration: rate confidence before answers, log why misses happened, mark red\/yellow\/green topics/);
+});
+
 test('SmartPlanner inferPlannerRiskFlags surfaces deadline and submission risks', () => {
   const planner = loadSmartPlanner();
   const now = new Date('2026-07-10T10:00:00-07:00').getTime();
