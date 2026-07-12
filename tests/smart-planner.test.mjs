@@ -210,6 +210,31 @@ test('SmartPlanner inferConceptReviewHints detects networking and security revie
   assert.deepEqual(Array.from(hints), ['networking fundamentals', 'security model']);
 });
 
+test('SmartPlanner inferTutorContextPackHints detects materials to gather for AI tutoring', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferTutorContextPackHints({
+    title: 'Project 3 revision',
+    description: 'Use the rubric, starter code examples, and previous TA feedback before resubmitting.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['attach rubric', 'include examples', 'include prior feedback']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes tutor context pack hints', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00');
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'Essay revision',
+      courseName: 'Writing',
+      ts: new Date('2026-07-11T18:00:00-07:00').getTime(),
+      description: 'Revise using the prompt, rubric, sample essay, and instructor feedback.'
+    }
+  ], now);
+
+  assert.match(prompt, /tutor context pack: attach rubric, include examples, include prior feedback/);
+});
+
 test('SmartPlanner recommendNextStudyAction prioritizes high-effort urgent work transparently', () => {
   const planner = loadSmartPlanner();
   const now = new Date('2026-07-10T10:00:00-07:00').getTime();
