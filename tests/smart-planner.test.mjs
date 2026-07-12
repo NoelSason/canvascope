@@ -658,3 +658,27 @@ test('SmartPlanner buildPlannerPrompt includes lecture capture hints', () => {
 
   assert.match(prompt, /lecture capture: summarize lecture notes, extract action items, turn transcript into quiz/);
 });
+
+test('SmartPlanner inferSourceGroundingHints detects citation-first study workflows', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferSourceGroundingHints({
+    title: 'Open-book AI ethics synthesis',
+    description: 'Compare multiple readings, cite evidence from the source packet, and verify unsupported claims in the study guide.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['keep answers source-backed', 'compare source claims', 'build cited study guide']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes source grounding hints', () => {
+  const planner = loadSmartPlanner();
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'NotebookLM-style paper synthesis',
+      courseName: 'CS 188',
+      ts: new Date('2026-07-12T18:00:00-07:00').getTime(),
+      description: 'Synthesize two papers with citations, compare conflicting perspectives, and keep the notebook source-grounded.'
+    }
+  ], new Date('2026-07-10T10:00:00-07:00'));
+
+  assert.match(prompt, /source grounding: keep answers source-backed, compare source claims, build cited study guide/);
+});
