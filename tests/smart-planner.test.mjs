@@ -399,6 +399,29 @@ test('SmartPlanner inferLearningStrategyHints detects active recall and CS workf
   })), ['debug log', 'mistake review']);
 });
 
+test('SmartPlanner inferFocusSprintHints detects deep-work setup cues', () => {
+  const planner = loadSmartPlanner();
+
+  assert.deepEqual(Array.from(planner.__test.inferFocusSprintHints({
+    title: 'Large capstone project checkpoint',
+    description: 'Outline next steps, time-box a focus sprint, and make progress on the starter implementation.'
+  })), ['start focus sprint', 'protect attention', 'define done for block']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes focus sprint hints', () => {
+  const planner = loadSmartPlanner();
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'Research paper draft',
+      courseName: 'Writing',
+      ts: new Date('2026-07-11T12:00:00-07:00').getTime(),
+      description: 'Timebox a deep work sprint to outline the draft and make progress on sources.'
+    }
+  ], new Date('2026-07-10T10:00:00-07:00'));
+
+  assert.match(prompt, /focus sprint: start focus sprint, protect attention, define done for block/);
+});
+
 test('SmartPlanner buildPlannerPrompt includes learning strategy hints', () => {
   const planner = loadSmartPlanner();
   const prompt = planner.__test.buildPlannerPrompt([
