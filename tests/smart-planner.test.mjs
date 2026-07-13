@@ -285,6 +285,31 @@ test('SmartPlanner buildPlannerPrompt includes tutor context pack hints', () => 
   assert.match(prompt, /tutor context pack: attach rubric, include examples, include prior feedback/);
 });
 
+test('SmartPlanner inferPortabilityBackupHints detects export and backup workflows', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferPortabilityBackupHints({
+    title: 'Final project portfolio export',
+    description: 'Download the Canvas export as JSON and save Markdown notes to the GitHub repo before submission.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['export Markdown summary', 'keep structured JSON copy', 'save portable notes']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes portability backup hints', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00');
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'Capstone portfolio handoff',
+      courseName: 'CS 198',
+      ts: new Date('2026-07-11T18:00:00-07:00').getTime(),
+      description: 'Archive deliverables, keep JSON metadata, and save a Markdown README before the demo.'
+    }
+  ], now);
+
+  assert.match(prompt, /portability backup: export Markdown summary, keep structured JSON copy, save portable notes/);
+});
+
 test('SmartPlanner recommendNextStudyAction prioritizes high-effort urgent work transparently', () => {
   const planner = loadSmartPlanner();
   const now = new Date('2026-07-10T10:00:00-07:00').getTime();
