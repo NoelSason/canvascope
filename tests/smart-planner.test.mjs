@@ -852,3 +852,27 @@ test('SmartPlanner buildPlannerPrompt includes pre-submit verification hints', (
 
   assert.match(prompt, /pre-submit: verify correct file, confirm submission receipt, push final commit/);
 });
+
+test('SmartPlanner inferNotebookStudyPackHints detects source-grounded study pack cues', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferNotebookStudyPackHints({
+    title: 'Open-book midterm study guide',
+    description: 'Use NotebookLM with the lecture transcript, assigned readings, and cited evidence to make a self-quiz.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['assemble source pack', 'ground answers in notes', 'generate self-quiz']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes notebook study pack hints', () => {
+  const planner = loadSmartPlanner();
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'Research synthesis exam review',
+      courseName: 'History',
+      ts: new Date('2026-07-12T18:00:00-07:00').getTime(),
+      description: 'Build a source packet from articles and citations, then compare claims in a study guide before the quiz.'
+    }
+  ], new Date('2026-07-10T10:00:00-07:00'));
+
+  assert.match(prompt, /notebook study pack: assemble source pack, generate self-quiz, trace claims to citations/);
+});
