@@ -321,6 +321,53 @@ test('SmartPlanner recommendNextStudyAction ignores completed or undated work', 
   ], now), null);
 });
 
+test('SmartPlanner classifyActionBucket groups Canvas assignments by needs-action state', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00').getTime();
+
+  assert.equal(planner.__test.classifyActionBucket({ title: 'Past lab', ts: new Date('2026-07-09T23:59:00-07:00').getTime() }, now), 'overdue');
+  assert.equal(planner.__test.classifyActionBucket({ title: 'Project', ts: new Date('2026-07-12T23:59:00-07:00').getTime() }, now), 'due soon');
+  assert.equal(planner.__test.classifyActionBucket({ title: 'Optional reading' }, now), 'no due date');
+  assert.equal(planner.__test.classifyActionBucket({ title: 'Submitted quiz', ts: new Date('2026-07-10T23:59:00-07:00').getTime(), submission: { submitted_at: '2026-07-10T09:30:00-07:00' } }, now), 'submitted');
+});
+
+test('SmartPlanner recommendNextStudyAction de-prioritizes already submitted work', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00').getTime();
+  const recommendation = planner.__test.recommendNextStudyAction([
+    {
+      title: 'Submitted final project',
+      courseName: 'CS 61B',
+      description: 'Large final project milestone.',
+      ts: new Date('2026-07-10T12:00:00-07:00').getTime(),
+      submitted: true
+    },
+    {
+      title: 'Unsubmitted discussion',
+      courseName: 'History',
+      ts: new Date('2026-07-10T16:00:00-07:00').getTime()
+    }
+  ], now);
+
+  assert.equal(recommendation.title, 'Unsubmitted discussion');
+});
+
+test('SmartPlanner buildPlannerPrompt includes action bucket guidance', () => {
+  const planner = loadSmartPlanner();
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'Submitted quiz review',
+      courseName: 'CS 162',
+      ts: new Date('2026-07-11T12:00:00-07:00').getTime(),
+      submitted: true
+    }
+  ], new Date('2026-07-10T10:00:00-07:00'));
+
+  assert.match(prompt, /action bucket: submitted/);
+  assert.match(prompt, /Prioritize action buckets in this order: overdue, due soon, no due date, later/);
+  assert.match(prompt, /skip or de-prioritize submitted work/);
+});
+
 test('SmartPlanner inferPlannerRiskFlags surfaces high-value assignments from Canvas points', () => {
   const planner = loadSmartPlanner();
   const now = new Date('2026-07-10T10:00:00-07:00').getTime();

@@ -102,15 +102,31 @@
     return hints.slice(0, 3);
   }
 
-  function inferSubmissionStatusFlags(item, nowMs = Date.now()) {
-    const flags = [];
-    const add = (label) => { if (!flags.includes(label)) flags.push(label); };
+  function getSubmissionSnapshot(item) {
     const submission = item?.submission || item?.submissionStatus || item?.submission_status || {};
     const workflowState = String(submission.workflow_state || submission.workflowState || item?.workflowState || item?.workflow_state || '').toLowerCase();
     const submittedAt = submission.submitted_at || submission.submittedAt || item?.submittedAt || item?.submitted_at;
     const hasSubmission = Boolean(submittedAt || submission.submission_type || submission.submissionType || submission.url || submission.attachments?.length || item?.submitted === true);
     const gradedAt = submission.graded_at || submission.gradedAt || item?.gradedAt || item?.graded_at;
     const score = submission.score ?? item?.score ?? item?.grade;
+    const isSubmitted = hasSubmission || workflowState === 'submitted' || workflowState === 'graded' || Boolean(gradedAt || score != null);
+    return { submission, workflowState, submittedAt, hasSubmission, gradedAt, score, isSubmitted };
+  }
+
+  function classifyActionBucket(item, nowMs = Date.now()) {
+    const { workflowState, isSubmitted } = getSubmissionSnapshot(item);
+    const ts = Number(item && item.ts);
+    if (isSubmitted || item?.done === true || /graded|complete|submitted/.test(workflowState)) return 'submitted';
+    if (!Number.isFinite(ts)) return 'no due date';
+    if (ts < nowMs || workflowState === 'unsubmitted' || item?.missing === true) return 'overdue';
+    if (ts <= nowMs + 7 * MS_DAY) return 'due soon';
+    return 'later';
+  }
+
+  function inferSubmissionStatusFlags(item, nowMs = Date.now()) {
+    const flags = [];
+    const add = (label) => { if (!flags.includes(label)) flags.push(label); };
+    const { submission, workflowState, hasSubmission, gradedAt, score } = getSubmissionSnapshot(item);
     const ts = Number(item && item.ts);
     const isPastDue = Number.isFinite(ts) && ts < nowMs;
     const source = `${item?.title || ''} ${item?.description || item?.text || item?.content || ''}`.toLowerCase();
@@ -541,6 +557,11 @@
         if (triage.effort === 'high') { score += 40; reasons.push('high effort'); }
         else if (triage.effort === 'quick') { score += 8; reasons.push('quick win'); }
 
+        const actionBucket = classifyActionBucket(item, nowMs);
+        if (actionBucket === 'submitted') { score -= 90; reasons.push('already submitted'); }
+        else if (actionBucket === 'overdue') { score += 20; reasons.push('needs action'); }
+        else if (actionBucket === 'due soon') { score += 10; if (!reasons.includes('due soon')) reasons.push('due soon'); }
+
         const sourceText = `${item.title || ''} ${item.description || item.text || item.content || ''}`.toLowerCase();
         if (/\b(not started|starter|draft|proposal|milestone|checkpoint|practice|review)\b/.test(sourceText)) {
           score += 10;
@@ -637,6 +658,7 @@
     const lines = deadlines.slice(0, 15).map(d => {
       const triage = classifyDeadline(d, nowMs);
       const dueLabel = new Date(d.ts).toLocaleString();
+      const actionBucket = classifyActionBucket(d, nowMs);
       const evidence = compactDeadlineText(d);
       const checklist = inferSubmissionChecklist(d);
       const reviewHints = inferConceptReviewHints(d);
@@ -680,13 +702,14 @@
       const notebookStudyPackHint = notebookStudyPackHints.length ? `; notebook study pack: ${notebookStudyPackHints.join(', ')}` : '';
       const phaseHint = studyPhases.length ? `; suggested phases: ${studyPhases.join(', ')}` : '';
       const riskHint = riskFlags.length ? `; risk: ${riskFlags.join(', ')}` : '';
-      const hint = `urgency=${triage.urgency}, effort=${triage.effort}${checklistHint}${reviewHint}${learningHint}${focusHint}${practiceHint}${retrievalHint}${socraticHint}${teachBackHint}${integrityHint}${codeDebugHint}${officeHoursHint}${collaborationHint}${lectureHint}${sourceGroundingHint}${tutorContextHint}${wrapUpHint}${rubricHint}${preSubmitHint}${notebookStudyPackHint}${phaseHint}${riskHint}`;
+      const actionBucketHint = `; action bucket: ${actionBucket}`;
+      const hint = `urgency=${triage.urgency}, effort=${triage.effort}${actionBucketHint}${checklistHint}${reviewHint}${learningHint}${focusHint}${practiceHint}${retrievalHint}${socraticHint}${teachBackHint}${integrityHint}${codeDebugHint}${officeHoursHint}${collaborationHint}${lectureHint}${sourceGroundingHint}${tutorContextHint}${wrapUpHint}${rubricHint}${preSubmitHint}${notebookStudyPackHint}${phaseHint}${riskHint}`;
       return `- "${d.title}" (${d.courseName || 'General'}) due ${dueLabel}; ${hint}${evidence ? `; notes: ${evidence}` : ''}`;
     }).join('\n');
 
     return `You are an academic planner. Today is ${now.toLocaleString()}.\n` +
       `Here are the student's upcoming deadlines, including local triage hints and source notes when available:\n${lines}\n\n` +
-      `Propose 4-8 study blocks between now and the last deadline. Prioritize overdue/today items first, split high-effort items (essays, projects, exams) into multiple blocks (e.g. outline, draft, practice, review), keep quick items lightweight, and use the notes as source grounding instead of inventing requirements. Schedule blocks before their deadline, between 09:00 and 21:00 local time, 60-120 minutes each, leaving at least 30 minutes before a due time for submission checks and handoff.\n` +
+      `Propose 4-8 study blocks between now and the last deadline. Prioritize overdue/today items first. Prioritize action buckets in this order: overdue, due soon, no due date, later; skip or de-prioritize submitted work unless it needs review. Split high-effort items (essays, projects, exams) into multiple blocks (e.g. outline, draft, practice, review), keep quick items lightweight, and use the notes as source grounding instead of inventing requirements. Schedule blocks before their deadline, between 09:00 and 21:00 local time, 60-120 minutes each, leaving at least 30 minutes before a due time for submission checks and handoff.\n` +
       `Return ONLY a valid JSON array, no prose, each element: {"title": string, "startAt": ISO datetime string, "minutes": number, "course": string}.`;
   }
 
@@ -725,6 +748,7 @@
       const overdue = item.ts < now;
       const dateLabel = new Date(item.ts).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
       const triage = classifyDeadline(item, now);
+      const actionBucket = classifyActionBucket(item, now);
       const effortLabel = triage.effort === 'high' ? 'deep work' : triage.effort;
       const checklist = inferSubmissionChecklist(item);
       const reviewHints = inferConceptReviewHints(item);
@@ -769,11 +793,12 @@
       ].find(Boolean) || '';
       row.dataset.urgency = triage.urgency;
       row.dataset.effort = triage.effort;
+      row.dataset.actionBucket = actionBucket;
       row.innerHTML = `
         <span class="plan-deadline-date${overdue ? ' is-overdue' : ''}">${overdue ? 'OVERDUE' : dateLabel}</span>
         <span class="plan-deadline-title">${escapeHtml(item.title)}</span>
         <span class="plan-deadline-course">${escapeHtml(item.courseName || '')}</span>
-        <span class="plan-deadline-triage" title="Planner triage: ${escapeHtml(triage.urgency)} / ${escapeHtml(effortLabel)}${riskFlags.length ? `; risk flags: ${escapeHtml(riskFlags.join(', '))}` : ''}${checklist.length ? `; suggested checks: ${escapeHtml(checklist.join(', '))}` : ''}${reviewHints.length ? `; concepts to review: ${escapeHtml(reviewHints.join(', '))}` : ''}${codeDebugHints.length ? `; code/debug help: ${escapeHtml(codeDebugHints.join(', '))}` : ''}${officeHoursHints.length ? `; office hours prep: ${escapeHtml(officeHoursHints.join(', '))}` : ''}${collaborationHints.length ? `; collaboration handoff: ${escapeHtml(collaborationHints.join(', '))}` : ''}${lectureHints.length ? `; lecture capture: ${escapeHtml(lectureHints.join(', '))}` : ''}${sourceGroundingHints.length ? `; source grounding: ${escapeHtml(sourceGroundingHints.join(', '))}` : ''}${tutorContextHints.length ? `; tutor context pack: ${escapeHtml(tutorContextHints.join(', '))}` : ''}${wrapUpHints.length ? `; wrap-up: ${escapeHtml(wrapUpHints.join(', '))}` : ''}${rubricHints.length ? `; rubric scoring: ${escapeHtml(rubricHints.join(', '))}` : ''}${preSubmitHints.length ? `; pre-submit verification: ${escapeHtml(preSubmitHints.join(', '))}` : ''}${focusHints.length ? `; focus sprint: ${escapeHtml(focusHints.join(', '))}` : ''}${practiceHints.length ? `; practice assets: ${escapeHtml(practiceHints.join(', '))}` : ''}${retrievalHints.length ? `; retrieval calibration: ${escapeHtml(retrievalHints.join(', '))}` : ''}${socraticHints.length ? `; Socratic tutor mode: ${escapeHtml(socraticHints.join(', '))}` : ''}${teachBackHints.length ? `; teach-back: ${escapeHtml(teachBackHints.join(', '))}` : ''}${learningHints.length ? `; study strategy: ${escapeHtml(learningHints.join(', '))}` : ''}${integrityHints.length ? `; integrity checks: ${escapeHtml(integrityHints.join(', '))}` : ''}">${escapeHtml(reviewLabel || checklistLabel)}</span>
+        <span class="plan-deadline-triage" title="Planner triage: ${escapeHtml(actionBucket)}; ${escapeHtml(triage.urgency)} / ${escapeHtml(effortLabel)}${riskFlags.length ? `; risk flags: ${escapeHtml(riskFlags.join(', '))}` : ''}${checklist.length ? `; suggested checks: ${escapeHtml(checklist.join(', '))}` : ''}${reviewHints.length ? `; concepts to review: ${escapeHtml(reviewHints.join(', '))}` : ''}${codeDebugHints.length ? `; code/debug help: ${escapeHtml(codeDebugHints.join(', '))}` : ''}${officeHoursHints.length ? `; office hours prep: ${escapeHtml(officeHoursHints.join(', '))}` : ''}${collaborationHints.length ? `; collaboration handoff: ${escapeHtml(collaborationHints.join(', '))}` : ''}${lectureHints.length ? `; lecture capture: ${escapeHtml(lectureHints.join(', '))}` : ''}${sourceGroundingHints.length ? `; source grounding: ${escapeHtml(sourceGroundingHints.join(', '))}` : ''}${tutorContextHints.length ? `; tutor context pack: ${escapeHtml(tutorContextHints.join(', '))}` : ''}${wrapUpHints.length ? `; wrap-up: ${escapeHtml(wrapUpHints.join(', '))}` : ''}${rubricHints.length ? `; rubric scoring: ${escapeHtml(rubricHints.join(', '))}` : ''}${preSubmitHints.length ? `; pre-submit verification: ${escapeHtml(preSubmitHints.join(', '))}` : ''}${focusHints.length ? `; focus sprint: ${escapeHtml(focusHints.join(', '))}` : ''}${practiceHints.length ? `; practice assets: ${escapeHtml(practiceHints.join(', '))}` : ''}${retrievalHints.length ? `; retrieval calibration: ${escapeHtml(retrievalHints.join(', '))}` : ''}${socraticHints.length ? `; Socratic tutor mode: ${escapeHtml(socraticHints.join(', '))}` : ''}${teachBackHints.length ? `; teach-back: ${escapeHtml(teachBackHints.join(', '))}` : ''}${learningHints.length ? `; study strategy: ${escapeHtml(learningHints.join(', '))}` : ''}${integrityHints.length ? `; integrity checks: ${escapeHtml(integrityHints.join(', '))}` : ''}">${escapeHtml(actionBucket === 'submitted' ? 'Submitted · review optional' : reviewLabel || checklistLabel)}</span>
       `;
       if (item.url) row.addEventListener('click', () => chrome.tabs.create({ url: item.url }));
       list.appendChild(row);
@@ -1117,6 +1142,6 @@
     init,
     refresh,
     draftWeek,
-    __test: { classifyDeadline, compactDeadlineText, inferSubmissionChecklist, inferConceptReviewHints, inferSubmissionStatusFlags, inferPlannerRiskFlags, inferStudyPhases, inferLearningStrategyHints, inferFocusSprintHints, inferPracticeArtifactHints, inferRetrievalCalibrationHints, inferSocraticStudyHints, inferTeachBackHints, inferAcademicIntegrityHints, inferCodeDebugHints, inferOfficeHoursPrepHints, inferCollaborationHandoffHints, inferLectureCaptureHints, inferSourceGroundingHints, inferTutorContextPackHints, inferStudyWrapUpHints, inferRubricScoringHints, inferPreSubmitVerificationHints, inferNotebookStudyPackHints, recommendNextStudyAction, buildWorkloadTimeline, buildPlannerPrompt, extractJsonArray, nextStudyWindowStart, normalizeStudyBlocks, buildFallbackStudyBlocks, toLocalInputValue }
+    __test: { classifyDeadline, compactDeadlineText, getSubmissionSnapshot, classifyActionBucket, inferSubmissionChecklist, inferConceptReviewHints, inferSubmissionStatusFlags, inferPlannerRiskFlags, inferStudyPhases, inferLearningStrategyHints, inferFocusSprintHints, inferPracticeArtifactHints, inferRetrievalCalibrationHints, inferSocraticStudyHints, inferTeachBackHints, inferAcademicIntegrityHints, inferCodeDebugHints, inferOfficeHoursPrepHints, inferCollaborationHandoffHints, inferLectureCaptureHints, inferSourceGroundingHints, inferTutorContextPackHints, inferStudyWrapUpHints, inferRubricScoringHints, inferPreSubmitVerificationHints, inferNotebookStudyPackHints, recommendNextStudyAction, buildWorkloadTimeline, buildPlannerPrompt, extractJsonArray, nextStudyWindowStart, normalizeStudyBlocks, buildFallbackStudyBlocks, toLocalInputValue }
   };
 })();
