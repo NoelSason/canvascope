@@ -828,3 +828,27 @@ test('SmartPlanner buildPlannerPrompt includes rubric scoring hints', () => {
 
   assert.match(prompt, /rubric scoring: map work to rubric, prioritize high-point parts, separate required vs bonus/);
 });
+
+test('SmartPlanner inferPreSubmitVerificationHints detects final submission safeguards', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferPreSubmitVerificationHints({
+    title: 'Final project Canvas upload',
+    description: 'Submit the PDF report and zip on Gradescope after pushing the final GitHub commit before the due deadline.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['verify correct file', 'confirm submission receipt', 'push final commit']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes pre-submit verification hints', () => {
+  const planner = loadSmartPlanner();
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'Autograder submission',
+      courseName: 'CS 61B',
+      ts: new Date('2026-07-12T18:00:00-07:00').getTime(),
+      description: 'Push the repo, upload the ZIP artifact, submit to Gradescope, and save the due-time confirmation receipt.'
+    }
+  ], new Date('2026-07-10T10:00:00-07:00'));
+
+  assert.match(prompt, /pre-submit: verify correct file, confirm submission receipt, push final commit/);
+});
