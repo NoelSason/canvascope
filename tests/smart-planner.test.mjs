@@ -779,3 +779,27 @@ test('SmartPlanner buildPlannerPrompt includes study wrap-up hints', () => {
 
   assert.match(prompt, /wrap-up: log next debugging step/);
 });
+
+test('SmartPlanner inferRubricScoringHints detects grading-focused planning cues', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferRubricScoringHints({
+    title: 'Project milestone rubric review',
+    description: 'Map each deliverable to the rubric, prioritize the 100 point required section before bonus work, and run final tests.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['map work to rubric', 'prioritize high-point parts', 'separate required vs bonus']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes rubric scoring hints', () => {
+  const planner = loadSmartPlanner();
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'Portfolio checkpoint',
+      courseName: 'CS 169',
+      ts: new Date('2026-07-12T18:00:00-07:00').getTime(),
+      description: 'Use the grading criteria, required deliverables, and self-check tests before submitting.'
+    }
+  ], new Date('2026-07-10T10:00:00-07:00'));
+
+  assert.match(prompt, /rubric scoring: map work to rubric, prioritize high-point parts, separate required vs bonus/);
+});
