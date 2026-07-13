@@ -755,3 +755,27 @@ test('SmartPlanner buildPlannerPrompt includes source grounding hints', () => {
 
   assert.match(prompt, /source grounding: keep answers source-backed, compare source claims, build cited study guide/);
 });
+
+test('SmartPlanner inferStudyWrapUpHints detects post-session capture needs', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferStudyWrapUpHints({
+    title: 'Recorded systems lecture review before quiz',
+    description: 'Review slides and transcript, add spaced repetition flashcards, and bring confusing missed questions to office hours.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['save summary notes', 'schedule next review', 'capture open questions']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes study wrap-up hints', () => {
+  const planner = loadSmartPlanner();
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'Autograder debug lab',
+      courseName: 'CS 61B',
+      ts: new Date('2026-07-12T18:00:00-07:00').getTime(),
+      description: 'Debug the GitHub project after the failing Gradescope autograder and log the next step.'
+    }
+  ], new Date('2026-07-10T10:00:00-07:00'));
+
+  assert.match(prompt, /wrap-up: log next debugging step/);
+});
