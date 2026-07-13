@@ -230,6 +230,31 @@ test('SmartPlanner inferTeachBackHints detects explain-aloud study needs', () =>
   assert.deepEqual(Array.from(hints), ['explain aloud', 'teach key concepts', 'find explanation gaps']);
 });
 
+test('SmartPlanner inferSocraticStudyHints prefers guided tutoring over answer dumping', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferSocraticStudyHints({
+    title: 'AI tutor help for stuck problem set',
+    description: 'I am confused by a failed attempt and want hints, not the solution key.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['ask guiding questions first', 'diagnose misconception before answer', 'prefer hints over solutions']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes Socratic tutor mode hints', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00');
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'Calculus problem set office hours',
+      courseName: 'Math',
+      ts: new Date('2026-07-11T18:00:00-07:00').getTime(),
+      description: 'Bring stuck homework attempts and ask the TA for hints before seeing full solutions.'
+    }
+  ], now);
+
+  assert.match(prompt, /Socratic tutor mode: ask guiding questions first, diagnose misconception before answer, prefer hints over solutions/);
+});
+
 test('SmartPlanner buildPlannerPrompt includes teach-back hints for active recall', () => {
   const planner = loadSmartPlanner();
   const now = new Date('2026-07-10T10:00:00-07:00');
