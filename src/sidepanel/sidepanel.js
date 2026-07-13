@@ -835,9 +835,9 @@ Style: concise (2-4 sentences or a short list). Use bold text, inline code backt
 
   function restoreDefaultSuggestions() {
     if (suggestButtons.length >= 3) {
-      setSuggestLabel(suggestButtons[0], "Summarize Assignment", "Summarize the active assignment page");
-      setSuggestLabel(suggestButtons[1], "Extract Tasks", "What are the key deadlines and tasks on this page?");
-      setSuggestLabel(suggestButtons[2], "Quick Practice Quiz", "Generate a 3-question conceptual quiz from this page context");
+      setSuggestLabel(suggestButtons[0], "Assignment Checklist", "Turn the active assignment page into an actionable checklist. Include: deadline, deliverables, required files or formats, rubric/point-value highlights, starter repo or dataset links, tests/autograder steps, collaboration or AI-policy constraints, and a final submission-verification step. Do not solve graded work.");
+      setSuggestLabel(suggestButtons[1], "Extract Tasks", "What are the key deadlines, milestones, deliverables, and submission checks on this page?");
+      setSuggestLabel(suggestButtons[2], "Quick Practice Quiz", "Generate a 3-question conceptual quiz from this page context, focusing on active recall rather than answers to graded work.");
     }
   }
 
