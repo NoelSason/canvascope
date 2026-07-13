@@ -310,6 +310,31 @@ test('SmartPlanner buildPlannerPrompt includes portability backup hints', () => 
   assert.match(prompt, /portability backup: export Markdown summary, keep structured JSON copy, save portable notes/);
 });
 
+test('SmartPlanner inferAiHandoffHints detects AI-study context export needs', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferAiHandoffHints({
+    title: 'Cursor debugging lab',
+    description: 'Use Copilot only with the rubric constraints, starter repo, failing tests, and Canvas assignment page source.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['copy assignment brief', 'include constraints', 'include failing context']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes AI handoff hints', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00');
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'AI-assisted project debug',
+      courseName: 'CS 61B',
+      ts: new Date('2026-07-11T18:00:00-07:00').getTime(),
+      description: 'Use ChatGPT with the rubric constraints and starter code tests from the Canvas assignment page.'
+    }
+  ], now);
+
+  assert.match(prompt, /AI handoff: copy assignment brief, include constraints, include failing context/);
+});
+
 test('SmartPlanner recommendNextStudyAction prioritizes high-effort urgent work transparently', () => {
   const planner = loadSmartPlanner();
   const now = new Date('2026-07-10T10:00:00-07:00').getTime();

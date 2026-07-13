@@ -560,6 +560,27 @@
     return hints.slice(0, 3);
   }
 
+  function inferAiHandoffHints(item) {
+    const source = `${item?.title || ''} ${item?.description || item?.text || item?.content || ''}`.toLowerCase();
+    const hints = [];
+    const add = (label) => { if (!hints.includes(label)) hints.push(label); };
+
+    if (/\b(ai|chatgpt|claude|gemini|copilot|cursor|llm|assistant|tutor|notebooklm)\b/.test(source)) {
+      add('copy assignment brief');
+    }
+    if (/\b(rubric|requirements?|spec(?:ification)?|constraints?|instructions?|allowed tools?|ai policy|academic integrity)\b/.test(source)) {
+      add('include constraints');
+    }
+    if (/\b(code|coding|programming|debug|bug|repo|repository|github|starter|autograder|gradescope|tests?)\b/.test(source)) {
+      add('include failing context');
+    }
+    if (/\b(source|sources?|citation|evidence|reading|slides?|lecture|notes?|canvas|prompt|assignment page)\b/.test(source)) {
+      add('cite Canvas source');
+    }
+
+    return hints.slice(0, 3);
+  }
+
   function recommendNextStudyAction(items, nowMs = Date.now()) {
     const candidates = (Array.isArray(items) ? items : [])
       .filter(item => item && !item.done && Number.isFinite(Number(item.ts)))
@@ -702,6 +723,7 @@
       const rubricHints = inferRubricScoringHints(d);
       const preSubmitHints = inferPreSubmitVerificationHints(d);
       const notebookStudyPackHints = inferNotebookStudyPackHints(d);
+      const aiHandoffHints = inferAiHandoffHints(d);
       const riskFlags = inferPlannerRiskFlags(d, deadlines, nowMs);
       const checklistHint = checklist.length ? `; checklist: ${checklist.join(', ')}` : '';
       const reviewHint = reviewHints.length ? `; review: ${reviewHints.join(', ')}` : '';
@@ -723,10 +745,11 @@
       const rubricHint = rubricHints.length ? `; rubric scoring: ${rubricHints.join(', ')}` : '';
       const preSubmitHint = preSubmitHints.length ? `; pre-submit: ${preSubmitHints.join(', ')}` : '';
       const notebookStudyPackHint = notebookStudyPackHints.length ? `; notebook study pack: ${notebookStudyPackHints.join(', ')}` : '';
+      const aiHandoffHint = aiHandoffHints.length ? `; AI handoff: ${aiHandoffHints.join(', ')}` : '';
       const phaseHint = studyPhases.length ? `; suggested phases: ${studyPhases.join(', ')}` : '';
       const riskHint = riskFlags.length ? `; risk: ${riskFlags.join(', ')}` : '';
       const actionBucketHint = `; action bucket: ${actionBucket}`;
-      const hint = `urgency=${triage.urgency}, effort=${triage.effort}${actionBucketHint}${checklistHint}${reviewHint}${learningHint}${focusHint}${practiceHint}${retrievalHint}${socraticHint}${teachBackHint}${integrityHint}${codeDebugHint}${officeHoursHint}${collaborationHint}${lectureHint}${sourceGroundingHint}${tutorContextHint}${portabilityHint}${wrapUpHint}${rubricHint}${preSubmitHint}${notebookStudyPackHint}${phaseHint}${riskHint}`;
+      const hint = `urgency=${triage.urgency}, effort=${triage.effort}${actionBucketHint}${checklistHint}${reviewHint}${learningHint}${focusHint}${practiceHint}${retrievalHint}${socraticHint}${teachBackHint}${integrityHint}${codeDebugHint}${officeHoursHint}${collaborationHint}${lectureHint}${sourceGroundingHint}${tutorContextHint}${portabilityHint}${wrapUpHint}${rubricHint}${preSubmitHint}${notebookStudyPackHint}${aiHandoffHint}${phaseHint}${riskHint}`;
       return `- "${d.title}" (${d.courseName || 'General'}) due ${dueLabel}; ${hint}${evidence ? `; notes: ${evidence}` : ''}`;
     }).join('\n');
 
@@ -793,6 +816,7 @@
       const rubricHints = inferRubricScoringHints(item);
       const preSubmitHints = inferPreSubmitVerificationHints(item);
       const notebookStudyPackHints = inferNotebookStudyPackHints(item);
+      const aiHandoffHints = inferAiHandoffHints(item);
       const riskFlags = inferPlannerRiskFlags(item, items, now);
       const checklistLabel = riskFlags.length ? `Risk: ${riskFlags.join(' · ')}` : (checklist.length ? checklist.join(' · ') : `${triage.urgency} · ${effortLabel}`);
       const reviewLabel = [
@@ -808,6 +832,7 @@
         rubricHints.length ? `Rubric: ${rubricHints.join(' · ')}` : '',
         preSubmitHints.length ? `Pre-submit: ${preSubmitHints.join(' · ')}` : '',
         notebookStudyPackHints.length ? `Notebook pack: ${notebookStudyPackHints.join(' · ')}` : '',
+        aiHandoffHints.length ? `AI handoff: ${aiHandoffHints.join(' · ')}` : '',
         focusHints.length ? `Focus: ${focusHints.join(' · ')}` : '',
         practiceHints.length ? `Practice: ${practiceHints.join(' · ')}` : '',
         retrievalHints.length ? `Recall: ${retrievalHints.join(' · ')}` : '',
@@ -1167,6 +1192,6 @@
     init,
     refresh,
     draftWeek,
-    __test: { classifyDeadline, compactDeadlineText, getSubmissionSnapshot, classifyActionBucket, inferSubmissionChecklist, inferConceptReviewHints, inferSubmissionStatusFlags, inferPlannerRiskFlags, inferStudyPhases, inferLearningStrategyHints, inferFocusSprintHints, inferPracticeArtifactHints, inferRetrievalCalibrationHints, inferSocraticStudyHints, inferTeachBackHints, inferAcademicIntegrityHints, inferCodeDebugHints, inferOfficeHoursPrepHints, inferCollaborationHandoffHints, inferLectureCaptureHints, inferSourceGroundingHints, inferTutorContextPackHints, inferPortabilityBackupHints, inferStudyWrapUpHints, inferRubricScoringHints, inferPreSubmitVerificationHints, inferNotebookStudyPackHints, recommendNextStudyAction, buildWorkloadTimeline, buildPlannerPrompt, extractJsonArray, nextStudyWindowStart, normalizeStudyBlocks, buildFallbackStudyBlocks, toLocalInputValue }
+    __test: { classifyDeadline, compactDeadlineText, getSubmissionSnapshot, classifyActionBucket, inferSubmissionChecklist, inferConceptReviewHints, inferSubmissionStatusFlags, inferPlannerRiskFlags, inferStudyPhases, inferLearningStrategyHints, inferFocusSprintHints, inferPracticeArtifactHints, inferRetrievalCalibrationHints, inferSocraticStudyHints, inferTeachBackHints, inferAcademicIntegrityHints, inferCodeDebugHints, inferOfficeHoursPrepHints, inferCollaborationHandoffHints, inferLectureCaptureHints, inferSourceGroundingHints, inferTutorContextPackHints, inferPortabilityBackupHints, inferStudyWrapUpHints, inferRubricScoringHints, inferPreSubmitVerificationHints, inferNotebookStudyPackHints, inferAiHandoffHints, recommendNextStudyAction, buildWorkloadTimeline, buildPlannerPrompt, extractJsonArray, nextStudyWindowStart, normalizeStudyBlocks, buildFallbackStudyBlocks, toLocalInputValue }
   };
 })();
