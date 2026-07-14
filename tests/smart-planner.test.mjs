@@ -114,6 +114,40 @@ test('SmartPlanner normalizeStudyBlocks keeps submission buffer before deadlines
   assert.equal(new Date(blocks[0].startAt).getTime(), new Date('2026-07-10T11:00:00-07:00').getTime());
 });
 
+test('SmartPlanner findRelevantDeadlineForBlock matches model blocks to assignment deadlines', () => {
+  const planner = loadSmartPlanner();
+  const quizDeadline = new Date('2026-07-10T12:00:00-07:00').getTime();
+  const projectDeadline = new Date('2026-07-14T23:59:00-07:00').getTime();
+
+  const match = planner.__test.findRelevantDeadlineForBlock(
+    { title: 'Practice graph quiz questions', course: 'CS 61B' },
+    [
+      { title: 'Graph traversal quiz', courseName: 'CS 61B', ts: quizDeadline },
+      { title: 'Final project milestone', courseName: 'CS 61B', ts: projectDeadline }
+    ]
+  );
+
+  assert.equal(match.title, 'Graph traversal quiz');
+});
+
+test('SmartPlanner normalizeStudyBlocks drops blocks scheduled after their matched assignment deadline', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T09:00:00-07:00').getTime();
+  const quizDeadline = new Date('2026-07-10T12:00:00-07:00').getTime();
+  const projectDeadline = new Date('2026-07-14T23:59:00-07:00').getTime();
+
+  const blocks = planner.__test.normalizeStudyBlocks([
+    { title: 'Practice graph quiz questions', startAt: '2026-07-10T13:00:00-07:00', minutes: 60, course: 'CS 61B' },
+    { title: 'Outline final project milestone', startAt: '2026-07-10T13:00:00-07:00', minutes: 60, course: 'CS 61B' }
+  ], [
+    { title: 'Graph traversal quiz', courseName: 'CS 61B', ts: quizDeadline },
+    { title: 'Final project milestone', courseName: 'CS 61B', ts: projectDeadline }
+  ], now);
+
+  assert.equal(blocks.length, 1);
+  assert.equal(blocks[0].title, 'Outline final project milestone');
+});
+
 test('SmartPlanner classifyDeadline labels urgency and likely effort', () => {
   const planner = loadSmartPlanner();
   const now = new Date('2026-07-10T10:00:00-07:00').getTime();

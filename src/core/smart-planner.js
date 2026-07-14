@@ -991,6 +991,38 @@
     return alignToStudyHours(start);
   }
 
+  function normalizePlannerTokens(value) {
+    return String(value || '')
+      .toLowerCase()
+      .replace(/[^a-z0-9#+]+/g, ' ')
+      .split(/\s+/)
+      .filter(token => token.length >= 3 && !['the', 'and', 'for', 'with', 'from', 'this', 'that', 'due', 'study', 'block', 'work', 'review'].includes(token));
+  }
+
+  function findRelevantDeadlineForBlock(block, deadlines) {
+    const deadlineItems = (Array.isArray(deadlines) ? deadlines : [])
+      .map(item => ({ item, ts: Number(item && item.ts) }))
+      .filter(entry => Number.isFinite(entry.ts));
+    if (!deadlineItems.length) return null;
+
+    const blockTitleTokens = new Set(normalizePlannerTokens(block?.title));
+    const blockCourse = String(block?.course || '').trim().toLowerCase();
+    let best = null;
+
+    for (const entry of deadlineItems) {
+      const item = entry.item || {};
+      const titleTokens = normalizePlannerTokens(item.title || item.name || item.description || item.text || item.content);
+      const course = String(item.courseName || item.course || '').trim().toLowerCase();
+      let score = 0;
+      for (const token of titleTokens) if (blockTitleTokens.has(token)) score += 2;
+      if (blockCourse && course && (blockCourse === course || blockCourse.includes(course) || course.includes(blockCourse))) score += 3;
+      if (score <= 0) continue;
+      if (!best || score > best.score || (score === best.score && entry.ts < best.ts)) best = { ...entry, score };
+    }
+
+    return best ? best.item : null;
+  }
+
   function normalizeStudyBlocks(rawBlocks, deadlines, nowMs = Date.now()) {
     const deadlineTimes = (Array.isArray(deadlines) ? deadlines : [])
       .map(item => Number(item && item.ts))
@@ -1006,7 +1038,10 @@
       const parsedStart = new Date(block.startAt).getTime();
       const requestedStart = Number.isFinite(parsedStart) && parsedStart > nowMs ? parsedStart : cursor;
       const startAt = nextStudyBlockStart(requestedStart, cursor);
-      const latestEnd = lastDeadline - DEADLINE_HANDOFF_BUFFER_MINUTES * 60 * 1000;
+      const relevantDeadline = findRelevantDeadlineForBlock(block, deadlines);
+      const relevantDeadlineTs = relevantDeadline ? Number(relevantDeadline.ts) : NaN;
+      const deadlineLimit = Number.isFinite(relevantDeadlineTs) ? relevantDeadlineTs : lastDeadline;
+      const latestEnd = deadlineLimit - DEADLINE_HANDOFF_BUFFER_MINUTES * 60 * 1000;
       if (!Number.isFinite(startAt) || startAt > latestEnd) continue;
       const availableMinutes = Math.floor((latestEnd - startAt) / 60000);
       if (availableMinutes < 30) continue;
@@ -1240,6 +1275,6 @@
     init,
     refresh,
     draftWeek,
-    __test: { classifyDeadline, compactDeadlineText, getSubmissionSnapshot, classifyActionBucket, inferSubmissionChecklist, inferConceptReviewHints, inferSubmissionStatusFlags, inferPlannerRiskFlags, inferStudyPhases, inferLearningStrategyHints, inferFocusSprintHints, inferPracticeArtifactHints, inferRetrievalCalibrationHints, inferSocraticStudyHints, inferTeachBackHints, inferAcademicIntegrityHints, inferCodeDebugHints, inferOfficeHoursPrepHints, inferCollaborationHandoffHints, inferLectureCaptureHints, inferSourceGroundingHints, inferTutorContextPackHints, inferPortabilityBackupHints, inferStudyWrapUpHints, inferRubricScoringHints, inferPreSubmitVerificationHints, inferNotebookStudyPackHints, inferAiHandoffHints, inferActivePracticeLoopHints, inferMetacognitiveCalibrationHints, recommendNextStudyAction, buildWorkloadTimeline, buildPlannerPrompt, extractJsonArray, nextStudyWindowStart, normalizeStudyBlocks, buildFallbackStudyBlocks, toLocalInputValue }
+    __test: { classifyDeadline, compactDeadlineText, getSubmissionSnapshot, classifyActionBucket, inferSubmissionChecklist, inferConceptReviewHints, inferSubmissionStatusFlags, inferPlannerRiskFlags, inferStudyPhases, inferLearningStrategyHints, inferFocusSprintHints, inferPracticeArtifactHints, inferRetrievalCalibrationHints, inferSocraticStudyHints, inferTeachBackHints, inferAcademicIntegrityHints, inferCodeDebugHints, inferOfficeHoursPrepHints, inferCollaborationHandoffHints, inferLectureCaptureHints, inferSourceGroundingHints, inferTutorContextPackHints, inferPortabilityBackupHints, inferStudyWrapUpHints, inferRubricScoringHints, inferPreSubmitVerificationHints, inferNotebookStudyPackHints, inferAiHandoffHints, inferActivePracticeLoopHints, inferMetacognitiveCalibrationHints, recommendNextStudyAction, buildWorkloadTimeline, buildPlannerPrompt, extractJsonArray, nextStudyWindowStart, findRelevantDeadlineForBlock, normalizeStudyBlocks, buildFallbackStudyBlocks, toLocalInputValue }
   };
 })();
