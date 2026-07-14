@@ -1173,3 +1173,52 @@ test('SmartPlanner buildPlannerPrompt includes peer accountability hints', () =>
 
   assert.match(prompt, /peer accountability: schedule peer check-in, use accountability block, share progress update/);
 });
+
+
+test('SmartPlanner inferGradeImpactHints surfaces point value and recovery signals', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferGradeImpactHints({
+    title: 'Project resubmission',
+    pointsPossible: 120,
+    description: 'Late penalty applies after the grace period, but revisions can recover points.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['120 pts: high grade impact', 'grade recovery path', 'protect against penalties']);
+});
+
+test('SmartPlanner recommendNextStudyAction boosts high point assignments', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00').getTime();
+  const recommendation = planner.__test.recommendNextStudyAction([
+    {
+      title: 'Tiny discussion check-in',
+      courseName: 'History',
+      ts: new Date('2026-07-10T16:00:00-07:00').getTime(),
+      pointsPossible: 5
+    },
+    {
+      title: 'Capstone project milestone',
+      courseName: 'CS',
+      ts: new Date('2026-07-11T10:00:00-07:00').getTime(),
+      pointsPossible: 150
+    }
+  ], now);
+
+  assert.equal(recommendation.title, 'Capstone project milestone');
+  assert.match(recommendation.reason, /high grade impact/);
+});
+
+test('SmartPlanner buildPlannerPrompt includes grade impact hints', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00');
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'Final project submission',
+      courseName: 'CS',
+      ts: new Date('2026-07-12T18:00:00-07:00').getTime(),
+      description: 'Worth 150 points with a late penalty after the grace period.'
+    }
+  ], now);
+
+  assert.match(prompt, /grade impact: 150 pts: high grade impact, protect against penalties/);
+});
