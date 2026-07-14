@@ -1008,6 +1008,30 @@ test('SmartPlanner buildPlannerPrompt includes notebook study pack hints', () =>
   assert.match(prompt, /notebook study pack: assemble source pack, generate self-quiz, trace claims to citations/);
 });
 
+test('SmartPlanner inferCsWorkflowHints decomposes programming assignments safely', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferCsWorkflowHints({
+    title: 'Programming lab Gradescope submission',
+    description: 'Clone the starter repo, implement the graph API, run pytest, push commits, and submit to the autograder.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['read spec first', 'set up starter code', 'implement core path', 'run tests before submit']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes CS workflow hints', () => {
+  const planner = loadSmartPlanner();
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'Programming lab Gradescope submission',
+      courseName: 'CS 61B',
+      ts: new Date('2026-07-11T12:00:00-07:00').getTime(),
+      description: 'Clone the starter repo, implement the graph API, run pytest, push commits, and submit to the autograder.'
+    }
+  ], new Date('2026-07-10T10:00:00-07:00'));
+
+  assert.match(prompt, /CS workflow: read spec first, set up starter code, implement core path, run tests before submit/);
+});
+
 test('SmartPlanner inferActivePracticeLoopHints turns notes into active study loops', () => {
   const planner = loadSmartPlanner();
   const hints = planner.__test.inferActivePracticeLoopHints({
