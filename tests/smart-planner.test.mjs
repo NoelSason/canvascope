@@ -998,3 +998,28 @@ test('SmartPlanner buildPlannerPrompt includes active practice loop hints', () =
 
   assert.match(prompt, /active practice loop: convert notes to quiz, grade practice immediately/);
 });
+
+test('SmartPlanner inferMetacognitiveCalibrationHints detects confidence tracking workflows', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferMetacognitiveCalibrationHints({
+    title: 'Mock exam reflection',
+    description: 'Predict your score, mark confidence on each question, then compare wrong answers to the rubric feedback.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['predict score before grading', 'mark confidence per question', 'compare confidence to misses']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes metacognitive calibration hints', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00');
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'Practice exam calibration',
+      courseName: 'CS',
+      ts: new Date('2026-07-11T18:00:00-07:00').getTime(),
+      description: 'Take the practice test, rate confidence before grading, review feedback, and update weak spots.'
+    }
+  ], now);
+
+  assert.match(prompt, /metacognitive calibration: predict score before grading, mark confidence per question, compare confidence to misses/);
+});
