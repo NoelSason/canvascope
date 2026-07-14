@@ -1116,3 +1116,34 @@ test('SmartPlanner buildPlannerPrompt includes spaced review plan hints', () => 
 
   assert.match(prompt, /spaced review plan: review \+1d, review \+3d, review \+7d/);
 });
+
+test('SmartPlanner inferExamCountdownHints adapts to exam distance', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00').getTime();
+
+  assert.deepEqual(Array.from(planner.__test.inferExamCountdownHints({
+    title: 'Comprehensive algorithms final exam',
+    ts: new Date('2026-07-18T10:00:00-07:00').getTime()
+  }, now)), ['map topics now', 'schedule spaced reps', 'mix old units']);
+
+  assert.deepEqual(Array.from(planner.__test.inferExamCountdownHints({
+    title: 'Midterm practice exam',
+    ts: new Date('2026-07-12T10:00:00-07:00').getTime(),
+    description: 'Use the released practice exam.'
+  }, now)), ['interleave weak topics', 'simulate exam timing', 'redo past exam']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes exam countdown hints', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00');
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'Comprehensive systems final exam',
+      courseName: 'CS',
+      ts: new Date('2026-07-18T10:00:00-07:00').getTime(),
+      description: 'Cumulative final covering all units plus a released practice exam.'
+    }
+  ], now);
+
+  assert.match(prompt, /exam countdown: map topics now, schedule spaced reps, mix old units/);
+});

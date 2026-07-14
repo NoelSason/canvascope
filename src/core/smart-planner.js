@@ -662,6 +662,33 @@
     return candidateDays.map(days => `review +${days}d`).slice(0, 3);
   }
 
+  function inferExamCountdownHints(item, nowMs = Date.now()) {
+    const source = `${item?.title || ''} ${item?.description || item?.text || item?.content || ''}`.toLowerCase();
+    if (!/\b(exam|midterm|final|test|quiz|practicum|assessment|comprehensive|cumulative)\b/.test(source)) return [];
+
+    const hints = [];
+    const add = (label) => { if (!hints.includes(label)) hints.push(label); };
+    const ts = Number(item && item.ts);
+    const daysUntilDue = Number.isFinite(ts) ? Math.ceil((ts - nowMs) / MS_DAY) : Infinity;
+
+    if (!Number.isFinite(daysUntilDue) || daysUntilDue >= 5) {
+      add('map topics now');
+      add('schedule spaced reps');
+    } else if (daysUntilDue >= 2) {
+      add('interleave weak topics');
+      add('simulate exam timing');
+    } else if (daysUntilDue >= 0) {
+      add('cram weak spots');
+      add('sleep-friendly review');
+    } else {
+      add('post-exam error log');
+    }
+    if (/\b(cumulative|comprehensive|multiple units?|chapters?|modules?|all topics|full course)\b/.test(source)) add('mix old units');
+    if (/\b(practice exam|past exam|mock exam|sample exam|released exam)\b/.test(source)) add('redo past exam');
+
+    return hints.slice(0, 3);
+  }
+
   function recommendNextStudyAction(items, nowMs = Date.now()) {
     const candidates = (Array.isArray(items) ? items : [])
       .filter(item => item && !item.done && Number.isFinite(Number(item.ts)))
@@ -809,6 +836,7 @@
       const activePracticeHints = inferActivePracticeLoopHints(d);
       const metacognitiveHints = inferMetacognitiveCalibrationHints(d);
       const spacedReviewPlan = inferSpacedReviewPlan(d, nowMs);
+      const examCountdownHints = inferExamCountdownHints(d, nowMs);
       const riskFlags = inferPlannerRiskFlags(d, deadlines, nowMs);
       const checklistHint = checklist.length ? `; checklist: ${checklist.join(', ')}` : '';
       const reviewHint = reviewHints.length ? `; review: ${reviewHints.join(', ')}` : '';
@@ -835,10 +863,11 @@
       const activePracticeHint = activePracticeHints.length ? `; active practice loop: ${activePracticeHints.join(', ')}` : '';
       const metacognitiveHint = metacognitiveHints.length ? `; metacognitive calibration: ${metacognitiveHints.join(', ')}` : '';
       const spacedReviewHint = spacedReviewPlan.length ? `; spaced review plan: ${spacedReviewPlan.join(', ')}` : '';
+      const examCountdownHint = examCountdownHints.length ? `; exam countdown: ${examCountdownHints.join(', ')}` : '';
       const phaseHint = studyPhases.length ? `; suggested phases: ${studyPhases.join(', ')}` : '';
       const riskHint = riskFlags.length ? `; risk: ${riskFlags.join(', ')}` : '';
       const actionBucketHint = `; action bucket: ${actionBucket}`;
-      const hint = `urgency=${triage.urgency}, effort=${triage.effort}${actionBucketHint}${checklistHint}${reviewHint}${learningHint}${focusHint}${practiceHint}${retrievalHint}${socraticHint}${teachBackHint}${integrityHint}${codeDebugHint}${officeHoursHint}${collaborationHint}${lectureHint}${sourceGroundingHint}${tutorContextHint}${portabilityHint}${wrapUpHint}${rubricHint}${preSubmitHint}${notebookStudyPackHint}${aiHandoffHint}${csWorkflowHint}${activePracticeHint}${metacognitiveHint}${spacedReviewHint}${phaseHint}${riskHint}`;
+      const hint = `urgency=${triage.urgency}, effort=${triage.effort}${actionBucketHint}${checklistHint}${reviewHint}${learningHint}${focusHint}${practiceHint}${retrievalHint}${socraticHint}${teachBackHint}${integrityHint}${codeDebugHint}${officeHoursHint}${collaborationHint}${lectureHint}${sourceGroundingHint}${tutorContextHint}${portabilityHint}${wrapUpHint}${rubricHint}${preSubmitHint}${notebookStudyPackHint}${aiHandoffHint}${csWorkflowHint}${activePracticeHint}${metacognitiveHint}${spacedReviewHint}${examCountdownHint}${phaseHint}${riskHint}`;
       return `- "${d.title}" (${d.courseName || 'General'}) due ${dueLabel}; ${hint}${evidence ? `; notes: ${evidence}` : ''}`;
     }).join('\n');
 
@@ -909,6 +938,7 @@
       const csWorkflowHints = inferCsWorkflowHints(item);
       const activePracticeHints = inferActivePracticeLoopHints(item);
       const spacedReviewPlan = inferSpacedReviewPlan(item, now);
+      const examCountdownHints = inferExamCountdownHints(item, now);
       const riskFlags = inferPlannerRiskFlags(item, items, now);
       const checklistLabel = riskFlags.length ? `Risk: ${riskFlags.join(' · ')}` : (checklist.length ? checklist.join(' · ') : `${triage.urgency} · ${effortLabel}`);
       const reviewLabel = [
@@ -927,6 +957,7 @@
         aiHandoffHints.length ? `AI handoff: ${aiHandoffHints.join(' · ')}` : '',
         csWorkflowHints.length ? `CS workflow: ${csWorkflowHints.join(' · ')}` : '',
         activePracticeHints.length ? `Practice loop: ${activePracticeHints.join(' · ')}` : '',
+        examCountdownHints.length ? `Exam plan: ${examCountdownHints.join(' · ')}` : '',
         spacedReviewPlan.length ? `Spaced review: ${spacedReviewPlan.join(' · ')}` : '',
         focusHints.length ? `Focus: ${focusHints.join(' · ')}` : '',
         practiceHints.length ? `Practice: ${practiceHints.join(' · ')}` : '',
@@ -1322,6 +1353,6 @@
     init,
     refresh,
     draftWeek,
-    __test: { classifyDeadline, compactDeadlineText, getSubmissionSnapshot, classifyActionBucket, inferSubmissionChecklist, inferConceptReviewHints, inferSubmissionStatusFlags, inferPlannerRiskFlags, inferStudyPhases, inferLearningStrategyHints, inferFocusSprintHints, inferPracticeArtifactHints, inferRetrievalCalibrationHints, inferSocraticStudyHints, inferTeachBackHints, inferAcademicIntegrityHints, inferCodeDebugHints, inferOfficeHoursPrepHints, inferCollaborationHandoffHints, inferLectureCaptureHints, inferSourceGroundingHints, inferTutorContextPackHints, inferPortabilityBackupHints, inferStudyWrapUpHints, inferRubricScoringHints, inferPreSubmitVerificationHints, inferNotebookStudyPackHints, inferAiHandoffHints, inferCsWorkflowHints, inferActivePracticeLoopHints, inferMetacognitiveCalibrationHints, inferSpacedReviewPlan, recommendNextStudyAction, buildWorkloadTimeline, buildPlannerPrompt, extractJsonArray, nextStudyWindowStart, findRelevantDeadlineForBlock, normalizeStudyBlocks, buildFallbackStudyBlocks, toLocalInputValue }
+    __test: { classifyDeadline, compactDeadlineText, getSubmissionSnapshot, classifyActionBucket, inferSubmissionChecklist, inferConceptReviewHints, inferSubmissionStatusFlags, inferPlannerRiskFlags, inferStudyPhases, inferLearningStrategyHints, inferFocusSprintHints, inferPracticeArtifactHints, inferRetrievalCalibrationHints, inferSocraticStudyHints, inferTeachBackHints, inferAcademicIntegrityHints, inferCodeDebugHints, inferOfficeHoursPrepHints, inferCollaborationHandoffHints, inferLectureCaptureHints, inferSourceGroundingHints, inferTutorContextPackHints, inferPortabilityBackupHints, inferStudyWrapUpHints, inferRubricScoringHints, inferPreSubmitVerificationHints, inferNotebookStudyPackHints, inferAiHandoffHints, inferCsWorkflowHints, inferActivePracticeLoopHints, inferMetacognitiveCalibrationHints, inferSpacedReviewPlan, inferExamCountdownHints, recommendNextStudyAction, buildWorkloadTimeline, buildPlannerPrompt, extractJsonArray, nextStudyWindowStart, findRelevantDeadlineForBlock, normalizeStudyBlocks, buildFallbackStudyBlocks, toLocalInputValue }
   };
 })();
