@@ -1057,3 +1057,38 @@ test('SmartPlanner buildPlannerPrompt includes metacognitive calibration hints',
 
   assert.match(prompt, /metacognitive calibration: predict score before grading, mark confidence per question, compare confidence to misses/);
 });
+
+test('SmartPlanner inferSpacedReviewPlan suggests spaced reviews before the due date', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00').getTime();
+
+  assert.deepEqual(Array.from(planner.__test.inferSpacedReviewPlan({
+    title: 'Algorithms final exam review',
+    ts: new Date('2026-07-18T10:00:00-07:00').getTime()
+  }, now)), ['review +1d', 'review +3d', 'review +7d']);
+
+  assert.deepEqual(Array.from(planner.__test.inferSpacedReviewPlan({
+    title: 'Systems quiz notes',
+    ts: new Date('2026-07-11T18:00:00-07:00').getTime()
+  }, now)), ['review +1d']);
+
+  assert.deepEqual(Array.from(planner.__test.inferSpacedReviewPlan({
+    title: 'Project submission',
+    ts: new Date('2026-07-18T10:00:00-07:00').getTime()
+  }, now)), []);
+});
+
+test('SmartPlanner buildPlannerPrompt includes spaced review plan hints', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00');
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'Recorded lecture study guide',
+      courseName: 'CS',
+      ts: new Date('2026-07-18T10:00:00-07:00').getTime(),
+      description: 'Review lecture notes and flashcards before the final exam.'
+    }
+  ], now);
+
+  assert.match(prompt, /spaced review plan: review \+1d, review \+3d, review \+7d/);
+});
