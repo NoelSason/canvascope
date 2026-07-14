@@ -1147,3 +1147,29 @@ test('SmartPlanner buildPlannerPrompt includes exam countdown hints', () => {
 
   assert.match(prompt, /exam countdown: map topics now, schedule spaced reps, mix old units/);
 });
+
+
+test('SmartPlanner inferPeerStudyAccountabilityHints detects peer and body-doubling workflows', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferPeerStudyAccountabilityHints({
+    title: 'Group project demo rehearsal',
+    description: 'Book a Discord study room for body doubling, post a checkpoint update, and practice the demo with a partner.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['schedule peer check-in', 'use accountability block', 'share progress update']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes peer accountability hints', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00');
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'Pair programming checkpoint',
+      courseName: 'CS',
+      ts: new Date('2026-07-11T18:00:00-07:00').getTime(),
+      description: 'Use a coworking accountability block and send a progress update before the milestone.'
+    }
+  ], now);
+
+  assert.match(prompt, /peer accountability: schedule peer check-in, use accountability block, share progress update/);
+});
