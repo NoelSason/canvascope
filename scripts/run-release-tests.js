@@ -3,6 +3,29 @@ const path = require('path');
 
 const rootDir = path.resolve(__dirname, '..');
 
+function commandExists(command) {
+  const probe = spawnSync(command, ['--version'], {
+    cwd: rootDir,
+    stdio: 'ignore',
+    env: process.env
+  });
+  return !probe.error;
+}
+
+function preflightRequiredTools() {
+  const requiredTools = [...new Set(steps.map((step) => step.command))];
+  const missingTools = requiredTools.filter((command) => !commandExists(command));
+
+  if (missingTools.length === 0) {
+    return;
+  }
+
+  throw new Error(
+    `Missing required release test tool${missingTools.length === 1 ? '' : 's'}: ${missingTools.join(', ')}. ` +
+      'Install the missing CLI(s), or run `npm run test:node` for Node-only regression tests.'
+  );
+}
+
 const steps = [
   {
     name: 'Node regression tests',
@@ -51,6 +74,8 @@ function runStep(step) {
 }
 
 try {
+  preflightRequiredTools();
+
   for (const step of steps) {
     runStep(step);
   }

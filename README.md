@@ -4,12 +4,12 @@
 
 Canvascope is a local-first Chrome extension for Canvas and Brightspace. It indexes course content for fast search, supports course-scoped queries and planner workflows, and can optionally push selected PDFs to Lectra (iPad) through Supabase.
 
-![Version](https://img.shields.io/badge/version-10.1.0-orange)
+![Version](https://img.shields.io/badge/version-10.2.0-orange)
 ![Chrome](https://img.shields.io/badge/Chrome-116%2B-green)
 ![License](https://img.shields.io/badge/license-MIT-purple)
 
 > [!IMPORTANT]
-> **v10.1.0 is now available.**
+> **v10.2.0 is now available.**
 >
 > This release brings a highly organized source layout, a local AI-powered RAG chat assistant (offline Gemini Nano + Supabase fallback), course-scoped PDF/OCR material indexing, DropBridge v3 with realtime receipts, and Character Profile suggestions.
 
