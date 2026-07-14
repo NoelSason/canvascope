@@ -973,3 +973,28 @@ test('SmartPlanner buildPlannerPrompt includes notebook study pack hints', () =>
 
   assert.match(prompt, /notebook study pack: assemble source pack, generate self-quiz, trace claims to citations/);
 });
+
+test('SmartPlanner inferActivePracticeLoopHints turns notes into active study loops', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferActivePracticeLoopHints({
+    title: 'Lecture notes and Quizlet review',
+    description: 'Use the transcript summary, flashcards, and missed questions to prepare for the quiz.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['convert notes to quiz', 'mix flashcards with problems', 'redo misses tomorrow']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes active practice loop hints', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00');
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'Recorded lecture study guide',
+      courseName: 'CS',
+      ts: new Date('2026-07-11T18:00:00-07:00').getTime(),
+      description: 'Turn transcript notes into practice questions and grade the problem set attempts.'
+    }
+  ], now);
+
+  assert.match(prompt, /active practice loop: convert notes to quiz, grade practice immediately/);
+});
