@@ -888,6 +888,30 @@ test('SmartPlanner buildPlannerPrompt includes lecture capture hints', () => {
   assert.match(prompt, /lecture capture: summarize lecture notes, extract action items, turn transcript into quiz/);
 });
 
+test('SmartPlanner inferMultimodalStudyAssetHints detects visual and audio study assets', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferMultimodalStudyAssetHints({
+    title: 'Systems architecture lecture capture',
+    description: 'Review the whiteboard diagram, transcript captions, and sequence diagram from the demo recording.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['capture visual diagram', 'pair transcript with notes', 'make concept map']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes multimodal study asset hints', () => {
+  const planner = loadSmartPlanner();
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'Design review study pack',
+      courseName: 'CS 160',
+      ts: new Date('2026-07-12T18:00:00-07:00').getTime(),
+      description: 'Prepare screenshots, a Figma prototype walkthrough, and a concept map for the interface critique.'
+    }
+  ], new Date('2026-07-10T10:00:00-07:00'));
+
+  assert.match(prompt, /multimodal study assets: capture visual diagram, attach screenshots, make concept map/);
+});
+
 test('SmartPlanner inferSourceGroundingHints detects citation-first study workflows', () => {
   const planner = loadSmartPlanner();
   const hints = planner.__test.inferSourceGroundingHints({
