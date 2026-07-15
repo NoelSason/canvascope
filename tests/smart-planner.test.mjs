@@ -260,6 +260,16 @@ test('SmartPlanner inferTutorContextPackHints detects materials to gather for AI
   assert.deepEqual(Array.from(hints), ['attach rubric', 'include examples', 'include prior feedback']);
 });
 
+test('SmartPlanner inferEvidencePackHints prepares source-grounded AI study packets', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferEvidencePackHints({
+    title: 'NotebookLM literature review',
+    description: 'Collect research paper quotes with DOI citations, then map each thesis claim to sources before asking an AI assistant.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['collect quotable snippets', 'capture citation metadata', 'map claims to sources']);
+});
+
 test('SmartPlanner inferTeachBackHints detects explain-aloud study needs', () => {
   const planner = loadSmartPlanner();
   const hints = planner.__test.inferTeachBackHints({
@@ -348,6 +358,21 @@ test('SmartPlanner buildPlannerPrompt includes tutor context pack hints', () => 
   ], now);
 
   assert.match(prompt, /tutor context pack: attach rubric, include examples, include prior feedback/);
+});
+
+test('SmartPlanner buildPlannerPrompt includes evidence-pack hints for grounded AI study', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00');
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'AI-assisted research synthesis',
+      courseName: 'Writing',
+      ts: new Date('2026-07-11T18:00:00-07:00').getTime(),
+      description: 'Use research articles with DOI citations to compare claims and ask source-grounded questions.'
+    }
+  ], now);
+
+  assert.match(prompt, /evidence pack: collect quotable snippets, capture citation metadata, map claims to sources/);
 });
 
 test('SmartPlanner inferPortabilityBackupHints detects export and backup workflows', () => {
