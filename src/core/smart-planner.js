@@ -355,6 +355,27 @@
     return hints.slice(0, 3);
   }
 
+  function inferPrivacyConsentHints(item) {
+    const source = `${item?.title || ''} ${item?.description || item?.text || item?.content || ''}`.toLowerCase();
+    const hints = [];
+    const add = (label) => { if (!hints.includes(label)) hints.push(label); };
+
+    if (/\b(record(?:ing)?|transcri(?:be|pt|ption)|caption(?:s)?|lecture capture|voice note|audio|video|zoom|meet|teams)\b/.test(source)) {
+      add('confirm recording consent');
+    }
+    if (/\b(classmates?|peers?|group|team|partner|interview|participant|discussion|seminar|meeting)\b/.test(source)) {
+      add('avoid private peer details');
+    }
+    if (/\b(ai note[- ]?tak(?:er|ing)|notebooklm|chatgpt|claude|gemini|llm|assistant|upload(?:ing)? notes?|cloud transcription)\b/.test(source)) {
+      add('check AI data sharing');
+    }
+    if (/\b(privacy|consent|ferpa|confidential|sensitive|personal data|pii|student data|anonymi[sz]e)\b/.test(source)) {
+      add('redact sensitive context');
+    }
+
+    return hints.slice(0, 3);
+  }
+
   function inferCodeDebugHints(item) {
     const source = `${item?.title || ''} ${item?.description || item?.text || item?.content || ''}`;
     const lower = source.toLowerCase();
@@ -893,6 +914,7 @@
       const socraticHints = inferSocraticStudyHints(d);
       const teachBackHints = inferTeachBackHints(d);
       const integrityHints = inferAcademicIntegrityHints(d);
+      const privacyConsentHints = inferPrivacyConsentHints(d);
       const codeDebugHints = inferCodeDebugHints(d);
       const officeHoursHints = inferOfficeHoursPrepHints(d);
       const collaborationHints = inferCollaborationHandoffHints(d);
@@ -923,6 +945,7 @@
       const socraticHint = socraticHints.length ? `; Socratic tutor mode: ${socraticHints.join(', ')}` : '';
       const teachBackHint = teachBackHints.length ? `; teach-back: ${teachBackHints.join(', ')}` : '';
       const integrityHint = integrityHints.length ? `; integrity: ${integrityHints.join(', ')}` : '';
+      const privacyConsentHint = privacyConsentHints.length ? `; privacy/consent: ${privacyConsentHints.join(', ')}` : '';
       const codeDebugHint = codeDebugHints.length ? `; code/debug: ${codeDebugHints.join(', ')}` : '';
       const officeHoursHint = officeHoursHints.length ? `; office hours prep: ${officeHoursHints.join(', ')}` : '';
       const collaborationHint = collaborationHints.length ? `; collaboration handoff: ${collaborationHints.join(', ')}` : '';
@@ -946,7 +969,7 @@
       const phaseHint = studyPhases.length ? `; suggested phases: ${studyPhases.join(', ')}` : '';
       const riskHint = riskFlags.length ? `; risk: ${riskFlags.join(', ')}` : '';
       const actionBucketHint = `; action bucket: ${actionBucket}`;
-      const hint = `urgency=${triage.urgency}, effort=${triage.effort}${actionBucketHint}${checklistHint}${reviewHint}${learningHint}${focusHint}${practiceHint}${retrievalHint}${socraticHint}${teachBackHint}${integrityHint}${codeDebugHint}${officeHoursHint}${collaborationHint}${lectureHint}${multimodalHint}${sourceGroundingHint}${tutorContextHint}${portabilityHint}${wrapUpHint}${rubricHint}${preSubmitHint}${notebookStudyPackHint}${aiHandoffHint}${csWorkflowHint}${activePracticeHint}${metacognitiveHint}${spacedReviewHint}${examCountdownHint}${peerAccountabilityHint}${gradeImpactHint}${phaseHint}${riskHint}`;
+      const hint = `urgency=${triage.urgency}, effort=${triage.effort}${actionBucketHint}${checklistHint}${reviewHint}${learningHint}${focusHint}${practiceHint}${retrievalHint}${socraticHint}${teachBackHint}${integrityHint}${privacyConsentHint}${codeDebugHint}${officeHoursHint}${collaborationHint}${lectureHint}${multimodalHint}${sourceGroundingHint}${tutorContextHint}${portabilityHint}${wrapUpHint}${rubricHint}${preSubmitHint}${notebookStudyPackHint}${aiHandoffHint}${csWorkflowHint}${activePracticeHint}${metacognitiveHint}${spacedReviewHint}${examCountdownHint}${peerAccountabilityHint}${gradeImpactHint}${phaseHint}${riskHint}`;
       return `- "${d.title}" (${d.courseName || 'General'}) due ${dueLabel}; ${hint}${evidence ? `; notes: ${evidence}` : ''}`;
     }).join('\n');
 
@@ -1002,6 +1025,7 @@
       const socraticHints = inferSocraticStudyHints(item);
       const teachBackHints = inferTeachBackHints(item);
       const integrityHints = inferAcademicIntegrityHints(item);
+      const privacyConsentHints = inferPrivacyConsentHints(item);
       const codeDebugHints = inferCodeDebugHints(item);
       const officeHoursHints = inferOfficeHoursPrepHints(item);
       const collaborationHints = inferCollaborationHandoffHints(item);
@@ -1050,6 +1074,7 @@
         socraticHints.length ? `Tutor mode: ${socraticHints.join(' · ')}` : '',
         teachBackHints.length ? `Teach-back: ${teachBackHints.join(' · ')}` : '',
         learningHints.length ? `Study: ${learningHints.join(' · ')}` : '',
+        privacyConsentHints.length ? `Privacy: ${privacyConsentHints.join(' · ')}` : '',
         integrityHints.length ? `Integrity: ${integrityHints.join(' · ')}` : ''
       ].find(Boolean) || '';
       row.dataset.urgency = triage.urgency;
@@ -1438,6 +1463,6 @@
     init,
     refresh,
     draftWeek,
-    __test: { classifyDeadline, compactDeadlineText, getSubmissionSnapshot, classifyActionBucket, getAssignmentPointValue, inferSubmissionChecklist, inferConceptReviewHints, inferGradeImpactHints, inferSubmissionStatusFlags, inferPlannerRiskFlags, inferStudyPhases, inferLearningStrategyHints, inferFocusSprintHints, inferPracticeArtifactHints, inferRetrievalCalibrationHints, inferSocraticStudyHints, inferTeachBackHints, inferAcademicIntegrityHints, inferCodeDebugHints, inferOfficeHoursPrepHints, inferCollaborationHandoffHints, inferLectureCaptureHints, inferMultimodalStudyAssetHints, inferSourceGroundingHints, inferTutorContextPackHints, inferPortabilityBackupHints, inferStudyWrapUpHints, inferRubricScoringHints, inferPreSubmitVerificationHints, inferNotebookStudyPackHints, inferAiHandoffHints, inferCsWorkflowHints, inferActivePracticeLoopHints, inferMetacognitiveCalibrationHints, inferSpacedReviewPlan, inferExamCountdownHints, inferPeerStudyAccountabilityHints, recommendNextStudyAction, buildWorkloadTimeline, buildPlannerPrompt, extractJsonArray, nextStudyWindowStart, findRelevantDeadlineForBlock, normalizeStudyBlocks, buildFallbackStudyBlocks, toLocalInputValue }
+    __test: { classifyDeadline, compactDeadlineText, getSubmissionSnapshot, classifyActionBucket, getAssignmentPointValue, inferSubmissionChecklist, inferConceptReviewHints, inferGradeImpactHints, inferSubmissionStatusFlags, inferPlannerRiskFlags, inferStudyPhases, inferLearningStrategyHints, inferFocusSprintHints, inferPracticeArtifactHints, inferRetrievalCalibrationHints, inferSocraticStudyHints, inferTeachBackHints, inferAcademicIntegrityHints, inferPrivacyConsentHints, inferCodeDebugHints, inferOfficeHoursPrepHints, inferCollaborationHandoffHints, inferLectureCaptureHints, inferMultimodalStudyAssetHints, inferSourceGroundingHints, inferTutorContextPackHints, inferPortabilityBackupHints, inferStudyWrapUpHints, inferRubricScoringHints, inferPreSubmitVerificationHints, inferNotebookStudyPackHints, inferAiHandoffHints, inferCsWorkflowHints, inferActivePracticeLoopHints, inferMetacognitiveCalibrationHints, inferSpacedReviewPlan, inferExamCountdownHints, inferPeerStudyAccountabilityHints, recommendNextStudyAction, buildWorkloadTimeline, buildPlannerPrompt, extractJsonArray, nextStudyWindowStart, findRelevantDeadlineForBlock, normalizeStudyBlocks, buildFallbackStudyBlocks, toLocalInputValue }
   };
 })();

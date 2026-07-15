@@ -264,6 +264,31 @@ test('SmartPlanner inferTeachBackHints detects explain-aloud study needs', () =>
   assert.deepEqual(Array.from(hints), ['explain aloud', 'teach key concepts', 'find explanation gaps']);
 });
 
+test('SmartPlanner inferPrivacyConsentHints detects AI notetaker consent and data-sharing needs', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferPrivacyConsentHints({
+    title: 'AI note-taking lecture capture for group discussion',
+    description: 'Record the seminar transcript with classmates in Zoom, anonymize sensitive student data, and upload notes to an LLM assistant.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['confirm recording consent', 'avoid private peer details', 'check AI data sharing']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes privacy and consent hints for recorded study workflows', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00');
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'Recorded study-group transcript review',
+      courseName: 'Psych',
+      ts: new Date('2026-07-11T18:00:00-07:00').getTime(),
+      description: 'Use an AI note-taker to transcribe classmates discussing interview data; redact confidential details before uploading.'
+    }
+  ], now);
+
+  assert.match(prompt, /privacy\/consent: confirm recording consent, avoid private peer details, check AI data sharing/);
+});
+
 test('SmartPlanner inferSocraticStudyHints prefers guided tutoring over answer dumping', () => {
   const planner = loadSmartPlanner();
   const hints = planner.__test.inferSocraticStudyHints({
