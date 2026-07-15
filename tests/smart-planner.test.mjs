@@ -1278,6 +1278,31 @@ test('SmartPlanner buildPlannerPrompt includes peer accountability hints', () =>
   assert.match(prompt, /peer accountability: schedule peer check-in, use accountability block, share progress update/);
 });
 
+test('SmartPlanner inferBlockedDependencyHints detects access and asset blockers', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferBlockedDependencyHints({
+    title: 'ML lab setup',
+    description: 'Waiting on API key permission before you can download the dataset and starter repo.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['resolve blocker first', 'collect required assets', 'verify access early']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes dependency blocker hints', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00');
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'Team project integration',
+      courseName: 'CS',
+      ts: new Date('2026-07-12T18:00:00-07:00').getTime(),
+      description: 'Blocked by teammate approval and SSH key access before merging the starter repo.'
+    }
+  ], now);
+
+  assert.match(prompt, /dependency blockers: resolve blocker first, collect required assets, verify access early/);
+});
+
 
 test('SmartPlanner inferGradeImpactHints surfaces point value and recovery signals', () => {
   const planner = loadSmartPlanner();
