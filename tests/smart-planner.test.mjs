@@ -1183,6 +1183,16 @@ test('SmartPlanner inferCsWorkflowHints decomposes programming assignments safel
   assert.deepEqual(Array.from(hints), ['read spec first', 'set up starter code', 'implement core path', 'run tests before submit']);
 });
 
+test('SmartPlanner inferCsWorkflowHints calls out edge-case planning for CS specs', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferCsWorkflowHints({
+    title: 'Parser implementation checkpoint',
+    description: 'Read the spec, implement input/output handling, cover empty input, null tokens, and boundary cases with tests.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['read spec first', 'implement core path', 'list edge cases', 'run tests before submit']);
+});
+
 test('SmartPlanner buildPlannerPrompt includes CS workflow hints', () => {
   const planner = loadSmartPlanner();
   const prompt = planner.__test.buildPlannerPrompt([
