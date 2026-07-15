@@ -1462,3 +1462,28 @@ test('SmartPlanner buildPlannerPrompt includes autograder feedback hints', () =>
 
   assert.match(prompt, /autograder feedback: summarize failing tests, capture error evidence, map feedback to fixes/);
 });
+
+test('SmartPlanner inferWorkedExampleHints detects scaffolded example workflows', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferWorkedExampleHints({
+    title: 'Recursion proof practice',
+    description: 'Review the worked example, then complete the faded example template and transfer the method to a similar problem.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['study worked example', 'fade scaffolding', 'reconstruct steps']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes worked example ladder hints', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00');
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'Proof practice set',
+      courseName: 'CS',
+      ts: new Date('2026-07-13T18:00:00-07:00').getTime(),
+      description: 'Use the sample solution walkthrough, fill-in scaffold, and explain each step before trying a variant.'
+    }
+  ], now);
+
+  assert.match(prompt, /worked example ladder: study worked example, fade scaffolding, reconstruct steps/);
+});
