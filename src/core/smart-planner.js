@@ -818,62 +818,74 @@
     return hints.slice(0, 3);
   }
 
-  function recommendNextStudyAction(items, nowMs = Date.now()) {
-    const candidates = (Array.isArray(items) ? items : [])
-      .filter(item => item && !item.done && Number.isFinite(Number(item.ts)))
-      .map(item => {
-        const ts = Number(item.ts);
-        const hoursUntilDue = (ts - nowMs) / (60 * 60 * 1000);
-        const triage = classifyDeadline({ ...item, ts }, nowMs);
-        let score = 0;
-        const reasons = [];
+  function scoreStudyActionCandidate(item, nowMs = Date.now()) {
+    if (!item || item.done || !Number.isFinite(Number(item.ts))) return null;
+    const ts = Number(item.ts);
+    const hoursUntilDue = (ts - nowMs) / (60 * 60 * 1000);
+    const triage = classifyDeadline({ ...item, ts }, nowMs);
+    const actionBucket = classifyActionBucket(item, nowMs);
+    if (actionBucket === 'submitted') return null;
+    let score = 0;
+    const reasons = [];
 
-        if (hoursUntilDue < 0) { score += 100; reasons.push('overdue'); }
-        else if (hoursUntilDue <= 24) { score += 80; reasons.push('due today'); }
-        else if (hoursUntilDue <= 72) { score += 45; reasons.push('due soon'); }
-        else { score += Math.max(0, 20 - hoursUntilDue / 24); }
+    if (hoursUntilDue < 0) { score += 100; reasons.push('overdue'); }
+    else if (hoursUntilDue <= 24) { score += 80; reasons.push('due today'); }
+    else if (hoursUntilDue <= 72) { score += 45; reasons.push('due soon'); }
+    else { score += Math.max(0, 20 - hoursUntilDue / 24); }
 
-        if (triage.effort === 'high') { score += 40; reasons.push('high effort'); }
-        else if (triage.effort === 'quick') { score += 8; reasons.push('quick win'); }
+    if (triage.effort === 'high') { score += 40; reasons.push('high effort'); }
+    else if (triage.effort === 'quick') { score += 8; reasons.push('quick win'); }
 
-        const actionBucket = classifyActionBucket(item, nowMs);
-        if (actionBucket === 'submitted') { score -= 90; reasons.push('already submitted'); }
-        else if (actionBucket === 'overdue') { score += 20; reasons.push('needs action'); }
-        else if (actionBucket === 'due soon') { score += 10; if (!reasons.includes('due soon')) reasons.push('due soon'); }
+    if (actionBucket === 'overdue') { score += 20; reasons.push('needs action'); }
+    else if (actionBucket === 'due soon') { score += 10; if (!reasons.includes('due soon')) reasons.push('due soon'); }
 
-        const pointValue = getAssignmentPointValue(item);
-        if (Number.isFinite(pointValue)) {
-          if (pointValue >= 100) { score += 25; reasons.push('high grade impact'); }
-          else if (pointValue >= 50) { score += 12; reasons.push('meaningful points'); }
-          else if (pointValue <= 10 && hoursUntilDue <= 72) { score += 6; reasons.push('quick points'); }
-        }
+    const pointValue = getAssignmentPointValue(item);
+    if (Number.isFinite(pointValue)) {
+      if (pointValue >= 100) { score += 25; reasons.push('high grade impact'); }
+      else if (pointValue >= 50) { score += 12; reasons.push('meaningful points'); }
+      else if (pointValue <= 10 && hoursUntilDue <= 72) { score += 6; reasons.push('quick points'); }
+    }
 
-        const sourceText = `${item.title || ''} ${item.description || item.text || item.content || ''}`.toLowerCase();
-        if (/\b(not started|starter|draft|proposal|milestone|checkpoint|practice|review)\b/.test(sourceText)) {
-          score += 10;
-          reasons.push('needs progress');
-        }
+    const sourceText = `${item.title || ''} ${item.description || item.text || item.content || ''}`.toLowerCase();
+    if (/\b(not started|starter|draft|proposal|milestone|checkpoint|practice|review)\b/.test(sourceText)) {
+      score += 10;
+      reasons.push('needs progress');
+    }
 
-        return { item, ts, triage, score, reasons };
-      })
-      .sort((a, b) => b.score - a.score || a.ts - b.ts);
+    return { item, ts, triage, score, reasons };
+  }
 
-    if (!candidates.length) return null;
-    const best = candidates[0];
-    const title = String(best.item.title || 'upcoming deadline').trim();
-    const course = String(best.item.courseName || best.item.course || '').trim();
-    const verb = best.triage.effort === 'quick' ? 'Finish' : best.triage.effort === 'high' ? 'Do a 45-minute deep-work sprint on' : 'Spend 45 minutes on';
-    const reason = best.reasons.length ? best.reasons.slice(0, 4).join(' + ') : 'highest priority';
+  function formatStudyActionRecommendation(candidate) {
+    if (!candidate) return null;
+    const title = String(candidate.item.title || 'upcoming deadline').trim();
+    const course = String(candidate.item.courseName || candidate.item.course || '').trim();
+    const verb = candidate.triage.effort === 'quick' ? 'Finish' : candidate.triage.effort === 'high' ? 'Do a 45-minute deep-work sprint on' : 'Spend 45 minutes on';
+    const reason = candidate.reasons.length ? candidate.reasons.slice(0, 4).join(' + ') : 'highest priority';
     return {
       title,
       course,
       reason,
       action: `${verb} ${title}`,
-      urgency: best.triage.urgency,
-      effort: best.triage.effort,
-      dueAt: best.ts,
-      score: best.score
+      urgency: candidate.triage.urgency,
+      effort: candidate.triage.effort,
+      dueAt: candidate.ts,
+      score: candidate.score
     };
+  }
+
+  function recommendTopStudyActions(items, nowMs = Date.now(), limit = 3) {
+    const safeLimit = Math.max(1, Math.min(5, Number(limit) || 3));
+    return (Array.isArray(items) ? items : [])
+      .map(item => scoreStudyActionCandidate(item, nowMs))
+      .filter(Boolean)
+      .sort((a, b) => b.score - a.score || a.ts - b.ts)
+      .slice(0, safeLimit)
+      .map(formatStudyActionRecommendation)
+      .filter(Boolean);
+  }
+
+  function recommendNextStudyAction(items, nowMs = Date.now()) {
+    return recommendTopStudyActions(items, nowMs, 1)[0] || null;
   }
 
   function startOfLocalDay(ms) {
@@ -1040,18 +1052,18 @@
     const now = Date.now();
     renderWorkloadTimeline(items, list, now);
 
-    const recommendation = recommendNextStudyAction(items, now);
-    if (recommendation) {
+    const recommendations = recommendTopStudyActions(items, now, 3);
+    recommendations.forEach((recommendation, index) => {
       const next = document.createElement('div');
       next.className = 'plan-deadline-row plan-next-action animate-fade-in';
       next.innerHTML = `
-        <span class="plan-deadline-date">NEXT</span>
+        <span class="plan-deadline-date">NEXT ${index + 1}</span>
         <span class="plan-deadline-title">${escapeHtml(recommendation.action)}</span>
         <span class="plan-deadline-course">${escapeHtml(recommendation.course)}</span>
         <span class="plan-deadline-triage" title="Recommended because ${escapeHtml(recommendation.reason)}">${escapeHtml(recommendation.reason)}</span>
       `;
       list.appendChild(next);
-    }
+    });
 
     items.slice(0, 12).forEach((item, i) => {
       const row = document.createElement(item.url ? 'button' : 'div');
@@ -1515,6 +1527,6 @@
     init,
     refresh,
     draftWeek,
-    __test: { classifyDeadline, compactDeadlineText, getSubmissionSnapshot, classifyActionBucket, getAssignmentPointValue, inferSubmissionChecklist, inferConceptReviewHints, inferGradeImpactHints, inferSubmissionStatusFlags, inferPlannerRiskFlags, inferStudyPhases, inferLearningStrategyHints, inferFocusSprintHints, inferPracticeArtifactHints, inferRetrievalCalibrationHints, inferSocraticStudyHints, inferTeachBackHints, inferAcademicIntegrityHints, inferPrivacyConsentHints, inferCodeDebugHints, inferOfficeHoursPrepHints, inferCollaborationHandoffHints, inferLectureCaptureHints, inferMultimodalStudyAssetHints, inferSourceGroundingHints, inferTutorContextPackHints, inferPortabilityBackupHints, inferStudyWrapUpHints, inferRubricScoringHints, inferPreSubmitVerificationHints, inferAvailabilityWindowHints, inferNotebookStudyPackHints, inferAiHandoffHints, inferCsWorkflowHints, inferActivePracticeLoopHints, inferMetacognitiveCalibrationHints, inferSpacedReviewPlan, inferExamCountdownHints, inferPeerStudyAccountabilityHints, inferBlockedDependencyHints, recommendNextStudyAction, buildWorkloadTimeline, renderDeadlineList, buildPlannerPrompt, extractJsonArray, nextStudyWindowStart, findRelevantDeadlineForBlock, normalizeStudyBlocks, buildFallbackStudyBlocks, toLocalInputValue }
+    __test: { classifyDeadline, compactDeadlineText, getSubmissionSnapshot, classifyActionBucket, getAssignmentPointValue, inferSubmissionChecklist, inferConceptReviewHints, inferGradeImpactHints, inferSubmissionStatusFlags, inferPlannerRiskFlags, inferStudyPhases, inferLearningStrategyHints, inferFocusSprintHints, inferPracticeArtifactHints, inferRetrievalCalibrationHints, inferSocraticStudyHints, inferTeachBackHints, inferAcademicIntegrityHints, inferPrivacyConsentHints, inferCodeDebugHints, inferOfficeHoursPrepHints, inferCollaborationHandoffHints, inferLectureCaptureHints, inferMultimodalStudyAssetHints, inferSourceGroundingHints, inferTutorContextPackHints, inferPortabilityBackupHints, inferStudyWrapUpHints, inferRubricScoringHints, inferPreSubmitVerificationHints, inferAvailabilityWindowHints, inferNotebookStudyPackHints, inferAiHandoffHints, inferCsWorkflowHints, inferActivePracticeLoopHints, inferMetacognitiveCalibrationHints, inferSpacedReviewPlan, inferExamCountdownHints, inferPeerStudyAccountabilityHints, inferBlockedDependencyHints, recommendTopStudyActions, recommendNextStudyAction, buildWorkloadTimeline, renderDeadlineList, buildPlannerPrompt, extractJsonArray, nextStudyWindowStart, findRelevantDeadlineForBlock, normalizeStudyBlocks, buildFallbackStudyBlocks, toLocalInputValue }
   };
 })();

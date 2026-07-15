@@ -426,6 +426,43 @@ test('SmartPlanner recommendNextStudyAction prioritizes high-effort urgent work 
   assert.match(recommendation.reason, /needs progress/);
 });
 
+test('SmartPlanner recommendTopStudyActions surfaces a ranked next-three triage list', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00').getTime();
+  const recommendations = planner.__test.recommendTopStudyActions([
+    {
+      title: 'Already submitted project',
+      courseName: 'CS 61B',
+      description: 'Large project milestone.',
+      submitted: true,
+      ts: new Date('2026-07-10T12:00:00-07:00').getTime()
+    },
+    {
+      title: 'Capstone design review',
+      courseName: 'CS 198',
+      description: 'Draft milestone with 150 points and starter repo notes.',
+      ts: new Date('2026-07-11T18:00:00-07:00').getTime()
+    },
+    {
+      title: 'Reading quiz',
+      courseName: 'History',
+      description: 'Quick quiz worth 5 points.',
+      ts: new Date('2026-07-10T20:00:00-07:00').getTime()
+    },
+    {
+      title: 'Optional worksheet',
+      courseName: 'Math',
+      ts: new Date('2026-07-13T12:00:00-07:00').getTime()
+    }
+  ], now, 3);
+
+  assert.equal(recommendations.length, 3);
+  assert.equal(recommendations[0].title, 'Capstone design review');
+  assert.match(recommendations[0].reason, /high effort/);
+  assert.equal(recommendations[1].title, 'Reading quiz');
+  assert.ok(recommendations.every(item => item.title !== 'Already submitted project'));
+});
+
 test('SmartPlanner recommendNextStudyAction ignores completed or undated work', () => {
   const planner = loadSmartPlanner();
   const now = new Date('2026-07-10T10:00:00-07:00').getTime();
