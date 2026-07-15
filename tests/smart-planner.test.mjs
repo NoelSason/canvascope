@@ -8,25 +8,31 @@ import { fileURLToPath } from 'node:url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const smartPlannerCode = fs.readFileSync(path.resolve(__dirname, '..', 'src', 'core', 'smart-planner.js'), 'utf8');
 
-function loadSmartPlanner() {
+function createTestElement(tag = 'div') {
+  return {
+    tagName: tag.toUpperCase(),
+    className: '',
+    dataset: {},
+    style: {},
+    innerHTML: '',
+    textContent: '',
+    children: [],
+    appendChild(child) { this.children.push(child); return child; },
+    addEventListener() {},
+    querySelector() { return null; }
+  };
+}
+
+function loadSmartPlanner(options = {}) {
+  const elements = options.elements || {};
   const context = {
     console,
     RAGCore: { buildCorpus: async () => [] },
     AIRouter: {},
     chrome: { tabs: { create() {} }, storage: { local: { get: async () => ({}), set: async () => {} } }, runtime: { sendMessage() {} } },
     document: {
-      getElementById() { return null; },
-      createElement(tag) {
-        return {
-          tagName: tag.toUpperCase(),
-          className: '',
-          style: {},
-          innerHTML: '',
-          appendChild() {},
-          addEventListener() {},
-          querySelector() { return null; }
-        };
-      }
+      getElementById(id) { return elements[id] || null; },
+      createElement(tag) { return createTestElement(tag); }
     },
     window: {}
   };
@@ -1129,6 +1135,31 @@ test('SmartPlanner buildPlannerPrompt includes metacognitive calibration hints',
   ], now);
 
   assert.match(prompt, /metacognitive calibration: predict score before grading, mark confidence per question, compare confidence to misses/);
+});
+
+test('SmartPlanner renderDeadlineList surfaces metacognitive calibration in deadline rows', () => {
+  const deadlineList = createTestElement('div');
+  const deadlineCount = createTestElement('span');
+  const planner = loadSmartPlanner({
+    elements: {
+      'plan-deadline-list': deadlineList,
+      'plan-deadline-count': deadlineCount
+    }
+  });
+
+  planner.__test.renderDeadlineList([
+    {
+      title: 'Confidence calibration checkpoint',
+      courseName: 'CS 61B',
+      ts: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).getTime(),
+      description: 'Self-assessment: mark confidence and uncertainty before checking answers.'
+    }
+  ]);
+
+  const rendered = deadlineList.children.map(child => child.innerHTML).join('\n');
+  assert.match(rendered, /Calibration: mark confidence per question/);
+  assert.match(rendered, /metacognitive calibration: mark confidence per question/);
+  assert.equal(deadlineCount.textContent, '1 dated');
 });
 
 test('SmartPlanner inferSpacedReviewPlan suggests spaced reviews before the due date', () => {
