@@ -907,6 +907,30 @@ test('SmartPlanner buildPlannerPrompt includes code/debug hints', () => {
   assert.match(prompt, /code\/debug: explain error, write debug notes, trace API flow/);
 });
 
+test('SmartPlanner inferMinimalReproHints prepares AI and TA debugging handoffs', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferMinimalReproHints({
+    title: 'Cursor autograder wrong-answer help',
+    description: 'Use an AI assistant after isolating the failing pytest case with sample input, expected output, and the actual traceback.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['make minimal repro', 'record expected vs actual', 'isolate one failing test']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes minimal repro hints', () => {
+  const planner = loadSmartPlanner();
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'AI-assisted autograder debug',
+      courseName: 'CS 61B',
+      ts: new Date('2026-07-12T18:00:00-07:00').getTime(),
+      description: 'Before asking ChatGPT, isolate the failing unit test and compare expected versus actual output for the wrong answer.'
+    }
+  ], new Date('2026-07-10T10:00:00-07:00'));
+
+  assert.match(prompt, /minimal repro: make minimal repro, record expected vs actual, isolate one failing test/);
+});
+
 test('SmartPlanner inferPlannerRiskFlags surfaces setup and help-seeking blockers', () => {
   const planner = loadSmartPlanner();
   const now = new Date('2026-07-10T10:00:00-07:00').getTime();
