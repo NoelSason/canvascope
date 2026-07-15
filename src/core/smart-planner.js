@@ -839,6 +839,27 @@
     return hints.slice(0, 3);
   }
 
+  function inferRecurringRoutineHints(item) {
+    const source = `${item?.title || ''} ${item?.description || item?.text || item?.content || ''}`.toLowerCase();
+    const hints = [];
+    const add = (label) => { if (!hints.includes(label)) hints.push(label); };
+
+    if (/\b(weekly|every\s+(mon|tues|wednes|thurs|fri|satur|sun)day|recurring|routine|each week|week \d+|module \d+|unit \d+)\b/.test(source)) {
+      add('reuse weekly routine');
+    }
+    if (/\b(lab|discussion|section|recitation|studio|seminar|workshop)\b/.test(source)) {
+      add('prep recurring section');
+    }
+    if (/\b(quiz|reading|reflection|problem set|pset|homework|worksheet|checkpoint)\b/.test(source)) {
+      add('template repeat task');
+    }
+    if (/\b(pattern|same format|again|next one|previous|last week|cadence)\b/.test(source)) {
+      add('compare with last cycle');
+    }
+
+    return hints.slice(0, 3);
+  }
+
   function inferBlockedDependencyHints(item) {
     const source = `${item?.title || ''} ${item?.description || item?.text || item?.content || ''}`.toLowerCase();
     const hints = [];
@@ -1033,6 +1054,7 @@
       const spacedReviewPlan = inferSpacedReviewPlan(d, nowMs);
       const examCountdownHints = inferExamCountdownHints(d, nowMs);
       const peerAccountabilityHints = inferPeerStudyAccountabilityHints(d);
+      const recurringRoutineHints = inferRecurringRoutineHints(d);
       const blockedDependencyHints = inferBlockedDependencyHints(d);
       const gradeImpactHints = inferGradeImpactHints(d);
       const riskFlags = inferPlannerRiskFlags(d, deadlines, nowMs);
@@ -1068,12 +1090,13 @@
       const spacedReviewHint = spacedReviewPlan.length ? `; spaced review plan: ${spacedReviewPlan.join(', ')}` : '';
       const examCountdownHint = examCountdownHints.length ? `; exam countdown: ${examCountdownHints.join(', ')}` : '';
       const peerAccountabilityHint = peerAccountabilityHints.length ? `; peer accountability: ${peerAccountabilityHints.join(', ')}` : '';
+      const recurringRoutineHint = recurringRoutineHints.length ? `; recurring routine: ${recurringRoutineHints.join(', ')}` : '';
       const blockedDependencyHint = blockedDependencyHints.length ? `; dependency blockers: ${blockedDependencyHints.join(', ')}` : '';
       const gradeImpactHint = gradeImpactHints.length ? `; grade impact: ${gradeImpactHints.join(', ')}` : '';
       const phaseHint = studyPhases.length ? `; suggested phases: ${studyPhases.join(', ')}` : '';
       const riskHint = riskFlags.length ? `; risk: ${riskFlags.join(', ')}` : '';
       const actionBucketHint = `; action bucket: ${actionBucket}`;
-      const hint = `urgency=${triage.urgency}, effort=${triage.effort}${actionBucketHint}${checklistHint}${reviewHint}${learningHint}${focusHint}${practiceHint}${retrievalHint}${socraticHint}${teachBackHint}${integrityHint}${privacyConsentHint}${codeDebugHint}${autograderFeedbackHint}${officeHoursHint}${collaborationHint}${lectureHint}${multimodalHint}${sourceGroundingHint}${evidencePackHint}${tutorContextHint}${portabilityHint}${wrapUpHint}${rubricHint}${preSubmitHint}${availabilityWindowHint}${notebookStudyPackHint}${aiHandoffHint}${csWorkflowHint}${activePracticeHint}${metacognitiveHint}${spacedReviewHint}${examCountdownHint}${peerAccountabilityHint}${blockedDependencyHint}${gradeImpactHint}${phaseHint}${riskHint}`;
+      const hint = `urgency=${triage.urgency}, effort=${triage.effort}${actionBucketHint}${checklistHint}${reviewHint}${learningHint}${focusHint}${practiceHint}${retrievalHint}${socraticHint}${teachBackHint}${integrityHint}${privacyConsentHint}${codeDebugHint}${autograderFeedbackHint}${officeHoursHint}${collaborationHint}${lectureHint}${multimodalHint}${sourceGroundingHint}${evidencePackHint}${tutorContextHint}${portabilityHint}${wrapUpHint}${rubricHint}${preSubmitHint}${availabilityWindowHint}${notebookStudyPackHint}${aiHandoffHint}${csWorkflowHint}${activePracticeHint}${metacognitiveHint}${spacedReviewHint}${examCountdownHint}${peerAccountabilityHint}${recurringRoutineHint}${blockedDependencyHint}${gradeImpactHint}${phaseHint}${riskHint}`;
       return `- "${d.title}" (${d.courseName || 'General'}) due ${dueLabel}; ${hint}${evidence ? `; notes: ${evidence}` : ''}`;
     }).join('\n');
 
@@ -1151,6 +1174,7 @@
       const spacedReviewPlan = inferSpacedReviewPlan(item, now);
       const examCountdownHints = inferExamCountdownHints(item, now);
       const peerAccountabilityHints = inferPeerStudyAccountabilityHints(item);
+      const recurringRoutineHints = inferRecurringRoutineHints(item);
       const blockedDependencyHints = inferBlockedDependencyHints(item);
       const gradeImpactHints = inferGradeImpactHints(item);
       const riskFlags = inferPlannerRiskFlags(item, items, now);
@@ -1177,6 +1201,7 @@
         activePracticeHints.length ? `Practice loop: ${activePracticeHints.join(' · ')}` : '',
         examCountdownHints.length ? `Exam plan: ${examCountdownHints.join(' · ')}` : '',
         peerAccountabilityHints.length ? `Accountability: ${peerAccountabilityHints.join(' · ')}` : '',
+        recurringRoutineHints.length ? `Routine: ${recurringRoutineHints.join(' · ')}` : '',
         blockedDependencyHints.length ? `Blockers: ${blockedDependencyHints.join(' · ')}` : '',
         gradeImpactHints.length ? `Grade impact: ${gradeImpactHints.join(' · ')}` : '',
         spacedReviewPlan.length ? `Spaced review: ${spacedReviewPlan.join(' · ')}` : '',
@@ -1575,6 +1600,6 @@
     init,
     refresh,
     draftWeek,
-    __test: { classifyDeadline, compactDeadlineText, getSubmissionSnapshot, classifyActionBucket, getAssignmentPointValue, inferSubmissionChecklist, inferConceptReviewHints, inferGradeImpactHints, inferSubmissionStatusFlags, inferPlannerRiskFlags, inferStudyPhases, inferLearningStrategyHints, inferFocusSprintHints, inferPracticeArtifactHints, inferRetrievalCalibrationHints, inferSocraticStudyHints, inferTeachBackHints, inferAcademicIntegrityHints, inferPrivacyConsentHints, inferCodeDebugHints, inferAutograderFeedbackHints, inferOfficeHoursPrepHints, inferCollaborationHandoffHints, inferLectureCaptureHints, inferMultimodalStudyAssetHints, inferSourceGroundingHints, inferEvidencePackHints, inferTutorContextPackHints, inferPortabilityBackupHints, inferStudyWrapUpHints, inferRubricScoringHints, inferPreSubmitVerificationHints, inferAvailabilityWindowHints, inferNotebookStudyPackHints, inferAiHandoffHints, inferCsWorkflowHints, inferActivePracticeLoopHints, inferMetacognitiveCalibrationHints, inferSpacedReviewPlan, inferExamCountdownHints, inferPeerStudyAccountabilityHints, inferBlockedDependencyHints, recommendTopStudyActions, recommendNextStudyAction, buildWorkloadTimeline, renderDeadlineList, buildPlannerPrompt, extractJsonArray, nextStudyWindowStart, findRelevantDeadlineForBlock, normalizeStudyBlocks, buildFallbackStudyBlocks, toLocalInputValue }
+    __test: { classifyDeadline, compactDeadlineText, getSubmissionSnapshot, classifyActionBucket, getAssignmentPointValue, inferSubmissionChecklist, inferConceptReviewHints, inferGradeImpactHints, inferSubmissionStatusFlags, inferPlannerRiskFlags, inferStudyPhases, inferLearningStrategyHints, inferFocusSprintHints, inferPracticeArtifactHints, inferRetrievalCalibrationHints, inferSocraticStudyHints, inferTeachBackHints, inferAcademicIntegrityHints, inferPrivacyConsentHints, inferCodeDebugHints, inferAutograderFeedbackHints, inferOfficeHoursPrepHints, inferCollaborationHandoffHints, inferLectureCaptureHints, inferMultimodalStudyAssetHints, inferSourceGroundingHints, inferEvidencePackHints, inferTutorContextPackHints, inferPortabilityBackupHints, inferStudyWrapUpHints, inferRubricScoringHints, inferPreSubmitVerificationHints, inferAvailabilityWindowHints, inferNotebookStudyPackHints, inferAiHandoffHints, inferCsWorkflowHints, inferActivePracticeLoopHints, inferMetacognitiveCalibrationHints, inferSpacedReviewPlan, inferExamCountdownHints, inferPeerStudyAccountabilityHints, inferRecurringRoutineHints, inferBlockedDependencyHints, recommendTopStudyActions, recommendNextStudyAction, buildWorkloadTimeline, renderDeadlineList, buildPlannerPrompt, extractJsonArray, nextStudyWindowStart, findRelevantDeadlineForBlock, normalizeStudyBlocks, buildFallbackStudyBlocks, toLocalInputValue }
   };
 })();

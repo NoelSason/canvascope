@@ -745,6 +745,30 @@ test('SmartPlanner buildPlannerPrompt includes planner risk flags', () => {
   assert.match(prompt, /risk: start now, link notes, submission check/);
 });
 
+test('SmartPlanner inferRecurringRoutineHints detects repeated course cadences', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferRecurringRoutineHints({
+    title: 'Weekly lab checkpoint',
+    description: 'Every Thursday discussion follows the same format as last week: reading quiz, worksheet, and progress update.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['reuse weekly routine', 'prep recurring section', 'template repeat task']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes recurring routine hints', () => {
+  const planner = loadSmartPlanner();
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'Week 4 lab quiz',
+      courseName: 'CS 61B',
+      ts: new Date('2026-07-11T18:00:00-07:00').getTime(),
+      description: 'Recurring weekly lab section with the same worksheet pattern as previous weeks.'
+    }
+  ], new Date('2026-07-10T10:00:00-07:00'));
+
+  assert.match(prompt, /recurring routine: reuse weekly routine, prep recurring section, template repeat task/);
+});
+
 test('SmartPlanner buildFallbackStudyBlocks skips impossible same-day deadlines', () => {
   const planner = loadSmartPlanner();
   const now = new Date('2026-07-10T10:00:00-07:00').getTime();
