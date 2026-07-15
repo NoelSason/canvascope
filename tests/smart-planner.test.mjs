@@ -1039,6 +1039,30 @@ test('SmartPlanner buildPlannerPrompt includes pre-submit verification hints', (
   assert.match(prompt, /pre-submit: verify correct file, confirm submission receipt, push final commit/);
 });
 
+test('SmartPlanner inferAvailabilityWindowHints detects LMS lock windows and timed attempts', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferAvailabilityWindowHints({
+    title: 'Timed Canvas quiz',
+    description: 'Available until the lock date with one attempt, a 50 minute time limit, and no late submissions after the grace period.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['check availability window', 'submit before lock', 'budget timed attempt']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes availability window hints', () => {
+  const planner = loadSmartPlanner();
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'Locked Canvas final quiz',
+      courseName: 'CS 70',
+      ts: new Date('2026-07-12T18:00:00-07:00').getTime(),
+      description: 'Available from noon until the lock date. Timed one-attempt quiz with a late penalty after the grace period.'
+    }
+  ], new Date('2026-07-10T10:00:00-07:00'));
+
+  assert.match(prompt, /availability window: check availability window, submit before lock, budget timed attempt/);
+});
+
 test('SmartPlanner inferNotebookStudyPackHints detects source-grounded study pack cues', () => {
   const planner = loadSmartPlanner();
   const hints = planner.__test.inferNotebookStudyPackHints({
