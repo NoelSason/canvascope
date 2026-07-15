@@ -1413,3 +1413,28 @@ test('SmartPlanner buildPlannerPrompt includes grade impact hints', () => {
 
   assert.match(prompt, /grade impact: 150 pts: high grade impact, protect against penalties/);
 });
+
+test('SmartPlanner inferAutograderFeedbackHints summarizes CS grader feedback workflows', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferAutograderFeedbackHints({
+    title: 'Gradescope retry',
+    description: 'Hidden tests failed with a traceback and rubric comments mention partial credit before resubmission deadline.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['summarize failing tests', 'capture error evidence', 'map feedback to fixes']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes autograder feedback hints', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00');
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'Lab 4 autograder fix',
+      courseName: 'CS',
+      ts: new Date('2026-07-11T18:00:00-07:00').getTime(),
+      description: 'Gradescope public tests show wrong answer, stderr has an exception, and the rubric says lost points can be recovered on retry.'
+    }
+  ], now);
+
+  assert.match(prompt, /autograder feedback: summarize failing tests, capture error evidence, map feedback to fixes/);
+});
