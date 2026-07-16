@@ -1326,6 +1326,30 @@ test('SmartPlanner buildPlannerPrompt includes CS workflow hints', () => {
   assert.match(prompt, /CS workflow: read spec first, set up starter code, implement core path, run tests before submit/);
 });
 
+test('SmartPlanner inferAssignmentSpecExtractionHints extracts CS assignment key facts', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferAssignmentSpecExtractionHints({
+    title: 'Parser project spec',
+    description: 'Requirements: implement Parser class methods, read JSON input/output format, obey time complexity constraints and collaboration policy.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['extract required deliverables', 'capture input/output contract', 'list code touchpoints']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes assignment spec extraction hints', () => {
+  const planner = loadSmartPlanner();
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'API assignment specification',
+      courseName: 'CS 186',
+      ts: new Date('2026-07-11T12:00:00-07:00').getTime(),
+      description: 'Deliverables include endpoint methods, expected CSV input/output, memory limits, and a late policy.'
+    }
+  ], new Date('2026-07-10T10:00:00-07:00'));
+
+  assert.match(prompt, /assignment spec: extract required deliverables, capture input\/output contract, list code touchpoints/);
+});
+
 test('SmartPlanner inferActivePracticeLoopHints turns notes into active study loops', () => {
   const planner = loadSmartPlanner();
   const hints = planner.__test.inferActivePracticeLoopHints({
