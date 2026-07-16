@@ -1667,3 +1667,28 @@ test('SmartPlanner buildPlannerPrompt includes change awareness hints', () => {
 
   assert.match(prompt, /change awareness: review changed instructions, check new course materials, re-plan around new date/);
 });
+
+test('SmartPlanner inferQuestionBankHints detects source-grounded active recall workflows', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferQuestionBankHints({
+    title: 'Lecture transcript exam review',
+    description: 'Turn timestamped notes and slide citations into practice questions, then promote wrong answers to weak spot review.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['turn notes into question bank', 'tag questions by topic', 'anchor answers to source location']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes question bank hints', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00');
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'Recorded lecture final review',
+      courseName: 'CS 188',
+      ts: new Date('2026-07-12T18:00:00-07:00').getTime(),
+      description: 'Use the transcript timestamps and slide sources to make self-quiz questions for the final exam.'
+    }
+  ], now);
+
+  assert.match(prompt, /question bank: turn notes into question bank, tag questions by topic, anchor answers to source location/);
+});
