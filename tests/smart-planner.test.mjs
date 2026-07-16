@@ -759,6 +759,30 @@ test('SmartPlanner buildPlannerPrompt includes retrieval calibration hints', () 
   assert.match(prompt, /retrieval calibration: rate confidence before answers, log why misses happened, mark red\/yellow\/green topics/);
 });
 
+test('SmartPlanner inferExamConstraintHints detects allowed-material and proctoring setup needs', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferExamConstraintHints({
+    title: 'Data science final exam',
+    description: 'Open notes and calculator allowed. Respondus LockDown Browser with webcam room scan required.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['prepare allowed references', 'verify permitted tools', 'run proctoring setup check']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes exam constraint hints', () => {
+  const planner = loadSmartPlanner();
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'Closed-book algorithms midterm',
+      courseName: 'CS 170',
+      ts: new Date('2026-07-11T12:00:00-07:00').getTime(),
+      description: 'No notes. Scratch paper only; proctored ID check before the assessment.'
+    }
+  ], new Date('2026-07-10T10:00:00-07:00'));
+
+  assert.match(prompt, /exam constraints: practice from memory, run proctoring setup check/);
+});
+
 test('SmartPlanner inferPlannerRiskFlags surfaces deadline and submission risks', () => {
   const planner = loadSmartPlanner();
   const now = new Date('2026-07-10T10:00:00-07:00').getTime();

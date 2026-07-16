@@ -908,6 +908,29 @@
     return hints.slice(0, 3);
   }
 
+  function inferExamConstraintHints(item) {
+    const source = `${item?.title || ''} ${item?.description || item?.text || item?.content || ''}`.toLowerCase();
+    if (!/\b(exam|midterm|final|test|quiz|practicum|assessment)\b/.test(source)) return [];
+
+    const hints = [];
+    const add = (label) => { if (!hints.includes(label)) hints.push(label); };
+
+    if (/\b(open[- ]?(book|note|notes)|notes? allowed|reference sheet|formula sheet|cheat sheet|crib sheet)\b/.test(source)) {
+      add('prepare allowed references');
+    }
+    if (/\b(closed[- ]?(book|note|notes)|no notes?|notes? prohibited|without notes|memorization)\b/.test(source)) {
+      add('practice from memory');
+    }
+    if (/\b(calculator|desmos|spreadsheet|excel|r studio|rstudio|python|jupyter|matlab|software allowed|permitted tools?)\b/.test(source)) {
+      add('verify permitted tools');
+    }
+    if (/\b(proctor(?:ed|ing)?|lockdown browser|respondus|honorlock|examity|webcam|id check|scratch paper|blank paper|room scan)\b/.test(source)) {
+      add('run proctoring setup check');
+    }
+
+    return hints.slice(0, 3);
+  }
+
   function inferPeerStudyAccountabilityHints(item) {
     const source = `${item?.title || ''} ${item?.description || item?.text || item?.content || ''}`.toLowerCase();
     const hints = [];
@@ -1258,6 +1281,7 @@
       const metacognitiveHints = inferMetacognitiveCalibrationHints(d);
       const spacedReviewPlan = inferSpacedReviewPlan(d, nowMs);
       const examCountdownHints = inferExamCountdownHints(d, nowMs);
+      const examConstraintHints = inferExamConstraintHints(d);
       const peerAccountabilityHints = inferPeerStudyAccountabilityHints(d);
       const recurringRoutineHints = inferRecurringRoutineHints(d);
       const blockedDependencyHints = inferBlockedDependencyHints(d);
@@ -1303,6 +1327,7 @@
       const metacognitiveHint = metacognitiveHints.length ? `; metacognitive calibration: ${metacognitiveHints.join(', ')}` : '';
       const spacedReviewHint = spacedReviewPlan.length ? `; spaced review plan: ${spacedReviewPlan.join(', ')}` : '';
       const examCountdownHint = examCountdownHints.length ? `; exam countdown: ${examCountdownHints.join(', ')}` : '';
+      const examConstraintHint = examConstraintHints.length ? `; exam constraints: ${examConstraintHints.join(', ')}` : '';
       const peerAccountabilityHint = peerAccountabilityHints.length ? `; peer accountability: ${peerAccountabilityHints.join(', ')}` : '';
       const recurringRoutineHint = recurringRoutineHints.length ? `; recurring routine: ${recurringRoutineHints.join(', ')}` : '';
       const blockedDependencyHint = blockedDependencyHints.length ? `; dependency blockers: ${blockedDependencyHints.join(', ')}` : '';
@@ -1315,7 +1340,7 @@
       const phaseHint = studyPhases.length ? `; suggested phases: ${studyPhases.join(', ')}` : '';
       const riskHint = riskFlags.length ? `; risk: ${riskFlags.join(', ')}` : '';
       const actionBucketHint = `; action bucket: ${actionBucket}`;
-      const hint = `urgency=${triage.urgency}, effort=${triage.effort}${actionBucketHint}${checklistHint}${reviewHint}${learningHint}${focusHint}${practiceHint}${retrievalHint}${socraticHint}${teachBackHint}${integrityHint}${privacyConsentHint}${codeDebugHint}${minimalReproHint}${autograderFeedbackHint}${officeHoursHint}${collaborationHint}${lectureHint}${confusionCaptureHint}${audioReviewHint}${multimodalHint}${sourceGroundingHint}${evidencePackHint}${tutorContextHint}${portabilityHint}${wrapUpHint}${rubricHint}${preSubmitHint}${availabilityWindowHint}${notebookStudyPackHint}${aiHandoffHint}${csWorkflowHint}${activePracticeHint}${interleavedPracticeHint}${metacognitiveHint}${spacedReviewHint}${examCountdownHint}${peerAccountabilityHint}${recurringRoutineHint}${blockedDependencyHint}${workedExampleHint}${evidenceConfidenceHint}${changeAwarenessHint}${questionBankHint}${freshnessGuardHint}${gradeImpactHint}${phaseHint}${riskHint}`;
+      const hint = `urgency=${triage.urgency}, effort=${triage.effort}${actionBucketHint}${checklistHint}${reviewHint}${learningHint}${focusHint}${practiceHint}${retrievalHint}${socraticHint}${teachBackHint}${integrityHint}${privacyConsentHint}${codeDebugHint}${minimalReproHint}${autograderFeedbackHint}${officeHoursHint}${collaborationHint}${lectureHint}${confusionCaptureHint}${audioReviewHint}${multimodalHint}${sourceGroundingHint}${evidencePackHint}${tutorContextHint}${portabilityHint}${wrapUpHint}${rubricHint}${preSubmitHint}${availabilityWindowHint}${notebookStudyPackHint}${aiHandoffHint}${csWorkflowHint}${activePracticeHint}${interleavedPracticeHint}${metacognitiveHint}${spacedReviewHint}${examCountdownHint}${examConstraintHint}${peerAccountabilityHint}${recurringRoutineHint}${blockedDependencyHint}${workedExampleHint}${evidenceConfidenceHint}${changeAwarenessHint}${questionBankHint}${freshnessGuardHint}${gradeImpactHint}${phaseHint}${riskHint}`;
       return `- "${d.title}" (${d.courseName || 'General'}) due ${dueLabel}; ${hint}${evidence ? `; notes: ${evidence}` : ''}`;
     }).join('\n');
 
@@ -1395,6 +1420,7 @@
       const metacognitiveHints = inferMetacognitiveCalibrationHints(item);
       const spacedReviewPlan = inferSpacedReviewPlan(item, now);
       const examCountdownHints = inferExamCountdownHints(item, now);
+      const examConstraintHints = inferExamConstraintHints(item);
       const peerAccountabilityHints = inferPeerStudyAccountabilityHints(item);
       const recurringRoutineHints = inferRecurringRoutineHints(item);
       const blockedDependencyHints = inferBlockedDependencyHints(item);
@@ -1428,6 +1454,7 @@
         activePracticeHints.length ? `Practice loop: ${activePracticeHints.join(' · ')}` : '',
         interleavedPracticeHints.length ? `Interleaving: ${interleavedPracticeHints.join(' · ')}` : '',
         examCountdownHints.length ? `Exam plan: ${examCountdownHints.join(' · ')}` : '',
+        examConstraintHints.length ? `Exam setup: ${examConstraintHints.join(' · ')}` : '',
         peerAccountabilityHints.length ? `Accountability: ${peerAccountabilityHints.join(' · ')}` : '',
         recurringRoutineHints.length ? `Routine: ${recurringRoutineHints.join(' · ')}` : '',
         blockedDependencyHints.length ? `Blockers: ${blockedDependencyHints.join(' · ')}` : '',
@@ -1829,6 +1856,6 @@
     init,
     refresh,
     draftWeek,
-    __test: { classifyDeadline, compactDeadlineText, getSubmissionSnapshot, classifyActionBucket, getAssignmentPointValue, inferSubmissionChecklist, inferConceptReviewHints, inferGradeImpactHints, inferSubmissionStatusFlags, inferPlannerRiskFlags, inferStudyPhases, inferLearningStrategyHints, inferFocusSprintHints, inferPracticeArtifactHints, inferRetrievalCalibrationHints, inferSocraticStudyHints, inferTeachBackHints, inferAcademicIntegrityHints, inferPrivacyConsentHints, inferCodeDebugHints, inferMinimalReproHints, inferAutograderFeedbackHints, inferOfficeHoursPrepHints, inferCollaborationHandoffHints, inferLectureCaptureHints, inferConfusionCaptureHints, inferAudioReviewHints, inferMultimodalStudyAssetHints, inferSourceGroundingHints, inferEvidencePackHints, inferTutorContextPackHints, inferPortabilityBackupHints, inferStudyWrapUpHints, inferRubricScoringHints, inferPreSubmitVerificationHints, inferAvailabilityWindowHints, inferNotebookStudyPackHints, inferAiHandoffHints, inferCsWorkflowHints, inferActivePracticeLoopHints, inferInterleavedPracticeHints, inferMetacognitiveCalibrationHints, inferSpacedReviewPlan, inferExamCountdownHints, inferPeerStudyAccountabilityHints, inferRecurringRoutineHints, inferBlockedDependencyHints, inferWorkedExampleHints, inferEvidenceConfidenceHints, inferChangeAwarenessHints, inferQuestionBankHints, inferFreshnessGuardHints, recommendTopStudyActions, recommendNextStudyAction, buildWorkloadTimeline, renderDeadlineList, buildPlannerPrompt, extractJsonArray, nextStudyWindowStart, findRelevantDeadlineForBlock, normalizeStudyBlocks, buildFallbackStudyBlocks, toLocalInputValue }
+    __test: { classifyDeadline, compactDeadlineText, getSubmissionSnapshot, classifyActionBucket, getAssignmentPointValue, inferSubmissionChecklist, inferConceptReviewHints, inferGradeImpactHints, inferSubmissionStatusFlags, inferPlannerRiskFlags, inferStudyPhases, inferLearningStrategyHints, inferFocusSprintHints, inferPracticeArtifactHints, inferRetrievalCalibrationHints, inferSocraticStudyHints, inferTeachBackHints, inferAcademicIntegrityHints, inferPrivacyConsentHints, inferCodeDebugHints, inferMinimalReproHints, inferAutograderFeedbackHints, inferOfficeHoursPrepHints, inferCollaborationHandoffHints, inferLectureCaptureHints, inferConfusionCaptureHints, inferAudioReviewHints, inferMultimodalStudyAssetHints, inferSourceGroundingHints, inferEvidencePackHints, inferTutorContextPackHints, inferPortabilityBackupHints, inferStudyWrapUpHints, inferRubricScoringHints, inferPreSubmitVerificationHints, inferAvailabilityWindowHints, inferNotebookStudyPackHints, inferAiHandoffHints, inferCsWorkflowHints, inferActivePracticeLoopHints, inferInterleavedPracticeHints, inferMetacognitiveCalibrationHints, inferSpacedReviewPlan, inferExamCountdownHints, inferExamConstraintHints, inferPeerStudyAccountabilityHints, inferRecurringRoutineHints, inferBlockedDependencyHints, inferWorkedExampleHints, inferEvidenceConfidenceHints, inferChangeAwarenessHints, inferQuestionBankHints, inferFreshnessGuardHints, recommendTopStudyActions, recommendNextStudyAction, buildWorkloadTimeline, renderDeadlineList, buildPlannerPrompt, extractJsonArray, nextStudyWindowStart, findRelevantDeadlineForBlock, normalizeStudyBlocks, buildFallbackStudyBlocks, toLocalInputValue }
   };
 })();
