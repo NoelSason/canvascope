@@ -1545,3 +1545,28 @@ test('SmartPlanner buildPlannerPrompt includes worked example ladder hints', () 
 
   assert.match(prompt, /worked example ladder: study worked example, fade scaffolding, reconstruct steps/);
 });
+
+test('SmartPlanner inferEvidenceConfidenceHints detects source confidence guardrails', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferEvidenceConfidenceHints({
+    title: 'Research comparison',
+    description: 'Use citations from lecture notes, flag unsupported claims, and separate evidence from inference when sources conflict.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['show source confidence', 'flag unsupported answers', 'separate evidence from inference']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes evidence confidence hints', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00');
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'NotebookLM source-grounded review',
+      courseName: 'History',
+      ts: new Date('2026-07-13T18:00:00-07:00').getTime(),
+      description: 'Ask the AI tutor to compare readings, cite evidence, and say when notes are insufficient.'
+    }
+  ], now);
+
+  assert.match(prompt, /evidence confidence: show source confidence, separate evidence from inference, say when notes are insufficient/);
+});

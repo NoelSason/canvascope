@@ -947,6 +947,27 @@
     return hints.slice(0, 3);
   }
 
+  function inferEvidenceConfidenceHints(item) {
+    const source = `${item?.title || ''} ${item?.description || item?.text || item?.content || ''}`.toLowerCase();
+    const hints = [];
+    const add = (label) => { if (!hints.includes(label)) hints.push(label); };
+
+    if (/\b(source[- ]?grounded|grounded|evidence|citations?|references?|quote|quoted|page numbers?|slides?|lecture notes?|reading)\b/.test(source)) {
+      add('show source confidence');
+    }
+    if (/\b(unknown|not covered|not in notes|missing context|unsupported|verify|fact[- ]?check|hallucination|uncertain|confidence)\b/.test(source)) {
+      add('flag unsupported answers');
+    }
+    if (/\b(compare|contrast|synthesi[sz]e|multiple sources?|conflicting|conflicts?|perspectives?|claim|argument)\b/.test(source)) {
+      add('separate evidence from inference');
+    }
+    if (/\b(ai|chatgpt|claude|gemini|llm|assistant|notebooklm|ai tutor)\b/.test(source)) {
+      add('say when notes are insufficient');
+    }
+
+    return hints.slice(0, 3);
+  }
+
   function scoreStudyActionCandidate(item, nowMs = Date.now()) {
     if (!item || item.done || !Number.isFinite(Number(item.ts))) return null;
     const ts = Number(item.ts);
@@ -1125,6 +1146,7 @@
       const recurringRoutineHints = inferRecurringRoutineHints(d);
       const blockedDependencyHints = inferBlockedDependencyHints(d);
       const workedExampleHints = inferWorkedExampleHints(d);
+      const evidenceConfidenceHints = inferEvidenceConfidenceHints(d);
       const gradeImpactHints = inferGradeImpactHints(d);
       const riskFlags = inferPlannerRiskFlags(d, deadlines, nowMs);
       const checklistHint = checklist.length ? `; checklist: ${checklist.join(', ')}` : '';
@@ -1164,11 +1186,12 @@
       const recurringRoutineHint = recurringRoutineHints.length ? `; recurring routine: ${recurringRoutineHints.join(', ')}` : '';
       const blockedDependencyHint = blockedDependencyHints.length ? `; dependency blockers: ${blockedDependencyHints.join(', ')}` : '';
       const workedExampleHint = workedExampleHints.length ? `; worked example ladder: ${workedExampleHints.join(', ')}` : '';
+      const evidenceConfidenceHint = evidenceConfidenceHints.length ? `; evidence confidence: ${evidenceConfidenceHints.join(', ')}` : '';
       const gradeImpactHint = gradeImpactHints.length ? `; grade impact: ${gradeImpactHints.join(', ')}` : '';
       const phaseHint = studyPhases.length ? `; suggested phases: ${studyPhases.join(', ')}` : '';
       const riskHint = riskFlags.length ? `; risk: ${riskFlags.join(', ')}` : '';
       const actionBucketHint = `; action bucket: ${actionBucket}`;
-      const hint = `urgency=${triage.urgency}, effort=${triage.effort}${actionBucketHint}${checklistHint}${reviewHint}${learningHint}${focusHint}${practiceHint}${retrievalHint}${socraticHint}${teachBackHint}${integrityHint}${privacyConsentHint}${codeDebugHint}${minimalReproHint}${autograderFeedbackHint}${officeHoursHint}${collaborationHint}${lectureHint}${audioReviewHint}${multimodalHint}${sourceGroundingHint}${evidencePackHint}${tutorContextHint}${portabilityHint}${wrapUpHint}${rubricHint}${preSubmitHint}${availabilityWindowHint}${notebookStudyPackHint}${aiHandoffHint}${csWorkflowHint}${activePracticeHint}${metacognitiveHint}${spacedReviewHint}${examCountdownHint}${peerAccountabilityHint}${recurringRoutineHint}${blockedDependencyHint}${workedExampleHint}${gradeImpactHint}${phaseHint}${riskHint}`;
+      const hint = `urgency=${triage.urgency}, effort=${triage.effort}${actionBucketHint}${checklistHint}${reviewHint}${learningHint}${focusHint}${practiceHint}${retrievalHint}${socraticHint}${teachBackHint}${integrityHint}${privacyConsentHint}${codeDebugHint}${minimalReproHint}${autograderFeedbackHint}${officeHoursHint}${collaborationHint}${lectureHint}${audioReviewHint}${multimodalHint}${sourceGroundingHint}${evidencePackHint}${tutorContextHint}${portabilityHint}${wrapUpHint}${rubricHint}${preSubmitHint}${availabilityWindowHint}${notebookStudyPackHint}${aiHandoffHint}${csWorkflowHint}${activePracticeHint}${metacognitiveHint}${spacedReviewHint}${examCountdownHint}${peerAccountabilityHint}${recurringRoutineHint}${blockedDependencyHint}${workedExampleHint}${evidenceConfidenceHint}${gradeImpactHint}${phaseHint}${riskHint}`;
       return `- "${d.title}" (${d.courseName || 'General'}) due ${dueLabel}; ${hint}${evidence ? `; notes: ${evidence}` : ''}`;
     }).join('\n');
 
@@ -1249,6 +1272,7 @@
       const peerAccountabilityHints = inferPeerStudyAccountabilityHints(item);
       const recurringRoutineHints = inferRecurringRoutineHints(item);
       const blockedDependencyHints = inferBlockedDependencyHints(item);
+      const evidenceConfidenceHints = inferEvidenceConfidenceHints(item);
       const gradeImpactHints = inferGradeImpactHints(item);
       const riskFlags = inferPlannerRiskFlags(item, items, now);
       const checklistLabel = riskFlags.length ? `Risk: ${riskFlags.join(' · ')}` : (checklist.length ? checklist.join(' · ') : `${triage.urgency} · ${effortLabel}`);
@@ -1277,6 +1301,7 @@
         peerAccountabilityHints.length ? `Accountability: ${peerAccountabilityHints.join(' · ')}` : '',
         recurringRoutineHints.length ? `Routine: ${recurringRoutineHints.join(' · ')}` : '',
         blockedDependencyHints.length ? `Blockers: ${blockedDependencyHints.join(' · ')}` : '',
+        evidenceConfidenceHints.length ? `Evidence confidence: ${evidenceConfidenceHints.join(' · ')}` : '',
         gradeImpactHints.length ? `Grade impact: ${gradeImpactHints.join(' · ')}` : '',
         spacedReviewPlan.length ? `Spaced review: ${spacedReviewPlan.join(' · ')}` : '',
         focusHints.length ? `Focus: ${focusHints.join(' · ')}` : '',
@@ -1295,7 +1320,7 @@
         <span class="plan-deadline-date${overdue ? ' is-overdue' : ''}">${overdue ? 'OVERDUE' : dateLabel}</span>
         <span class="plan-deadline-title">${escapeHtml(item.title)}</span>
         <span class="plan-deadline-course">${escapeHtml(item.courseName || '')}</span>
-        <span class="plan-deadline-triage" title="Planner triage: ${escapeHtml(actionBucket)}; ${escapeHtml(triage.urgency)} / ${escapeHtml(effortLabel)}${riskFlags.length ? `; risk flags: ${escapeHtml(riskFlags.join(', '))}` : ''}${checklist.length ? `; suggested checks: ${escapeHtml(checklist.join(', '))}` : ''}${reviewHints.length ? `; concepts to review: ${escapeHtml(reviewHints.join(', '))}` : ''}${codeDebugHints.length ? `; code/debug help: ${escapeHtml(codeDebugHints.join(', '))}` : ''}${officeHoursHints.length ? `; office hours prep: ${escapeHtml(officeHoursHints.join(', '))}` : ''}${collaborationHints.length ? `; collaboration handoff: ${escapeHtml(collaborationHints.join(', '))}` : ''}${lectureHints.length ? `; lecture capture: ${escapeHtml(lectureHints.join(', '))}` : ''}${sourceGroundingHints.length ? `; source grounding: ${escapeHtml(sourceGroundingHints.join(', '))}` : ''}${evidencePackHints.length ? `; evidence pack: ${escapeHtml(evidencePackHints.join(', '))}` : ''}${tutorContextHints.length ? `; tutor context pack: ${escapeHtml(tutorContextHints.join(', '))}` : ''}${wrapUpHints.length ? `; wrap-up: ${escapeHtml(wrapUpHints.join(', '))}` : ''}${rubricHints.length ? `; rubric scoring: ${escapeHtml(rubricHints.join(', '))}` : ''}${preSubmitHints.length ? `; pre-submit verification: ${escapeHtml(preSubmitHints.join(', '))}` : ''}${availabilityWindowHints.length ? `; availability window: ${escapeHtml(availabilityWindowHints.join(', '))}` : ''}${csWorkflowHints.length ? `; CS workflow: ${escapeHtml(csWorkflowHints.join(', '))}` : ''}${focusHints.length ? `; focus sprint: ${escapeHtml(focusHints.join(', '))}` : ''}${practiceHints.length ? `; practice assets: ${escapeHtml(practiceHints.join(', '))}` : ''}${retrievalHints.length ? `; retrieval calibration: ${escapeHtml(retrievalHints.join(', '))}` : ''}${metacognitiveHints.length ? `; metacognitive calibration: ${escapeHtml(metacognitiveHints.join(', '))}` : ''}${socraticHints.length ? `; Socratic tutor mode: ${escapeHtml(socraticHints.join(', '))}` : ''}${teachBackHints.length ? `; teach-back: ${escapeHtml(teachBackHints.join(', '))}` : ''}${privacyConsentHints.length ? `; privacy/consent: ${escapeHtml(privacyConsentHints.join(', '))}` : ''}${integrityHints.length ? `; integrity: ${escapeHtml(integrityHints.join(', '))}` : ''}">${escapeHtml(actionBucket === 'submitted' ? 'Submitted · review optional' : reviewLabel || checklistLabel)}</span>
+        <span class="plan-deadline-triage" title="Planner triage: ${escapeHtml(actionBucket)}; ${escapeHtml(triage.urgency)} / ${escapeHtml(effortLabel)}${riskFlags.length ? `; risk flags: ${escapeHtml(riskFlags.join(', '))}` : ''}${checklist.length ? `; suggested checks: ${escapeHtml(checklist.join(', '))}` : ''}${reviewHints.length ? `; concepts to review: ${escapeHtml(reviewHints.join(', '))}` : ''}${codeDebugHints.length ? `; code/debug help: ${escapeHtml(codeDebugHints.join(', '))}` : ''}${officeHoursHints.length ? `; office hours prep: ${escapeHtml(officeHoursHints.join(', '))}` : ''}${collaborationHints.length ? `; collaboration handoff: ${escapeHtml(collaborationHints.join(', '))}` : ''}${lectureHints.length ? `; lecture capture: ${escapeHtml(lectureHints.join(', '))}` : ''}${sourceGroundingHints.length ? `; source grounding: ${escapeHtml(sourceGroundingHints.join(', '))}` : ''}${evidencePackHints.length ? `; evidence pack: ${escapeHtml(evidencePackHints.join(', '))}` : ''}${evidenceConfidenceHints.length ? `; evidence confidence: ${escapeHtml(evidenceConfidenceHints.join(', '))}` : ''}${tutorContextHints.length ? `; tutor context pack: ${escapeHtml(tutorContextHints.join(', '))}` : ''}${wrapUpHints.length ? `; wrap-up: ${escapeHtml(wrapUpHints.join(', '))}` : ''}${rubricHints.length ? `; rubric scoring: ${escapeHtml(rubricHints.join(', '))}` : ''}${preSubmitHints.length ? `; pre-submit verification: ${escapeHtml(preSubmitHints.join(', '))}` : ''}${availabilityWindowHints.length ? `; availability window: ${escapeHtml(availabilityWindowHints.join(', '))}` : ''}${csWorkflowHints.length ? `; CS workflow: ${escapeHtml(csWorkflowHints.join(', '))}` : ''}${focusHints.length ? `; focus sprint: ${escapeHtml(focusHints.join(', '))}` : ''}${practiceHints.length ? `; practice assets: ${escapeHtml(practiceHints.join(', '))}` : ''}${retrievalHints.length ? `; retrieval calibration: ${escapeHtml(retrievalHints.join(', '))}` : ''}${metacognitiveHints.length ? `; metacognitive calibration: ${escapeHtml(metacognitiveHints.join(', '))}` : ''}${socraticHints.length ? `; Socratic tutor mode: ${escapeHtml(socraticHints.join(', '))}` : ''}${teachBackHints.length ? `; teach-back: ${escapeHtml(teachBackHints.join(', '))}` : ''}${privacyConsentHints.length ? `; privacy/consent: ${escapeHtml(privacyConsentHints.join(', '))}` : ''}${integrityHints.length ? `; integrity: ${escapeHtml(integrityHints.join(', '))}` : ''}">${escapeHtml(actionBucket === 'submitted' ? 'Submitted · review optional' : reviewLabel || checklistLabel)}</span>
       `;
       if (item.url) row.addEventListener('click', () => chrome.tabs.create({ url: item.url }));
       list.appendChild(row);
@@ -1674,6 +1699,6 @@
     init,
     refresh,
     draftWeek,
-    __test: { classifyDeadline, compactDeadlineText, getSubmissionSnapshot, classifyActionBucket, getAssignmentPointValue, inferSubmissionChecklist, inferConceptReviewHints, inferGradeImpactHints, inferSubmissionStatusFlags, inferPlannerRiskFlags, inferStudyPhases, inferLearningStrategyHints, inferFocusSprintHints, inferPracticeArtifactHints, inferRetrievalCalibrationHints, inferSocraticStudyHints, inferTeachBackHints, inferAcademicIntegrityHints, inferPrivacyConsentHints, inferCodeDebugHints, inferMinimalReproHints, inferAutograderFeedbackHints, inferOfficeHoursPrepHints, inferCollaborationHandoffHints, inferLectureCaptureHints, inferAudioReviewHints, inferMultimodalStudyAssetHints, inferSourceGroundingHints, inferEvidencePackHints, inferTutorContextPackHints, inferPortabilityBackupHints, inferStudyWrapUpHints, inferRubricScoringHints, inferPreSubmitVerificationHints, inferAvailabilityWindowHints, inferNotebookStudyPackHints, inferAiHandoffHints, inferCsWorkflowHints, inferActivePracticeLoopHints, inferMetacognitiveCalibrationHints, inferSpacedReviewPlan, inferExamCountdownHints, inferPeerStudyAccountabilityHints, inferRecurringRoutineHints, inferBlockedDependencyHints, inferWorkedExampleHints, recommendTopStudyActions, recommendNextStudyAction, buildWorkloadTimeline, renderDeadlineList, buildPlannerPrompt, extractJsonArray, nextStudyWindowStart, findRelevantDeadlineForBlock, normalizeStudyBlocks, buildFallbackStudyBlocks, toLocalInputValue }
+    __test: { classifyDeadline, compactDeadlineText, getSubmissionSnapshot, classifyActionBucket, getAssignmentPointValue, inferSubmissionChecklist, inferConceptReviewHints, inferGradeImpactHints, inferSubmissionStatusFlags, inferPlannerRiskFlags, inferStudyPhases, inferLearningStrategyHints, inferFocusSprintHints, inferPracticeArtifactHints, inferRetrievalCalibrationHints, inferSocraticStudyHints, inferTeachBackHints, inferAcademicIntegrityHints, inferPrivacyConsentHints, inferCodeDebugHints, inferMinimalReproHints, inferAutograderFeedbackHints, inferOfficeHoursPrepHints, inferCollaborationHandoffHints, inferLectureCaptureHints, inferAudioReviewHints, inferMultimodalStudyAssetHints, inferSourceGroundingHints, inferEvidencePackHints, inferTutorContextPackHints, inferPortabilityBackupHints, inferStudyWrapUpHints, inferRubricScoringHints, inferPreSubmitVerificationHints, inferAvailabilityWindowHints, inferNotebookStudyPackHints, inferAiHandoffHints, inferCsWorkflowHints, inferActivePracticeLoopHints, inferMetacognitiveCalibrationHints, inferSpacedReviewPlan, inferExamCountdownHints, inferPeerStudyAccountabilityHints, inferRecurringRoutineHints, inferBlockedDependencyHints, inferWorkedExampleHints, inferEvidenceConfidenceHints, recommendTopStudyActions, recommendNextStudyAction, buildWorkloadTimeline, renderDeadlineList, buildPlannerPrompt, extractJsonArray, nextStudyWindowStart, findRelevantDeadlineForBlock, normalizeStudyBlocks, buildFallbackStudyBlocks, toLocalInputValue }
   };
 })();
