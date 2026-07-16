@@ -488,6 +488,28 @@ test('SmartPlanner recommendTopStudyActions surfaces a ranked next-three triage 
   assert.ok(recommendations.every(item => item.title !== 'Already submitted project'));
 });
 
+test('SmartPlanner recommendTopStudyActions boosts recently changed Canvas items', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00').getTime();
+  const recommendations = planner.__test.recommendTopStudyActions([
+    {
+      title: 'Normal worksheet',
+      courseName: 'Math',
+      description: 'Practice worksheet.',
+      ts: new Date('2026-07-12T12:00:00-07:00').getTime()
+    },
+    {
+      title: 'Revised lab instructions',
+      courseName: 'CS 61B',
+      description: 'Updated instructions posted with new files and a due date changed notice.',
+      ts: new Date('2026-07-12T12:00:00-07:00').getTime()
+    }
+  ], now, 2);
+
+  assert.equal(recommendations[0].title, 'Revised lab instructions');
+  assert.match(recommendations[0].reason, /changed instructions/);
+});
+
 test('SmartPlanner recommendNextStudyAction ignores completed or undated work', () => {
   const planner = loadSmartPlanner();
   const now = new Date('2026-07-10T10:00:00-07:00').getTime();

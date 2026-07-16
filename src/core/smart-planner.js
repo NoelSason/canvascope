@@ -1044,6 +1044,12 @@
       reasons.push('needs progress');
     }
 
+    const changeHints = inferChangeAwarenessHints(item);
+    if (changeHints.length) {
+      score += hoursUntilDue <= 72 ? 14 : 6;
+      reasons.push('changed instructions');
+    }
+
     return { item, ts, triage, score, reasons };
   }
 
@@ -1319,11 +1325,13 @@
       const peerAccountabilityHints = inferPeerStudyAccountabilityHints(item);
       const recurringRoutineHints = inferRecurringRoutineHints(item);
       const blockedDependencyHints = inferBlockedDependencyHints(item);
+      const changeAwarenessHints = inferChangeAwarenessHints(item);
       const evidenceConfidenceHints = inferEvidenceConfidenceHints(item);
       const gradeImpactHints = inferGradeImpactHints(item);
       const riskFlags = inferPlannerRiskFlags(item, items, now);
-      const checklistLabel = riskFlags.length ? `Risk: ${riskFlags.join(' · ')}` : (checklist.length ? checklist.join(' · ') : `${triage.urgency} · ${effortLabel}`);
+      const checklistLabel = riskFlags.length ? `Risk: ${riskFlags.join(' · ')}` : (changeAwarenessHints.length ? `Changed: ${changeAwarenessHints.join(' · ')}` : (checklist.length ? checklist.join(' · ') : `${triage.urgency} · ${effortLabel}`));
       const reviewLabel = [
+        changeAwarenessHints.length ? `Changes: ${changeAwarenessHints.join(' · ')}` : '',
         reviewHints.length ? `Review: ${reviewHints.join(' · ')}` : '',
         codeDebugHints.length ? `Debug: ${codeDebugHints.join(' · ')}` : '',
         minimalReproHints.length ? `Repro: ${minimalReproHints.join(' · ')}` : '',
