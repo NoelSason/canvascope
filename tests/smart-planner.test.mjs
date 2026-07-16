@@ -1570,3 +1570,28 @@ test('SmartPlanner buildPlannerPrompt includes evidence confidence hints', () =>
 
   assert.match(prompt, /evidence confidence: show source confidence, separate evidence from inference, say when notes are insufficient/);
 });
+
+test('SmartPlanner inferConfusionCaptureHints detects timestamped lecture questions', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferConfusionCaptureHints({
+    title: 'Recorded lecture review',
+    description: 'Rewatch the transcript, mark confusing timestamped moments, and bring questions to office hours with the AI tutor context.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['capture confusion points', 'save timestamped questions', 'bring questions to help session']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes confusion capture hints', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00');
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'Lecture transcript catch-up',
+      courseName: 'CS 188',
+      ts: new Date('2026-07-12T18:00:00-07:00').getTime(),
+      description: 'Use captions from the recording, save timestamp questions for unclear probability topics, then ask the AI tutor from exact notes.'
+    }
+  ], now);
+
+  assert.match(prompt, /confusion capture: capture confusion points, save timestamped questions, bring questions to help session/);
+});
