@@ -1692,3 +1692,28 @@ test('SmartPlanner buildPlannerPrompt includes question bank hints', () => {
 
   assert.match(prompt, /question bank: turn notes into question bank, tag questions by topic, anchor answers to source location/);
 });
+
+test('SmartPlanner inferFreshnessGuardHints detects stale or conflicting course sources', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferFreshnessGuardHints({
+    title: 'Project clarification announcement',
+    description: 'Instructor email says the old syllabus deadline conflicts with the latest Canvas update and revised instructions.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['verify latest Canvas update', 'check for stale source', 'resolve instruction conflict']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes freshness guard hints', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00');
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'Updated lab clarification',
+      courseName: 'CS 61C',
+      ts: new Date('2026-07-12T18:00:00-07:00').getTime(),
+      description: 'Latest Canvas announcement revised the old instructions; an EdStem post mentions a different deadline.'
+    }
+  ], now);
+
+  assert.match(prompt, /freshness guard: verify latest Canvas update, check for stale source, resolve instruction conflict/);
+});
