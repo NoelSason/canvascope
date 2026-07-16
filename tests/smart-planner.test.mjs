@@ -1595,3 +1595,28 @@ test('SmartPlanner buildPlannerPrompt includes confusion capture hints', () => {
 
   assert.match(prompt, /confusion capture: capture confusion points, save timestamped questions, bring questions to help session/);
 });
+
+test('SmartPlanner inferChangeAwarenessHints detects Canvas change signals', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferChangeAwarenessHints({
+    title: 'Project update announcement',
+    description: 'The instructor posted revised instructions, uploaded new files, extended the deadline, and feedback was returned.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['review changed instructions', 'check new course materials', 're-plan around new date']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes change awareness hints', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00');
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'Updated lab module',
+      courseName: 'CS 61C',
+      ts: new Date('2026-07-12T18:00:00-07:00').getTime(),
+      description: 'New files posted after a due date changed clarification; review the revised instructions before coding.'
+    }
+  ], now);
+
+  assert.match(prompt, /change awareness: review changed instructions, check new course materials, re-plan around new date/);
+});
