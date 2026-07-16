@@ -545,6 +545,30 @@ test('SmartPlanner buildPlannerPrompt includes action bucket guidance', () => {
   assert.match(prompt, /skip or de-prioritize submitted work/);
 });
 
+test('SmartPlanner inferAudioReviewHints detects lecture audio recap opportunities', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferAudioReviewHints({
+    title: 'Final review lecture audio overview',
+    description: 'Use the transcript and recorded summary for a commute review before the cumulative exam.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['queue audio recap', 'convert lecture to recap', 'listen before practice']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes audio review guidance', () => {
+  const planner = loadSmartPlanner();
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'Missed lecture recording',
+      courseName: 'CS 162',
+      ts: new Date('2026-07-11T12:00:00-07:00').getTime(),
+      description: 'Review the transcript and audio recap before the quiz.'
+    }
+  ], new Date('2026-07-10T10:00:00-07:00'));
+
+  assert.match(prompt, /audio review: queue audio recap, convert lecture to recap, listen before practice/);
+});
+
 test('SmartPlanner inferPlannerRiskFlags surfaces high-value assignments from Canvas points', () => {
   const planner = loadSmartPlanner();
   const now = new Date('2026-07-10T10:00:00-07:00').getTime();
