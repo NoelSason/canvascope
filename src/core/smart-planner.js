@@ -784,6 +784,9 @@
     if (/\b(starter code|starter repo|clone|setup|set up|environment|dependencies?|install|docker|makefile|package\.json|requirements\.txt)\b/.test(source)) {
       add('set up starter code');
     }
+    if (/\b(ai pair|ai coding|vibe cod(?:e|ing)|chatgpt|claude|gemini|copilot|cursor|llm|assistant-generated|generated patch|model changes?)\b/.test(source)) {
+      add('review AI diff');
+    }
     if (/\b(implement|implementation|feature|algorithm|data structure|function|class|api|endpoint|component|logic)\b/.test(source)) {
       add('implement core path');
     }

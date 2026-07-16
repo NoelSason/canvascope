@@ -1693,6 +1693,31 @@ test('SmartPlanner buildPlannerPrompt includes question bank hints', () => {
   assert.match(prompt, /question bank: turn notes into question bank, tag questions by topic, anchor answers to source location/);
 });
 
+test('SmartPlanner inferCsWorkflowHints detects AI coding review checkpoints', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferCsWorkflowHints({
+    title: 'Copilot-assisted programming lab',
+    description: 'Use Cursor to generate a patch, review the model changes, run pytest, then push the PR.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['read spec first', 'review AI diff', 'run tests before submit', 'leave autograder buffer']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes AI coding review guardrails', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00');
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'AI pair-programming project',
+      courseName: 'CS 61B',
+      ts: new Date('2026-07-12T18:00:00-07:00').getTime(),
+      description: 'Use Copilot for the implementation, review the generated patch, run unit tests, and submit the repo.'
+    }
+  ], now);
+
+  assert.match(prompt, /CS workflow: read spec first, review AI diff, implement core path, run tests before submit/);
+});
+
 test('SmartPlanner inferFreshnessGuardHints detects stale or conflicting course sources', () => {
   const planner = loadSmartPlanner();
   const hints = planner.__test.inferFreshnessGuardHints({
