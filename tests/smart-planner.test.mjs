@@ -1302,6 +1302,31 @@ test('SmartPlanner buildPlannerPrompt includes active practice loop hints', () =
   assert.match(prompt, /active practice loop: convert notes to quiz, grade practice immediately/);
 });
 
+test('SmartPlanner inferInterleavedPracticeHints detects mixed-practice review plans', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferInterleavedPracticeHints({
+    title: 'Cumulative final exam practice set',
+    description: 'Shuffle practice problems across multiple units, choose the right algorithm pattern, and revisit missed questions.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['mix old and new topics', 'shuffle problem types', 'practice choosing the method']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes interleaved practice hints', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00');
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'Comprehensive algorithms final',
+      courseName: 'CS',
+      ts: new Date('2026-07-15T18:00:00-07:00').getTime(),
+      description: 'Mixed review from all topics with sample exam problems and strategy choice practice.'
+    }
+  ], now);
+
+  assert.match(prompt, /interleaved practice: mix old and new topics, shuffle problem types, practice choosing the method/);
+});
+
 test('SmartPlanner inferMetacognitiveCalibrationHints detects confidence tracking workflows', () => {
   const planner = loadSmartPlanner();
   const hints = planner.__test.inferMetacognitiveCalibrationHints({
