@@ -290,6 +290,16 @@ test('SmartPlanner inferPrivacyConsentHints detects AI notetaker consent and dat
   assert.deepEqual(Array.from(hints), ['confirm recording consent', 'avoid private peer details', 'check AI data sharing']);
 });
 
+test('SmartPlanner inferAiNoteQualityAuditHints detects summary verification loops', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferAiNoteQualityAuditHints({
+    title: 'AI lecture summary review',
+    description: 'Verify the transcript summary against slide citations, then turn confusing gaps into recall questions.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['verify summary against source', 'convert summary to recall prompts', 'tag unanswered questions']);
+});
+
 test('SmartPlanner buildPlannerPrompt includes privacy and consent hints for recorded study workflows', () => {
   const planner = loadSmartPlanner();
   const now = new Date('2026-07-10T10:00:00-07:00');
@@ -303,6 +313,21 @@ test('SmartPlanner buildPlannerPrompt includes privacy and consent hints for rec
   ], now);
 
   assert.match(prompt, /privacy\/consent: confirm recording consent, avoid private peer details, check AI data sharing/);
+});
+
+test('SmartPlanner buildPlannerPrompt includes AI note audit hints', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00');
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'AI lecture summary cleanup',
+      courseName: 'CS 188',
+      ts: new Date('2026-07-11T18:00:00-07:00').getTime(),
+      description: 'Compare the transcript summary to cited slides and write recall prompts for confusing weak spots.'
+    }
+  ], now);
+
+  assert.match(prompt, /AI note audit: verify summary against source, convert summary to recall prompts, tag unanswered questions/);
 });
 
 test('SmartPlanner inferSocraticStudyHints prefers guided tutoring over answer dumping', () => {
