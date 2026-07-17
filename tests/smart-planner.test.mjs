@@ -1890,3 +1890,28 @@ test('SmartPlanner buildPlannerPrompt includes freshness guard hints', () => {
 
   assert.match(prompt, /freshness guard: verify latest Canvas update, check for stale source, resolve instruction conflict/);
 });
+
+test('SmartPlanner inferStudyPackArtifactHints detects compact study-pack outputs', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferStudyPackArtifactHints({
+    title: 'Lecture transcript exam review',
+    description: 'Turn the lecture notes into flashcards and practice quiz questions; include confusing weak spots for office hours.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['make key-term summary', 'draft recall questions', 'export flashcards']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes study pack artifact hints', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00');
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'NotebookLM-style lecture review',
+      courseName: 'CS 188',
+      ts: new Date('2026-07-12T18:00:00-07:00').getTime(),
+      description: 'Use the lecture transcript and slides to make a study guide, flashcards, and self-test questions for the final.'
+    }
+  ], now);
+
+  assert.match(prompt, /study pack artifacts: make key-term summary, draft recall questions, export flashcards/);
+});
