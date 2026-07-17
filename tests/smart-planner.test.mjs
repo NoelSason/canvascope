@@ -1915,3 +1915,28 @@ test('SmartPlanner buildPlannerPrompt includes study pack artifact hints', () =>
 
   assert.match(prompt, /study pack artifacts: make key-term summary, draft recall questions, export flashcards/);
 });
+
+test('SmartPlanner inferReadingTriageHints detects dense source triage workflows', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferReadingTriageHints({
+    title: 'Seminar reading packet',
+    description: 'Read the dense journal article: skim abstract, introduction, figures, and definitions before citing claims in discussion.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['skim structure first', 'extract landmarks', 'make mini glossary']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes reading triage hints', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00');
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'AI-assisted paper reading',
+      courseName: 'History',
+      ts: new Date('2026-07-12T18:00:00-07:00').getTime(),
+      description: 'Long reading packet with an abstract, section headings, figures, and glossary terms for a response post.'
+    }
+  ], now);
+
+  assert.match(prompt, /reading triage: skim structure first, extract landmarks, make mini glossary/);
+});
