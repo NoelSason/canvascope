@@ -1989,3 +1989,28 @@ test('SmartPlanner buildPlannerPrompt includes lecture question queue hints', ()
 
   assert.match(prompt, /lecture question queue: queue lecture questions, tag unclear moments, route questions to help channel/);
 });
+
+test('SmartPlanner inferPersonalizedMemoryHints detects durable learner context workflows', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferPersonalizedMemoryHints({
+    title: 'AI tutor memory refresh',
+    description: 'Update the learning profile with mistake journal patterns, weak spots, and rubric goals before the next study mode session.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['update learning profile', 'carry forward mistake patterns', 'align to stated goals']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes personalized memory hints', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00');
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'Personalized AI tutor prep',
+      courseName: 'CS 70',
+      ts: new Date('2026-07-12T18:00:00-07:00').getTime(),
+      description: 'Before using study mode, reuse prior tutor context, mistake journal notes, and target grade goals.'
+    }
+  ], now);
+
+  assert.match(prompt, /personalized memory: update learning profile, carry forward mistake patterns, align to stated goals/);
+});
