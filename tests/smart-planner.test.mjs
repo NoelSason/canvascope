@@ -978,6 +978,30 @@ test('SmartPlanner buildPlannerPrompt includes academic integrity hints', () => 
   assert.match(prompt, /integrity: check AI policy, cite sources/);
 });
 
+test('SmartPlanner inferAiStudySessionSetupHints detects source-backed AI study sessions', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferAiStudySessionSetupHints({
+    title: 'NotebookLM study mode review',
+    description: 'Attach lecture slides and notes, generate a self-quiz audio recap, then focus on weak spots.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['start with learning goal', 'attach source packet', 'choose study artifact']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes AI study session setup hints', () => {
+  const planner = loadSmartPlanner();
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'AI tutor final review',
+      courseName: 'CS 162',
+      ts: new Date('2026-07-12T12:00:00-07:00').getTime(),
+      description: 'Use ChatGPT study mode with lecture transcripts and practice questions for confusing weak spots.'
+    }
+  ], new Date('2026-07-10T10:00:00-07:00'));
+
+  assert.match(prompt, /AI study session: start with learning goal, attach source packet, choose study artifact/);
+});
+
 test('SmartPlanner inferCodeDebugHints detects explicit code and error workflows', () => {
   const planner = loadSmartPlanner();
   const hints = planner.__test.inferCodeDebugHints({
