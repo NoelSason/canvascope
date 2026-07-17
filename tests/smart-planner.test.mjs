@@ -1199,6 +1199,30 @@ test('SmartPlanner buildPlannerPrompt includes lecture capture hints', () => {
   assert.match(prompt, /lecture capture: summarize lecture notes, extract action items, turn transcript into quiz/);
 });
 
+test('SmartPlanner inferLectureActionChecklistHints detects dated lecture tasks', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferLectureActionChecklistHints({
+    title: 'Lecture announcements and Canvas follow-ups',
+    description: 'Transcript says the graph worksheet is due Friday, the next reading is in Canvas, and office-hour questions should be queued.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['extract dated task checklist', 'capture mentioned deadlines', 'link tasks to Canvas items']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes lecture action checklist hints', () => {
+  const planner = loadSmartPlanner();
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'Recorded lecture action review',
+      courseName: 'CS 188',
+      ts: new Date('2026-07-12T18:00:00-07:00').getTime(),
+      description: 'Class recording transcript assigned a Canvas lab due Friday plus follow-up reading questions.'
+    }
+  ], new Date('2026-07-10T10:00:00-07:00'));
+
+  assert.match(prompt, /lecture action checklist: extract dated task checklist, capture mentioned deadlines, link tasks to Canvas items/);
+});
+
 test('SmartPlanner inferMultimodalStudyAssetHints detects visual and audio study assets', () => {
   const planner = loadSmartPlanner();
   const hints = planner.__test.inferMultimodalStudyAssetHints({
