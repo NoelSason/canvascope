@@ -485,6 +485,30 @@ test('SmartPlanner buildPlannerPrompt includes AI handoff hints', () => {
   assert.match(prompt, /AI handoff: copy assignment brief, include constraints, include failing context/);
 });
 
+test('SmartPlanner inferRequirementClarificationHints detects confusing assignment prompts', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferRequirementClarificationHints({
+    title: 'Ambiguous project prompt',
+    description: 'Confusing requirements: not sure where to start. Use the sample template and rubric to identify expected deliverables.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['rewrite prompt in plain steps', 'separate asks from context', 'identify first deliverable']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes requirement clarification hints', () => {
+  const planner = loadSmartPlanner();
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'Unclear systems lab',
+      courseName: 'CS 162',
+      ts: new Date('2026-07-11T12:00:00-07:00').getTime(),
+      description: 'The spec is ambiguous and hard to parse; separate the requirements from the starter-code context before coding.'
+    }
+  ], new Date('2026-07-10T10:00:00-07:00'));
+
+  assert.match(prompt, /clarify requirements: rewrite prompt in plain steps, separate asks from context/);
+});
+
 test('SmartPlanner recommendNextStudyAction prioritizes high-effort urgent work transparently', () => {
   const planner = loadSmartPlanner();
   const now = new Date('2026-07-10T10:00:00-07:00').getTime();
