@@ -1940,3 +1940,28 @@ test('SmartPlanner buildPlannerPrompt includes reading triage hints', () => {
 
   assert.match(prompt, /reading triage: skim structure first, extract landmarks, make mini glossary/);
 });
+
+test('SmartPlanner inferLectureQuestionQueueHints detects lecture question workflows', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferLectureQuestionQueueHints({
+    title: 'AI lecture note review',
+    description: 'Summarize the lecture transcript, tag unclear moments, and bring questions to TA office hours.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['queue lecture questions', 'tag unclear moments', 'route questions to help channel']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes lecture question queue hints', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00');
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'Recorded lecture catch-up',
+      courseName: 'CS 188',
+      ts: new Date('2026-07-12T18:00:00-07:00').getTime(),
+      description: 'Review the lecture recording transcript with NotebookLM, capture confusing parts, and prep office hours questions.'
+    }
+  ], now);
+
+  assert.match(prompt, /lecture question queue: queue lecture questions, tag unclear moments, route questions to help channel/);
+});
