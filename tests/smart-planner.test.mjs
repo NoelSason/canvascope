@@ -748,6 +748,11 @@ test('SmartPlanner inferStudyPhases favors active recall and workflow-specific p
     title: 'Research paper draft',
     description: 'Submit annotated citations and a polished write-up.'
   })), ['Outline argument', 'Draft', 'Revise and cite']);
+
+  assert.deepEqual(Array.from(planner.__test.inferStudyPhases({
+    title: 'Algorithms problem set',
+    description: 'Practice shortest path and dynamic programming homework problems.'
+  })), ['Attempt first pass', 'Check examples', 'Log mistakes']);
 });
 
 test('SmartPlanner buildPlannerPrompt includes study phase hints for model grounding', () => {

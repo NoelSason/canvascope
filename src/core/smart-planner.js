@@ -228,6 +228,10 @@
       add('Outline and unblock');
       add('Build or solve');
       add('Test and submit');
+    } else if (/\b(problem set|pset|homework|practice problems?|worksheet|coding challenge|leetcode)\b/.test(source)) {
+      add('Attempt first pass');
+      add('Check examples');
+      add('Log mistakes');
     } else if (/\b(essay|paper|research|report|write[- ]?up|reflection)\b/.test(source)) {
       add('Outline argument');
       add('Draft');
