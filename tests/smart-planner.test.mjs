@@ -270,6 +270,31 @@ test('SmartPlanner inferEvidencePackHints prepares source-grounded AI study pack
   assert.deepEqual(Array.from(hints), ['collect quotable snippets', 'capture citation metadata', 'map claims to sources']);
 });
 
+test('SmartPlanner inferFeedbackLoopHints detects AI tutor practice feedback loops', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferFeedbackLoopHints({
+    title: 'Mock exam correction pass',
+    description: 'Take the practice exam before notes, compare missed answers to the official solutions, and schedule a retry with flashcards.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['compare against exemplar', 'log missed pattern', 'schedule retry pass']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes feedback loop hints', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00');
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'Diagnostic quiz review',
+      courseName: 'CS 70',
+      ts: new Date('2026-07-11T18:00:00-07:00').getTime(),
+      description: 'Review wrong answers against the answer key, then retry the probability quiz without notes.'
+    }
+  ], now);
+
+  assert.match(prompt, /feedback loop: compare against exemplar, log missed pattern, schedule retry pass/);
+});
+
 test('SmartPlanner inferTeachBackHints detects explain-aloud study needs', () => {
   const planner = loadSmartPlanner();
   const hints = planner.__test.inferTeachBackHints({
