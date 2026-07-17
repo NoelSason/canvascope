@@ -218,7 +218,9 @@
     const add = (label) => { if (!phases.includes(label)) phases.push(label); };
 
     const isProjectLike = /\b(project|portfolio|capstone|milestone|implementation|coding|lab)\b/.test(source);
+    const needsSourcePack = /\b(open[- ]?(book|note|notes)|notes? allowed|source packet|course packet|notebooklm|study guide|reference sheet|cheat sheet|formula sheet|crib sheet)\b/.test(source);
     if (/\b(exam|midterm|final|test)\b/.test(source) && !isProjectLike) {
+      if (needsSourcePack) add('Build source pack');
       add('Active recall drill');
       add('Practice problems');
       add('Review weak spots');

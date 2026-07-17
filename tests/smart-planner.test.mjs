@@ -240,6 +240,16 @@ test('SmartPlanner inferConceptReviewHints detects CS weak-spot topics', () => {
   assert.deepEqual(Array.from(hints), ['concurrency pitfalls', 'memory model']);
 });
 
+test('SmartPlanner inferStudyPhases starts open-note exams with source-pack building', () => {
+  const planner = loadSmartPlanner();
+  const phases = planner.__test.inferStudyPhases({
+    title: 'Open-note algorithms midterm',
+    description: 'Notes allowed. Bring a one-page reference sheet and use the study guide to prepare.'
+  });
+
+  assert.deepEqual(Array.from(phases), ['Build source pack', 'Active recall drill', 'Practice problems']);
+});
+
 test('SmartPlanner inferConceptReviewHints detects networking and security review topics', () => {
   const planner = loadSmartPlanner();
   const hints = planner.__test.inferConceptReviewHints({
