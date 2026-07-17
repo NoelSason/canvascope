@@ -2014,3 +2014,30 @@ test('SmartPlanner buildPlannerPrompt includes personalized memory hints', () =>
 
   assert.match(prompt, /personalized memory: update learning profile, carry forward mistake patterns, align to stated goals/);
 });
+
+test('SmartPlanner inferFirstStudyStepHints suggests active pre-work actions', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00').getTime();
+  const hints = planner.__test.inferFirstStudyStepHints({
+    title: 'Programming project exam review',
+    ts: new Date('2026-07-13T18:00:00-07:00').getTime(),
+    description: 'Use the GitHub starter code, pytest failures, and office hours notes to prepare.'
+  }, now);
+
+  assert.deepEqual(Array.from(hints), ['blank-page recall first', 'state target skill', 'describe I/O before coding']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes first study step hints', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00');
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'CS lab checkpoint',
+      courseName: 'CS 61B',
+      ts: new Date('2026-07-12T18:00:00-07:00').getTime(),
+      description: 'Before coding, read the assignment spec, explain the target skill, and prepare a question if stuck.'
+    }
+  ], now);
+
+  assert.match(prompt, /first study step: state target skill, write one help question, pick 10-minute starter task/);
+});
