@@ -1002,6 +1002,32 @@ test('SmartPlanner buildPlannerPrompt includes AI study session setup hints', ()
   assert.match(prompt, /AI study session: start with learning goal, attach source packet, choose study artifact/);
 });
 
+test('SmartPlanner inferStudyRecoveryHints protects sleep and reset breaks', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00').getTime();
+  const hints = planner.__test.inferStudyRecoveryHints({
+    title: 'Final exam cram review',
+    ts: new Date('2026-07-11T08:00:00-07:00').getTime(),
+    description: 'Avoid an all-nighter; use flashcards and practice problems after a long session.'
+  }, now);
+
+  assert.deepEqual(Array.from(hints), ['protect sleep window', 'plan recovery break', 'add reset breaks']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes recovery guardrails', () => {
+  const planner = loadSmartPlanner();
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'Midterm late-night review',
+      courseName: 'CS 70',
+      ts: new Date('2026-07-11T09:00:00-07:00').getTime(),
+      description: 'Do not cram overnight; finish with active recall from the study guide.'
+    }
+  ], new Date('2026-07-10T10:00:00-07:00'));
+
+  assert.match(prompt, /recovery guardrail: protect sleep window, plan recovery break, end with light recall/);
+});
+
 test('SmartPlanner inferCodeDebugHints detects explicit code and error workflows', () => {
   const planner = loadSmartPlanner();
   const hints = planner.__test.inferCodeDebugHints({
