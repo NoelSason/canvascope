@@ -305,6 +305,31 @@ test('SmartPlanner buildPlannerPrompt includes feedback loop hints', () => {
   assert.match(prompt, /feedback loop: compare against exemplar, log missed pattern, schedule retry pass/);
 });
 
+test('SmartPlanner inferAiQuizGenerationHints detects note-to-practice workflows', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferAiQuizGenerationHints({
+    title: 'Coconote lecture quiz cleanup',
+    description: 'Convert transcript notes into AI practice questions with answer explanations, then retry weak spots with spaced repetition.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['generate practice set', 'convert notes to quiz', 'include answer explanations']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes AI quiz-generation hints', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00');
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'AI study-mode lecture review',
+      courseName: 'CS 188',
+      ts: new Date('2026-07-11T18:00:00-07:00').getTime(),
+      description: 'Use Coconote or Quizlet to turn slides and lecture notes into practice questions with answer explanations.'
+    }
+  ], now);
+
+  assert.match(prompt, /AI quiz generation: generate practice set, convert notes to quiz, include answer explanations/);
+});
+
 test('SmartPlanner inferTeachBackHints detects explain-aloud study needs', () => {
   const planner = loadSmartPlanner();
   const hints = planner.__test.inferTeachBackHints({
