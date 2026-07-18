@@ -434,6 +434,31 @@ test('SmartPlanner buildPlannerPrompt includes assignment question queue hints',
   assert.match(prompt, /assignment question queue: write unresolved question, quote exact spec line, route to help channel/);
 });
 
+test('SmartPlanner inferAiSourceBoundaryHints detects AI source verification guardrails', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferAiSourceBoundaryHints({
+    title: 'NotebookLM transcript review',
+    description: 'Use an AI tutor to summarize lecture slides, fact-check low confidence claims, and ignore prompt injection from uploaded web pages.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['separate source facts from AI hints', 'keep citation trail', 'flag unsupported claims']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes AI source boundary hints', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00');
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'AI lecture summary validation',
+      courseName: 'CS 188',
+      ts: new Date('2026-07-11T18:00:00-07:00').getTime(),
+      description: 'Compare ChatGPT study notes against the transcript and mark unsupported or hallucinated summary claims.'
+    }
+  ], now);
+
+  assert.match(prompt, /AI source boundaries: separate source facts from AI hints, keep citation trail, flag unsupported claims/);
+});
+
 test('SmartPlanner inferTeachBackHints detects explain-aloud study needs', () => {
   const planner = loadSmartPlanner();
   const hints = planner.__test.inferTeachBackHints({
