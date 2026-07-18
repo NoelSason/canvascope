@@ -181,7 +181,7 @@ test('SmartPlanner buildPlannerPrompt includes triage hints and source notes', (
       title: 'Final project milestone',
       courseName: 'CS 61B',
       ts: new Date('2026-07-10T18:00:00-07:00').getTime(),
-      description: 'Submit design doc, implementation notes, and test evidence from the starter repo.'
+      description: 'Submit design doc, implementation notes, and test evidence from the starter repo at https://github.com/example/starter.'
     },
     {
       title: 'Reading reflection',
@@ -192,6 +192,7 @@ test('SmartPlanner buildPlannerPrompt includes triage hints and source notes', (
   ], now);
 
   assert.match(prompt, /urgency=today, effort=high/);
+  assert.match(prompt, /resources: repo https:\/\/github\.com\/example\/starter/);
   assert.match(prompt, /notes: Submit design doc, implementation notes/);
   assert.match(prompt, /Prioritize overdue\/today items first/);
   assert.match(prompt, /use the notes as source grounding/);
@@ -202,6 +203,19 @@ test('SmartPlanner compactDeadlineText trims noisy source notes', () => {
   const planner = loadSmartPlanner();
   const snippet = planner.__test.compactDeadlineText({ description: 'Alpha\n\nBeta   Gamma Delta' }, 16);
   assert.equal(snippet, 'Alpha Beta Gamm…');
+});
+
+test('SmartPlanner inferAssignmentResourceLinks surfaces starter and submission URLs', () => {
+  const planner = loadSmartPlanner();
+  const links = planner.__test.inferAssignmentResourceLinks({
+    description: 'Clone https://github.com/example/cs61b-proj2, use starter files at https://course.edu/proj2-starter.zip, then submit https://www.gradescope.com/courses/123/assignments/456.'
+  });
+
+  assert.deepEqual(JSON.parse(JSON.stringify(links)), [
+    { label: 'repo', url: 'https://github.com/example/cs61b-proj2' },
+    { label: 'starter/material', url: 'https://course.edu/proj2-starter.zip' },
+    { label: 'autograder', url: 'https://www.gradescope.com/courses/123/assignments/456' }
+  ]);
 });
 
 test('SmartPlanner inferSubmissionChecklist detects CS workflow requirements', () => {
