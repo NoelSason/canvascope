@@ -829,6 +829,30 @@ test('SmartPlanner buildPlannerPrompt includes audio review guidance', () => {
   assert.match(prompt, /audio review: queue audio recap, convert lecture to recap, listen before practice/);
 });
 
+test('SmartPlanner inferTranscriptStudyGuideHints anchors AI note guides to transcripts', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferTranscriptStudyGuideHints({
+    title: 'NotebookLM transcript study guide',
+    description: 'Build chapter timestamps from the recorded lecture transcript, verify the AI summary, and flag inaudible caption errors.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['anchor notes to timestamps', 'split into topic chapters', 'verify AI summary against transcript']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes transcript study guide guidance', () => {
+  const planner = loadSmartPlanner();
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'Coconote lecture transcript cleanup',
+      courseName: 'CS 188',
+      ts: new Date('2026-07-11T12:00:00-07:00').getTime(),
+      description: 'Use chapter timestamps to turn the class recording transcript into an AI study guide.'
+    }
+  ], new Date('2026-07-10T10:00:00-07:00'));
+
+  assert.match(prompt, /transcript study guide: anchor notes to timestamps, split into topic chapters, verify AI summary against transcript/);
+});
+
 test('SmartPlanner inferPlannerRiskFlags surfaces high-value assignments from Canvas points', () => {
   const planner = loadSmartPlanner();
   const now = new Date('2026-07-10T10:00:00-07:00').getTime();
