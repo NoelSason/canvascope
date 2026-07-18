@@ -464,6 +464,31 @@ test('SmartPlanner inferAiNoteQualityAuditHints detects summary verification loo
   assert.deepEqual(Array.from(hints), ['verify summary against source', 'convert summary to recall prompts', 'tag unanswered questions']);
 });
 
+test('SmartPlanner inferSourceCoverageAuditHints detects AI note coverage gaps', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferSourceCoverageAuditHints({
+    title: 'Coconote transcript audit',
+    description: 'Compare the AI summary with lecture slides and learning objectives; flag missing or low confidence sections.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['audit source coverage', 'cross-check against primary materials', 'flag coverage gaps']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes source coverage audit hints', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00');
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'AI lecture summary coverage check',
+      courseName: 'CS 188',
+      ts: new Date('2026-07-11T18:00:00-07:00').getTime(),
+      description: 'Audit the NotebookLM summary against the lecture deck and mark any unsupported or omitted concepts.'
+    }
+  ], now);
+
+  assert.match(prompt, /source coverage audit: audit source coverage, cross-check against primary materials, flag coverage gaps/);
+});
+
 test('SmartPlanner buildPlannerPrompt includes privacy and consent hints for recorded study workflows', () => {
   const planner = loadSmartPlanner();
   const now = new Date('2026-07-10T10:00:00-07:00');
