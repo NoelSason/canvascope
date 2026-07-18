@@ -330,6 +330,31 @@ test('SmartPlanner buildPlannerPrompt includes AI quiz-generation hints', () => 
   assert.match(prompt, /AI quiz generation: generate practice set, convert notes to quiz, include answer explanations/);
 });
 
+test('SmartPlanner inferDueDateAmbiguityHints detects tentative and timezone-sensitive deadlines', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferDueDateAmbiguityHints({
+    title: 'Project checkpoint TBD',
+    description: 'Instructor says the due time is end of day in PDT, with a separate Canvas lock date after the grace period.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['confirm tentative deadline', 'verify exact due time', 'check timezone']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes due-date ambiguity guardrails', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00');
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'Tentative lab submission',
+      courseName: 'CS 61C',
+      ts: new Date('2026-07-11T23:59:00-07:00').getTime(),
+      description: 'Due date is approximate and may be extended; verify midnight server time versus local time before submitting.'
+    }
+  ], now);
+
+  assert.match(prompt, /due-date ambiguity: confirm tentative deadline, verify exact due time, check timezone/);
+});
+
 test('SmartPlanner inferTeachBackHints detects explain-aloud study needs', () => {
   const planner = loadSmartPlanner();
   const hints = planner.__test.inferTeachBackHints({
