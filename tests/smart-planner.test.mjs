@@ -264,6 +264,33 @@ test('SmartPlanner inferStudyPhases starts open-note exams with source-pack buil
   assert.deepEqual(Array.from(phases), ['Build source pack', 'Active recall drill', 'Practice problems']);
 });
 
+test('SmartPlanner inferExecutionPlanHints breaks CS projects into safe work blocks', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00').getTime();
+  const hints = planner.__test.inferExecutionPlanHints({
+    title: 'Programming project milestone',
+    ts: new Date('2026-07-11T18:00:00-07:00').getTime(),
+    description: 'Clone the GitHub starter repo, implement the core parser, run tests, and submit to Gradescope.'
+  }, now);
+
+  assert.deepEqual(Array.from(hints), ['read spec and clone starter', 'implement core path', 'test and submit early', 'submit safety buffer']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes execution-plan hints', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00');
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'CS compiler project',
+      courseName: 'CS 164',
+      ts: new Date('2026-07-11T18:00:00-07:00').getTime(),
+      description: 'Use the starter repo, implement parsing, run pytest, and submit to the autograder.'
+    }
+  ], now);
+
+  assert.match(prompt, /execution plan: read spec and clone starter, implement core path, test and submit early, submit safety buffer/);
+});
+
 test('SmartPlanner inferConceptReviewHints detects networking and security review topics', () => {
   const planner = loadSmartPlanner();
   const hints = planner.__test.inferConceptReviewHints({
