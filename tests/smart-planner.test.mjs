@@ -400,6 +400,31 @@ test('SmartPlanner buildPlannerPrompt includes privacy and consent hints for rec
   assert.match(prompt, /privacy\/consent: confirm recording consent, avoid private peer details, check AI data sharing/);
 });
 
+test('SmartPlanner inferAccessibilityStudyHints detects accessible AI note-study assets', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferAccessibilityStudyHints({
+    title: 'Lecture capture accessibility cleanup',
+    description: 'Fix caption errors in the transcript, add alt text for slide diagrams, and respect accommodation notes.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['keep transcript accessible', 'respect accommodations', 'add visual descriptions']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes accessibility hints for transcript workflows', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00');
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'Accessible AI lecture notes',
+      courseName: 'CS 188',
+      ts: new Date('2026-07-11T18:00:00-07:00').getTime(),
+      description: 'Clean up caption errors in the transcript and add visual descriptions for slide diagrams before review.'
+    }
+  ], now);
+
+  assert.match(prompt, /accessibility: keep transcript accessible, respect accommodations, add visual descriptions/);
+});
+
 test('SmartPlanner buildPlannerPrompt includes AI note audit hints', () => {
   const planner = loadSmartPlanner();
   const now = new Date('2026-07-10T10:00:00-07:00');
