@@ -883,6 +883,16 @@ test('SmartPlanner inferExamConstraintHints detects allowed-material and proctor
   assert.deepEqual(Array.from(hints), ['prepare allowed references', 'verify permitted tools', 'run proctoring setup check']);
 });
 
+test('SmartPlanner inferExamConstraintHints detects timed in-person exam logistics', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferExamConstraintHints({
+    title: 'Operating systems midterm exam',
+    description: 'Timed 75 minutes in-person in Lecture Hall B. Bring student ID and a pencil.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['simulate time limit', 'confirm exam logistics']);
+});
+
 test('SmartPlanner buildPlannerPrompt includes exam constraint hints', () => {
   const planner = loadSmartPlanner();
   const prompt = planner.__test.buildPlannerPrompt([

@@ -1099,8 +1099,14 @@
     if (/\b(calculator|desmos|spreadsheet|excel|r studio|rstudio|python|jupyter|matlab|software allowed|permitted tools?)\b/.test(source)) {
       add('verify permitted tools');
     }
+    if (/\b(time limit|timed|\d+\s*(?:min|mins|minutes|hour|hours)\b|window|available from|available until|starts at|ends at)\b/.test(source)) {
+      add('simulate time limit');
+    }
     if (/\b(proctor(?:ed|ing)?|lockdown browser|respondus|honorlock|examity|webcam|id check|scratch paper|blank paper|room scan)\b/.test(source)) {
       add('run proctoring setup check');
+    }
+    if (/\b(in[- ]?person|on campus|classroom|room\s+(?!scan\b)[a-z0-9-]+|lecture hall|testing center|exam room|bring (?:id|student id)|photo id)\b/.test(source)) {
+      add('confirm exam logistics');
     }
 
     return hints.slice(0, 3);
