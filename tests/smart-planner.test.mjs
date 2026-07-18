@@ -205,16 +205,29 @@ test('SmartPlanner compactDeadlineText trims noisy source notes', () => {
   assert.equal(snippet, 'Alpha Beta Gamm…');
 });
 
-test('SmartPlanner inferAssignmentResourceLinks surfaces starter and submission URLs', () => {
+test('SmartPlanner inferAssignmentResourceLinks surfaces starter, submission, and AI study URLs', () => {
   const planner = loadSmartPlanner();
   const links = planner.__test.inferAssignmentResourceLinks({
-    description: 'Clone https://github.com/example/cs61b-proj2, use starter files at https://course.edu/proj2-starter.zip, then submit https://www.gradescope.com/courses/123/assignments/456.'
+    description: 'Clone https://github.com/example/cs61b-proj2, use starter files at https://course.edu/proj2-starter.zip, submit https://www.gradescope.com/courses/123/assignments/456, and review the AI study guide at https://notebooklm.google.com/notebook/demo.'
   });
 
   assert.deepEqual(JSON.parse(JSON.stringify(links)), [
     { label: 'repo', url: 'https://github.com/example/cs61b-proj2' },
     { label: 'starter/material', url: 'https://course.edu/proj2-starter.zip' },
-    { label: 'autograder', url: 'https://www.gradescope.com/courses/123/assignments/456' }
+    { label: 'autograder', url: 'https://www.gradescope.com/courses/123/assignments/456' },
+    { label: 'ai study guide', url: 'https://notebooklm.google.com/notebook/demo' }
+  ]);
+});
+
+test('SmartPlanner inferAssignmentResourceLinks recognizes classroom launch URLs', () => {
+  const planner = loadSmartPlanner();
+  const links = planner.__test.inferAssignmentResourceLinks({
+    description: 'Open the attached materials in https://classroom.google.com/c/NzIy/sa/NjA before building the practice set in https://quizlet.com/latest-set.'
+  });
+
+  assert.deepEqual(JSON.parse(JSON.stringify(links)), [
+    { label: 'classroom', url: 'https://classroom.google.com/c/NzIy/sa/NjA' },
+    { label: 'ai study guide', url: 'https://quizlet.com/latest-set' }
   ]);
 });
 
