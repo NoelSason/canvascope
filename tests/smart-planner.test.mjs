@@ -355,6 +355,31 @@ test('SmartPlanner buildPlannerPrompt includes due-date ambiguity guardrails', (
   assert.match(prompt, /due-date ambiguity: confirm tentative deadline, verify exact due time, check timezone/);
 });
 
+test('SmartPlanner inferAssignmentQuestionQueueHints captures unresolved spec questions', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferAssignmentQuestionQueueHints({
+    title: 'Project spec clarification',
+    description: 'I am stuck on an ambiguous rubric requirement; ask the TA in EdStem and record the answered clarification.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['write unresolved question', 'quote exact spec line', 'route to help channel']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes assignment question queue hints', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00');
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'Ambiguous project rubric',
+      courseName: 'CS 61C',
+      ts: new Date('2026-07-11T23:59:00-07:00').getTime(),
+      description: 'Unclear instructions about allowed tools; ask the instructor on Piazza before coding.'
+    }
+  ], now);
+
+  assert.match(prompt, /assignment question queue: write unresolved question, quote exact spec line, route to help channel/);
+});
+
 test('SmartPlanner inferTeachBackHints detects explain-aloud study needs', () => {
   const planner = loadSmartPlanner();
   const hints = planner.__test.inferTeachBackHints({
