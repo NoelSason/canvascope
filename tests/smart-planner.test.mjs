@@ -1253,6 +1253,30 @@ test('SmartPlanner buildPlannerPrompt includes recurring routine hints', () => {
   assert.match(prompt, /recurring routine: reuse weekly routine, prep recurring section, template repeat task/);
 });
 
+test('SmartPlanner inferTimeEstimateCalibrationHints detects estimate and buffer cues', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferTimeEstimateCalibrationHints({
+    title: 'Large project implementation estimate',
+    description: 'Timebox the first pass because last week the similar lab took too long and we underestimated the workload.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['record time estimate', 'add planning buffer', 'compare estimate to actual']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes time estimate calibration hints', () => {
+  const planner = loadSmartPlanner();
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'Research paper planning pass',
+      courseName: 'Writing',
+      ts: new Date('2026-07-11T18:00:00-07:00').getTime(),
+      description: 'Estimate the duration, add buffer, and compare against the actual time from the previous draft.'
+    }
+  ], new Date('2026-07-10T10:00:00-07:00'));
+
+  assert.match(prompt, /time estimate: record time estimate, add planning buffer, compare estimate to actual/);
+});
+
 test('SmartPlanner buildFallbackStudyBlocks skips impossible same-day deadlines', () => {
   const planner = loadSmartPlanner();
   const now = new Date('2026-07-10T10:00:00-07:00').getTime();
