@@ -18,4 +18,8 @@ test('sidepanel exposes assignment-context prompt chips for planning and rubric 
   assert.match(sidepanelHtml, /Office Hours Prep/);
   assert.match(sidepanelHtml, /office-hours prep sheet/);
   assert.match(sidepanelHtml, /CS debugging or repro details/);
+  assert.match(sidepanelHtml, /Teach It Back/);
+  assert.match(sidepanelHtml, /Run a teach-back study check/);
+  assert.match(sidepanelHtml, /hint-first feedback/);
+  assert.match(sidepanelHtml, /Avoid revealing graded answers/);
 });
