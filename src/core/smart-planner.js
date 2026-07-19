@@ -85,10 +85,11 @@
       const url = match[0].replace(/[.,;:!?]+$/g, '');
       const lower = url.toLowerCase();
       if (/github\.com|gitlab\.com|bitbucket\.org/.test(lower)) add('repo', url);
+      else if (/classroom\.github\.com/.test(lower)) add('repo', url);
       else if (/gradescope\.com|submitty|codegrade|autograder/.test(lower)) add('autograder', url);
       else if (/notebooklm\.google\.com|quizlet\.com|coconote\.app/.test(lower)) add('ai study guide', url);
       else if (/classroom\.google\.com/.test(lower)) add('classroom', url);
-      else if (/\.zip(?:$|[?#])|starter|template|scaffold|dataset|data[-_]?set|drive\.google\.com|docs\.google\.com/.test(lower)) add('starter/material', url);
+      else if (/\.zip(?:$|[?#])|starter|template|scaffold|dataset|data[-_]?set|drive\.google\.com|docs\.google\.com|colab\.research\.google\.com|jupyter\.org|replit\.com/.test(lower)) add('starter/material', url);
     }
 
     return links.slice(0, 4);

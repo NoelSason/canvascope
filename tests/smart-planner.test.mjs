@@ -231,6 +231,18 @@ test('SmartPlanner inferAssignmentResourceLinks recognizes classroom launch URLs
   ]);
 });
 
+test('SmartPlanner inferAssignmentResourceLinks recognizes hosted coding notebooks and IDE starters', () => {
+  const planner = loadSmartPlanner();
+  const links = planner.__test.inferAssignmentResourceLinks({
+    description: 'Use the Colab starter https://colab.research.google.com/drive/abc123 and debug in https://replit.com/@course/lab-template before checking the spec.'
+  });
+
+  assert.deepEqual(JSON.parse(JSON.stringify(links)), [
+    { label: 'starter/material', url: 'https://colab.research.google.com/drive/abc123' },
+    { label: 'starter/material', url: 'https://replit.com/@course/lab-template' }
+  ]);
+});
+
 test('SmartPlanner inferSubmissionChecklist detects CS workflow requirements', () => {
   const planner = loadSmartPlanner();
   const checklist = planner.__test.inferSubmissionChecklist({
