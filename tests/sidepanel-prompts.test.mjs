@@ -22,6 +22,12 @@ test('sidepanel exposes assignment-context prompt chips for planning and rubric 
   assert.match(sidepanelHtml, /Run a teach-back study check/);
   assert.match(sidepanelHtml, /hint-first feedback/);
   assert.match(sidepanelHtml, /Avoid revealing graded answers/);
+  assert.match(sidepanelHtml, /CS Flashcards/);
+  assert.match(sidepanelHtml, /Generate CS-aware flashcards/);
+  assert.match(sidepanelHtml, /code-output prediction cards/);
+  assert.match(sidepanelHtml, /time-complexity checks/);
+  assert.match(sidepanelHtml, /bug-spotting prompts/);
+  assert.match(sidepanelHtml, /avoid exposing answers until after each prompt/);
   assert.match(sidepanelHtml, /Study Guide/);
   assert.match(sidepanelHtml, /source-aware study guide/);
   assert.match(sidepanelHtml, /source sections to reread/);
