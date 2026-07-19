@@ -521,6 +521,31 @@ test('SmartPlanner buildPlannerPrompt includes due-date ambiguity guardrails', (
   assert.match(prompt, /due-date ambiguity: confirm tentative deadline, verify exact due time, check timezone/);
 });
 
+test('SmartPlanner inferHiddenDeadlineHints detects interim and live checkoff dates', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferHiddenDeadlineHints({
+    title: 'Final project hidden milestones',
+    description: 'Draft due before class, peer review opens Tuesday, and a demo slot checkoff must be booked before the Canvas hard deadline.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['extract interim dates', 'schedule peer-review window', 'book live checkoff time']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes hidden deadline extraction hints', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00');
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'Capstone launch window',
+      courseName: 'CS 194',
+      ts: new Date('2026-07-14T23:59:00-07:00').getTime(),
+      description: 'Proposal milestone due Monday; app opens on Friday and closes Sunday, with team code review before submission.'
+    }
+  ], now);
+
+  assert.match(prompt, /hidden deadlines: extract interim dates, schedule peer-review window, separate open and close dates/);
+});
+
 test('SmartPlanner inferAssignmentQuestionQueueHints captures unresolved spec questions', () => {
   const planner = loadSmartPlanner();
   const hints = planner.__test.inferAssignmentQuestionQueueHints({
