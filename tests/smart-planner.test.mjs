@@ -243,6 +243,31 @@ test('SmartPlanner inferAssignmentResourceLinks recognizes hosted coding noteboo
   ]);
 });
 
+test('SmartPlanner inferSpecDeltaHints detects changed assignment instructions', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferSpecDeltaHints({
+    title: 'Project 3 revised spec',
+    description: 'Updated requirements: new README section added, removed the demo video, and the deadline changed to Friday.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['diff assignment spec', 'capture new requirements', 'remove stale tasks']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes spec delta hints for revised coursework', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00');
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'Revised project spec',
+      courseName: 'CS 61B',
+      ts: new Date('2026-07-11T23:59:00-07:00').getTime(),
+      description: 'Clarification posted: updated assignment instructions added a required benchmark table and removed the old screenshot requirement.'
+    }
+  ], now);
+
+  assert.match(prompt, /spec delta: diff assignment spec, capture new requirements, remove stale tasks/);
+});
+
 test('SmartPlanner inferSubmissionChecklist detects CS workflow requirements', () => {
   const planner = loadSmartPlanner();
   const checklist = planner.__test.inferSubmissionChecklist({
