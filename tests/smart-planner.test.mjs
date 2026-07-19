@@ -446,6 +446,31 @@ test('SmartPlanner buildPlannerPrompt includes AI quiz-generation hints', () => 
   assert.match(prompt, /AI quiz generation: generate practice set, convert notes to quiz, include answer explanations/);
 });
 
+test('SmartPlanner inferNotebookLmStudyPlanHints detects source-grounded personalized study plans', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferNotebookLmStudyPlanHints({
+    title: 'NotebookLM personalized study plan',
+    description: 'Upload textbook chapters and lecture notes, adapt the plan to my weak spots and target grade, then choose flashcards or an audio overview.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['create source-grounded study plan', 'bundle textbook and lecture notes', 'adapt plan to learner profile']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes NotebookLM study-plan hints', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00');
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'NotebookLM exam study plan',
+      courseName: 'CS 188',
+      ts: new Date('2026-07-12T18:00:00-07:00').getTime(),
+      description: 'Use Gemini with textbook chapters and lecture notes to create a personalized study plan for weak spots.'
+    }
+  ], now);
+
+  assert.match(prompt, /NotebookLM study plan: create source-grounded study plan, bundle textbook and lecture notes, adapt plan to learner profile/);
+});
+
 test('SmartPlanner inferDueDateAmbiguityHints detects tentative and timezone-sensitive deadlines', () => {
   const planner = loadSmartPlanner();
   const hints = planner.__test.inferDueDateAmbiguityHints({
