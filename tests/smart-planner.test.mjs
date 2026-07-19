@@ -304,6 +304,31 @@ test('SmartPlanner buildPlannerPrompt includes execution-plan hints', () => {
   assert.match(prompt, /execution plan: read spec and clone starter, implement core path, test and submit early, submit safety buffer/);
 });
 
+test('SmartPlanner inferCommandSnippetHints detects runnable CS assignment commands', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferCommandSnippetHints({
+    title: 'Project setup and tests',
+    description: 'Run `npm install`, then `npm test`. Include sample input/stdout and update the README with how to run it.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['extract runnable commands', 'verify command sequence', 'save terminal evidence']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes command-snippet study hints', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00');
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'CLI lab',
+      courseName: 'CS 61C',
+      ts: new Date('2026-07-11T18:00:00-07:00').getTime(),
+      description: 'Follow the Makefile, run `make test`, capture terminal output, and submit the README.'
+    }
+  ], now);
+
+  assert.match(prompt, /command snippets: extract runnable commands, verify command sequence, save terminal evidence/);
+});
+
 test('SmartPlanner inferConceptReviewHints detects networking and security review topics', () => {
   const planner = loadSmartPlanner();
   const hints = planner.__test.inferConceptReviewHints({
