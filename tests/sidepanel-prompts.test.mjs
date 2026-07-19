@@ -22,4 +22,9 @@ test('sidepanel exposes assignment-context prompt chips for planning and rubric 
   assert.match(sidepanelHtml, /Run a teach-back study check/);
   assert.match(sidepanelHtml, /hint-first feedback/);
   assert.match(sidepanelHtml, /Avoid revealing graded answers/);
+  assert.match(sidepanelHtml, /Study Guide/);
+  assert.match(sidepanelHtml, /source-aware study guide/);
+  assert.match(sidepanelHtml, /source sections to reread/);
+  assert.match(sidepanelHtml, /verify AI-generated notes before submitting work/);
+  assert.match(sidepanelHtml, /AI help can be wrong/);
 });
