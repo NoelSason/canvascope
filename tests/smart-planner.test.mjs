@@ -268,6 +268,31 @@ test('SmartPlanner buildPlannerPrompt includes spec delta hints for revised cour
   assert.match(prompt, /spec delta: diff assignment spec, capture new requirements, remove stale tasks/);
 });
 
+test('SmartPlanner inferMilestoneDecompositionHints detects multi-part deliverables', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferMilestoneDecompositionHints({
+    title: 'Multi-part final project checkpoint',
+    description: 'First submit the proposal, then implement the prototype, run tests, and upload the final demo with required rubric deliverables.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['break into milestones', 'make deliverable checklist', 'order dependent steps']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes milestone decomposition hints', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00');
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'Capstone milestone',
+      courseName: 'CS 194',
+      ts: new Date('2026-07-13T23:59:00-07:00').getTime(),
+      description: 'Multi-part checkpoint: include required proposal, implementation, tests, and final demo deliverables.'
+    }
+  ], now);
+
+  assert.match(prompt, /milestone decomposition: break into milestones, make deliverable checklist, separate build\/test\/polish/);
+});
+
 test('SmartPlanner inferSubmissionChecklist detects CS workflow requirements', () => {
   const planner = loadSmartPlanner();
   const checklist = planner.__test.inferSubmissionChecklist({
