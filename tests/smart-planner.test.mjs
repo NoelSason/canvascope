@@ -366,6 +366,16 @@ test('SmartPlanner buildPlannerPrompt includes execution-plan hints', () => {
   assert.match(prompt, /execution plan: read spec and clone starter, implement core path, test and submit early, submit safety buffer/);
 });
 
+test('SmartPlanner inferCsWorkflowHints flags invariant and fuzz testing work', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferCsWorkflowHints({
+    title: 'Parser project randomized tests',
+    description: 'Implement the AST parser, list edge cases, add property-based fuzzing for invariants, then run unit tests before the autograder.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['read spec first', 'implement core path', 'list edge cases', 'add invariant tests']);
+});
+
 test('SmartPlanner inferCommandSnippetHints detects runnable CS assignment commands', () => {
   const planner = loadSmartPlanner();
   const hints = planner.__test.inferCommandSnippetHints({

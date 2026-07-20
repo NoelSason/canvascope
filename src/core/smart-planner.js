@@ -1043,6 +1043,9 @@
     if (/\b(edge cases?|corner cases?|boundary cases?|inputs?|outputs?|constraints?|invalid input|empty input|null|overflow|underflow)\b/.test(source)) {
       add('list edge cases');
     }
+    if (/\b(property[- ]?based|fuzz(?:ing)?|randomi[sz]ed|invariants?|metamorphic|stress tests?|load tests?)\b/.test(source)) {
+      add('add invariant tests');
+    }
     if (/\b(test cases?|tests?|unit tests?|pytest|junit|npm test|autograder|auto[- ]?grader|gradescope|submitty|codegrade|hidden tests?)\b/.test(source)) {
       add('run tests before submit');
     }
