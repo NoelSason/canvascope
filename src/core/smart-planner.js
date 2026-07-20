@@ -857,6 +857,7 @@
     const add = (label) => { if (!hints.includes(label)) hints.push(label); };
 
     if (/\b(rubric|criteria|requirements?|spec(?:ification)?|deliverables?|checklist|acceptance criteria)\b/.test(source)) {
+      add('turn rubric into checklist');
       add('map work to rubric');
     }
     if (/\b(points?|pts?|score|grade|grading|weighted|percent(?:age)?|extra credit)\b/.test(source)) {
@@ -869,7 +870,7 @@
       add('run final self-check');
     }
 
-    return hints.slice(0, 3);
+    return hints.slice(0, 4);
   }
 
   function inferPreSubmitVerificationHints(item) {

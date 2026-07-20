@@ -1764,7 +1764,7 @@ test('SmartPlanner inferRubricScoringHints detects grading-focused planning cues
     description: 'Map each deliverable to the rubric, prioritize the 100 point required section before bonus work, and run final tests.'
   });
 
-  assert.deepEqual(Array.from(hints), ['map work to rubric', 'prioritize high-point parts', 'separate required vs bonus']);
+  assert.deepEqual(Array.from(hints), ['turn rubric into checklist', 'map work to rubric', 'prioritize high-point parts', 'separate required vs bonus']);
 });
 
 test('SmartPlanner buildPlannerPrompt includes rubric scoring hints', () => {
@@ -1778,7 +1778,7 @@ test('SmartPlanner buildPlannerPrompt includes rubric scoring hints', () => {
     }
   ], new Date('2026-07-10T10:00:00-07:00'));
 
-  assert.match(prompt, /rubric scoring: map work to rubric, prioritize high-point parts, separate required vs bonus/);
+  assert.match(prompt, /rubric scoring: turn rubric into checklist, map work to rubric, prioritize high-point parts, separate required vs bonus/);
 });
 
 test('SmartPlanner inferPreSubmitVerificationHints detects final submission safeguards', () => {
