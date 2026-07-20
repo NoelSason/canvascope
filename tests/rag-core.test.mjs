@@ -489,3 +489,32 @@ test('RAGCore prompts add teach-back coaching for check-my-understanding request
     mockTabUrl = prevTabUrl;
   }
 });
+
+test('RAGCore prompts add interleaved practice rotations for mixed-topic study requests', async () => {
+  assert.equal(RAGCore.hasInterleavingIntent('interleave practice for graphs and heaps before the exam'), true);
+  assert.equal(RAGCore.hasInterleavingIntent('rotate topics while I study multiple classes'), true);
+  assert.equal(RAGCore.hasInterleavingIntent('summarize the reading'), false);
+
+  const prevIndexed = mockStorage.indexedContent;
+  const prevTabUrl = mockTabUrl;
+  mockTabUrl = 'https://google.com';
+  mockStorage.indexedContent = [
+    {
+      title: 'Graph and heap practice set',
+      courseName: 'CS 61B',
+      type: 'file',
+      content: 'Graph traversals, priority queues, heaps, and shortest path practice problems.'
+    }
+  ];
+
+  try {
+    const compiled = await RAGCore.compileUnifiedPrompt('interleave practice for graph traversal and heaps before the quiz');
+    assert.match(compiled.prompt, /rotation across 2-4 topics/i);
+    assert.match(compiled.prompt, /alternate problem types/i);
+    assert.match(compiled.prompt, /retrieval check before each switch/i);
+    assert.match(compiled.prompt, /error-log cue/i);
+  } finally {
+    mockStorage.indexedContent = prevIndexed;
+    mockTabUrl = prevTabUrl;
+  }
+});
