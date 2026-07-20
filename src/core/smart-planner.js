@@ -1372,6 +1372,18 @@
     if (/\b(transfer|similar problem|variant|extension|apply to new|new context)\b/.test(source)) {
       add('try transfer problem');
     }
+    if (/\b(trace code|code tracing|output prediction|predict output|dry run|walk through code|stack trace|execution trace)\b/.test(source)) {
+      add('trace code before running');
+    }
+    if (/\b(implement|implementation|coding|programming|function|method|class|api|algorithm|data structure)\b/.test(source)) {
+      add('write tiny implementation');
+    }
+    if (/\b(failing tests?|unit tests?|test cases?|pytest|jest|autograder|gradescope|debug|bug|edge cases?)\b/.test(source)) {
+      add('add failing test case');
+    }
+    if (/\b(time complexity|space complexity|big[- ]?o|runtime|memory usage|asymptotic)\b/.test(source)) {
+      add('explain complexity');
+    }
 
     return hints.slice(0, 3);
   }

@@ -2203,6 +2203,31 @@ test('SmartPlanner buildPlannerPrompt includes worked example ladder hints', () 
   assert.match(prompt, /worked example ladder: study worked example, fade scaffolding, reconstruct steps/);
 });
 
+test('SmartPlanner inferWorkedExampleHints detects CS practice ladders', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferWorkedExampleHints({
+    title: 'Data structures lab practice',
+    description: 'Dry run the code, implement a small function, add failing tests, then estimate Big-O time complexity.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['trace code before running', 'write tiny implementation', 'add failing test case']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes CS practice ladder hints', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00');
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'Array algorithms lab',
+      courseName: 'CS',
+      ts: new Date('2026-07-13T18:00:00-07:00').getTime(),
+      description: 'Practice by dry run code, implement the algorithm, adding unit tests, and explaining space complexity.'
+    }
+  ], now);
+
+  assert.match(prompt, /worked example ladder: trace code before running, write tiny implementation, add failing test case/);
+});
+
 test('SmartPlanner inferEvidenceConfidenceHints detects source confidence guardrails', () => {
   const planner = loadSmartPlanner();
   const hints = planner.__test.inferEvidenceConfidenceHints({
