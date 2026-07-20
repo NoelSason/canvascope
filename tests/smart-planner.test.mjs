@@ -1815,6 +1815,35 @@ test('SmartPlanner buildPlannerPrompt includes pre-submit verification hints', (
   assert.match(prompt, /pre-submit: verify correct file, confirm submission receipt, push final commit/);
 });
 
+test('SmartPlanner inferSubmissionReceiptHints detects LMS receipt follow-up', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferSubmissionReceiptHints({
+    title: 'Project 2 Gradescope resubmission',
+    description: 'Submit the latest attempt to the autograder, review feedback, and request a regrade if needed.',
+    submission: {
+      workflow_state: 'submitted',
+      submitted_at: '2026-07-10T17:45:00-07:00'
+    }
+  });
+
+  assert.deepEqual(Array.from(hints), ['capture submission receipt', 'verify latest attempt is active', 'check grader feedback']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes submission receipt hints', () => {
+  const planner = loadSmartPlanner();
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'Canvas lab upload',
+      courseName: 'CS 61B',
+      ts: new Date('2026-07-12T18:00:00-07:00').getTime(),
+      description: 'Upload the lab to Canvas, confirm the submission receipt, and check autograder feedback before the deadline.',
+      submission: { submitted_at: '2026-07-10T17:45:00-07:00' }
+    }
+  ], new Date('2026-07-10T10:00:00-07:00'));
+
+  assert.match(prompt, /submission receipt: capture submission receipt, check grader feedback, record submitted timestamp/);
+});
+
 test('SmartPlanner inferAvailabilityWindowHints detects LMS lock windows and timed attempts', () => {
   const planner = loadSmartPlanner();
   const hints = planner.__test.inferAvailabilityWindowHints({
