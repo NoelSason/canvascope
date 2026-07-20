@@ -1778,6 +1778,16 @@ test('SmartPlanner inferSourceGroundingHints cross-checks AI lecture notes again
   assert.deepEqual(Array.from(hints), ['cross-check AI notes']);
 });
 
+test('SmartPlanner inferSourceGroundingHints catches citation-anchor gaps in AI notes', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferSourceGroundingHints({
+    title: 'AI answer audit',
+    description: 'Review AI summary claims with page numbers, timestamps, and flag any uncited hallucination before using them.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['cross-check AI notes', 'anchor claims to citations', 'verify unsupported claims']);
+});
+
 test('SmartPlanner inferStudyWrapUpHints detects post-session capture needs', () => {
   const planner = loadSmartPlanner();
   const hints = planner.__test.inferStudyWrapUpHints({

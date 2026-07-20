@@ -736,13 +736,16 @@
     if (/\b(compare|contrast|synthesize|synthesis|multiple readings?|two papers?|several sources?|conflicting|perspectives?)\b/.test(source)) {
       add('compare source claims');
     }
-    if (/\b(ai summaries?|ai notes?|generated notes?|notebooklm|transcripts?|captions?|recordings?|lecture capture|slides?)\b/.test(source)) {
+    if (/\b(ai summar(?:y|ies)|ai notes?|generated notes?|notebooklm|transcripts?|captions?|recordings?|lecture capture|slides?)\b/.test(source)) {
       add('cross-check AI notes');
     }
     if (/\b(open[- ]?book|notes allowed|cheat sheet|study guide|reference sheet|source packet|notebook|notebooklm)\b/.test(source)) {
       add('build cited study guide');
     }
-    if (/\b(unsupported|hallucination|verify|fact[- ]?check|grounded|source[- ]?grounded)\b/.test(source)) {
+    if (/\b(page numbers?|page refs?|timestamps?|time stamps?|anchors?|source links?|citation trail|footnotes?)\b/.test(source)) {
+      add('anchor claims to citations');
+    }
+    if (/\b(uncited|no citation|missing citation|unsupported|hallucination|verify|fact[- ]?check|grounded|source[- ]?grounded)\b/.test(source)) {
       add('verify unsupported claims');
     }
 
