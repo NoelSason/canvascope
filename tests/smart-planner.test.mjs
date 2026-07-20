@@ -1740,7 +1740,17 @@ test('SmartPlanner buildPlannerPrompt includes source grounding hints', () => {
     }
   ], new Date('2026-07-10T10:00:00-07:00'));
 
-  assert.match(prompt, /source grounding: keep answers source-backed, compare source claims, build cited study guide/);
+  assert.match(prompt, /source grounding: keep answers source-backed, compare source claims, cross-check AI notes/);
+});
+
+test('SmartPlanner inferSourceGroundingHints cross-checks AI lecture notes against class sources', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferSourceGroundingHints({
+    title: 'AI lecture summary review',
+    description: 'Use generated notes from the recording transcript and slides before the quiz.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['cross-check AI notes']);
 });
 
 test('SmartPlanner inferStudyWrapUpHints detects post-session capture needs', () => {

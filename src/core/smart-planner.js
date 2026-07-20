@@ -736,6 +736,9 @@
     if (/\b(compare|contrast|synthesize|synthesis|multiple readings?|two papers?|several sources?|conflicting|perspectives?)\b/.test(source)) {
       add('compare source claims');
     }
+    if (/\b(ai summaries?|ai notes?|generated notes?|notebooklm|transcripts?|captions?|recordings?|lecture capture|slides?)\b/.test(source)) {
+      add('cross-check AI notes');
+    }
     if (/\b(open[- ]?book|notes allowed|cheat sheet|study guide|reference sheet|source packet|notebook|notebooklm)\b/.test(source)) {
       add('build cited study guide');
     }
