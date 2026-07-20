@@ -378,6 +378,8 @@ test('RAGCore prompts add worked examples and edge cases for CS practice questio
 
 test('RAGCore prompts add Big-O guidance for CS complexity questions', async () => {
   assert.equal(RAGCore.hasComplexityIntent('what is the Big-O runtime?'), true);
+  assert.equal(RAGCore.hasComplexityIntent('why is BFS O(V + E)?'), true);
+  assert.equal(RAGCore.hasComplexityIntent('is this O(1) or O(n)?'), true);
   assert.equal(RAGCore.hasComplexityIntent('summarize the reading'), false);
 
   const prevIndexed = mockStorage.indexedContent;
@@ -393,7 +395,7 @@ test('RAGCore prompts add Big-O guidance for CS complexity questions', async () 
   ];
 
   try {
-    const compiled = await RAGCore.compileUnifiedPrompt('what is the time complexity of BFS?');
+    const compiled = await RAGCore.compileUnifiedPrompt('why is BFS O(V + E)?');
     assert.match(compiled.prompt, /time and space complexity/i);
     assert.match(compiled.prompt, /input variables/i);
   } finally {

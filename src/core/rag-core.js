@@ -114,7 +114,9 @@ class RAGCore {
   static hasComplexityIntent(question) {
     const q = String(question || '').toLowerCase();
     if (!q) return false;
-    return /\b(big[- ]?o|time complexity|space complexity|runtime|asymptotic|worst case|average case|amortized|scales?|efficient|efficiency)\b/.test(q);
+    const hasComplexityPhrase = /\b(big[- ]?o|time complexity|space complexity|runtime|asymptotic|worst case|average case|amortized|scales?|efficient|efficiency)\b/.test(q);
+    const hasBigONotation = /\bo\s*\([^)]+\)/.test(q);
+    return hasComplexityPhrase || hasBigONotation;
   }
 
   static hasConceptMapIntent(question) {
