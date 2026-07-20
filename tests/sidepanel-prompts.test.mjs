@@ -28,6 +28,11 @@ test('sidepanel exposes assignment-context prompt chips for planning and rubric 
   assert.match(sidepanelHtml, /time-complexity checks/);
   assert.match(sidepanelHtml, /bug-spotting prompts/);
   assert.match(sidepanelHtml, /avoid exposing answers until after each prompt/);
+  assert.match(sidepanelHtml, /Debug Walkthrough/);
+  assert.match(sidepanelHtml, /Walk me through debugging this CS problem/);
+  assert.match(sidepanelHtml, /minimal repro steps/);
+  assert.match(sidepanelHtml, /smallest safe fix to try next/);
+  assert.match(sidepanelHtml, /academic-integrity limits/);
   assert.match(sidepanelHtml, /Study Guide/);
   assert.match(sidepanelHtml, /source-aware study guide/);
   assert.match(sidepanelHtml, /source sections to reread/);
