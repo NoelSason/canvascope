@@ -1465,6 +1465,30 @@ test('SmartPlanner buildPlannerPrompt includes AI study session setup hints', ()
   assert.match(prompt, /AI study session: start with learning goal, attach source packet, choose study artifact/);
 });
 
+test('SmartPlanner inferConceptMapBridgeHints detects source-backed topic mapping', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferConceptMapBridgeHints({
+    title: 'Build a graph algorithms concept map',
+    description: 'Connect BFS, DFS, and shortest paths to the lecture slides and textbook PDF. Flag weak spots where source support is missing.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['build course concept map', 'link concepts to source pages', 'flag missing source support']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes concept map bridge hints', () => {
+  const planner = loadSmartPlanner();
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'Systems concept map review',
+      courseName: 'CS 162',
+      ts: new Date('2026-07-12T12:00:00-07:00').getTime(),
+      description: 'Make a knowledge graph connecting previous lecture notes, Canvas modules, and weak spots before the quiz.'
+    }
+  ], new Date('2026-07-10T10:00:00-07:00'));
+
+  assert.match(prompt, /concept map bridge: build course concept map, link concepts to source pages, order prerequisite topics/);
+});
+
 test('SmartPlanner inferStudyRecoveryHints protects sleep and reset breaks', () => {
   const planner = loadSmartPlanner();
   const now = new Date('2026-07-10T10:00:00-07:00').getTime();
