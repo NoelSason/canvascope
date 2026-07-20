@@ -2514,6 +2514,16 @@ test('SmartPlanner inferFirstStudyStepHints suggests active pre-work actions', (
   assert.deepEqual(Array.from(hints), ['blank-page recall first', 'state target skill', 'describe I/O before coding']);
 });
 
+test('SmartPlanner inferAiSourceBoundaryHints verifies external study sources against course sources', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferAiSourceBoundaryHints({
+    title: 'AI-assisted debugging review',
+    description: 'Use ChatGPT with web search, Stack Overflow, and a blog post, then compare claims with the assignment spec.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['separate source facts from AI hints', 'verify against course source']);
+});
+
 test('SmartPlanner buildPlannerPrompt includes first study step hints', () => {
   const planner = loadSmartPlanner();
   const now = new Date('2026-07-10T10:00:00-07:00');

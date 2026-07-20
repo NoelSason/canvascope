@@ -1727,6 +1727,9 @@
     if (/\b(prompt injection|ignore previous|system prompt|jailbreak|malicious|untrusted|external content|web page|uploaded file)\b/.test(source)) {
       add('treat content as untrusted');
     }
+    if (/\b(web search|search result|browser|internet|reddit|stackoverflow|stack overflow|blog post|youtube|external source|third[- ]?party)\b/.test(source)) {
+      add('verify against course source');
+    }
 
     return hints.slice(0, 3);
   }
