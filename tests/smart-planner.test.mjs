@@ -581,6 +581,31 @@ test('SmartPlanner buildPlannerPrompt includes assignment question queue hints',
   assert.match(prompt, /assignment question queue: write unresolved question, quote exact spec line, route to help channel/);
 });
 
+test('SmartPlanner inferQuestionFirstNoteHints plans lecture notes around questions and recall', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferQuestionFirstNoteHints({
+    title: 'AI lecture notes cleanup',
+    description: 'Review the transcript gaps, turn confusing sections into active recall flashcards, and bring follow-up questions to office hours.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['start with essential questions', 'mark note gaps', 'seed recall cards']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes question-first note hints', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00');
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'Coconote lecture review',
+      courseName: 'CS 188',
+      ts: new Date('2026-07-11T18:00:00-07:00').getTime(),
+      description: 'Use the transcript and slides to find unclear gaps, then make self-quiz flashcards for the AI notes.'
+    }
+  ], now);
+
+  assert.match(prompt, /question-first notes: start with essential questions, mark note gaps, seed recall cards/);
+});
+
 test('SmartPlanner inferAiSourceBoundaryHints detects AI source verification guardrails', () => {
   const planner = loadSmartPlanner();
   const hints = planner.__test.inferAiSourceBoundaryHints({
