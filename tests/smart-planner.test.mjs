@@ -676,6 +676,31 @@ test('SmartPlanner buildPlannerPrompt includes question-first note hints', () =>
   assert.match(prompt, /question-first notes: start with essential questions, mark note gaps, seed recall cards/);
 });
 
+test('SmartPlanner inferMissedLectureCatchUpHints guides absent-student catch-up', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferMissedLectureCatchUpHints({
+    title: 'Catch up on missed algorithms lecture',
+    description: 'Use the Zoom recording transcript, lecture slides, and a classmate note thread before office hours.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['triage missed class first', 'skim transcript for gaps', 'pair slides with examples']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes missed lecture catch-up hints', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00');
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'Missed lecture catch-up quiz',
+      courseName: 'CS 70',
+      ts: new Date('2026-07-12T12:00:00-07:00').getTime(),
+      description: 'Catching up from an absence: review the recording transcript, slides, and classmate notes before the quiz.'
+    }
+  ], now);
+
+  assert.match(prompt, /missed lecture catch-up: triage missed class first, skim transcript for gaps, pair slides with examples/);
+});
+
 test('SmartPlanner inferAiSourceBoundaryHints detects AI source verification guardrails', () => {
   const planner = loadSmartPlanner();
   const hints = planner.__test.inferAiSourceBoundaryHints({
