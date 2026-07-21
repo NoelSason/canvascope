@@ -19,6 +19,7 @@ test('SemanticMatcher.vectorize generates normalized concept vectors', () => {
   assert.equal(emptyVec.TIME, 0);
   assert.equal(emptyVec.COMMUNICATION, 0);
   assert.equal(emptyVec.COMPUTING, 0);
+  assert.equal(emptyVec.STUDY_STRATEGY, 0);
 
   // Synonyms of EVALUATION
   const evalVec = SemanticMatcher.vectorize('midterm quiz final exam');
@@ -49,6 +50,12 @@ test('SemanticMatcher.vectorize recognizes CS complexity and data-structure stud
   const vector = SemanticMatcher.vectorize('Big-O runtime for recursion stack and graph traversal');
   assert.ok(vector.COMPUTING > 0, 'complexity/data-structure language should rank as computing context');
   assert.equal(vector.EVALUATION, 0);
+});
+
+test('SemanticMatcher.vectorize recognizes active recall and study strategy language', () => {
+  const vector = SemanticMatcher.vectorize('Make Anki flashcards with spaced repetition and active recall practice problems');
+  assert.ok(vector.STUDY_STRATEGY > 0, 'study workflow terms should map to the study strategy dimension');
+  assert.equal(vector.COMMUNICATION, 0);
 });
 
 test('SemanticMatcher.vectorize avoids retaining huge source blobs in cache', () => {

@@ -11,7 +11,8 @@ class SemanticMatcher {
         MATERIAL: Object.freeze(['slides', 'lecture', 'reading', 'paper', 'syllabus', 'deck', 'textbook', 'worksheet', 'document', 'pdf', 'notes']),
         TIME: Object.freeze(['due', 'deadline', 'date', 'calendar', 'schedule', 'when', 'overdue', 'time', 'upcoming', 'next']),
         COMMUNICATION: Object.freeze(['email', 'zoom', 'office hours', 'professor', 'ta', 'contact', 'question', 'help', 'instructor', 'officehours']),
-        COMPUTING: Object.freeze(['code', 'coding', 'programming', 'python', 'notebook', 'jupyter', 'github', 'repo', 'terminal', 'algorithm', 'debug', 'function', 'runtime', 'complexity', 'big-o', 'recursion', 'stack', 'heap', 'array', 'graph', 'tree', 'api', 'cli', 'compile', 'test'])
+        COMPUTING: Object.freeze(['code', 'coding', 'programming', 'python', 'notebook', 'jupyter', 'github', 'repo', 'terminal', 'algorithm', 'debug', 'function', 'runtime', 'complexity', 'big-o', 'recursion', 'stack', 'heap', 'array', 'graph', 'tree', 'api', 'cli', 'compile', 'test']),
+        STUDY_STRATEGY: Object.freeze(['active recall', 'spaced repetition', 'flashcards', 'flashcard', 'anki', 'self quiz', 'self-quiz', 'practice problems', 'teach back', 'teach-back', 'explain aloud', 'study guide', 'review loop', 'retrieval practice', 'mistake review', 'confidence rating'])
       });
     }
     return this._dimensions;
