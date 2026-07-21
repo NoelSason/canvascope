@@ -251,6 +251,19 @@ test('SmartPlanner inferAssignmentResourceLinks recognizes hosted coding noteboo
   ]);
 });
 
+test('SmartPlanner inferAssignmentResourceLinks recognizes Canvas, discussion, and AI transcript URLs', () => {
+  const planner = loadSmartPlanner();
+  const links = planner.__test.inferAssignmentResourceLinks({
+    description: 'Open https://canvas.instructure.com/courses/123/assignments/456, ask followups in https://edstem.org/us/courses/789/discussion/42, and review notes at https://otter.ai/u/demo.'
+  });
+
+  assert.deepEqual(JSON.parse(JSON.stringify(links)), [
+    { label: 'canvas', url: 'https://canvas.instructure.com/courses/123/assignments/456' },
+    { label: 'discussion/help', url: 'https://edstem.org/us/courses/789/discussion/42' },
+    { label: 'ai notes/transcript', url: 'https://otter.ai/u/demo' }
+  ]);
+});
+
 test('SmartPlanner inferSpecDeltaHints detects changed assignment instructions', () => {
   const planner = loadSmartPlanner();
   const hints = planner.__test.inferSpecDeltaHints({

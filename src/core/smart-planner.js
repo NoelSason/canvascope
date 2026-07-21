@@ -87,7 +87,10 @@
       if (/github\.com|gitlab\.com|bitbucket\.org/.test(lower)) add('repo', url);
       else if (/classroom\.github\.com/.test(lower)) add('repo', url);
       else if (/gradescope\.com|submitty|codegrade|autograder/.test(lower)) add('autograder', url);
+      else if (/canvas\.instructure\.com|instructure\.com\/courses\//.test(lower)) add('canvas', url);
+      else if (/edstem\.org|piazza\.com|campuswire\.com/.test(lower)) add('discussion/help', url);
       else if (/notebooklm\.google\.com|quizlet\.com|coconote\.app/.test(lower)) add('ai study guide', url);
+      else if (/otter\.ai|granola\.ai|fireflies\.ai|fathom\.video/.test(lower)) add('ai notes/transcript', url);
       else if (/classroom\.google\.com/.test(lower)) add('classroom', url);
       else if (/\.zip(?:$|[?#])|starter|template|scaffold|dataset|data[-_]?set|drive\.google\.com|docs\.google\.com|colab\.research\.google\.com|jupyter\.org|replit\.com/.test(lower)) add('starter/material', url);
     }
