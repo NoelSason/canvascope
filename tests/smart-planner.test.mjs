@@ -207,6 +207,40 @@ test('SmartPlanner buildPlannerPrompt includes triage hints and source notes', (
   assert.match(prompt, /Return ONLY a valid JSON array/);
 });
 
+test('SmartPlanner inferAmbiguousAssignmentTitleHints flags vague Canvas titles', () => {
+  const planner = loadSmartPlanner();
+
+  assert.deepEqual(JSON.parse(JSON.stringify(planner.__test.inferAmbiguousAssignmentTitleHints({
+    title: 'Module 7'
+  }))), [
+    'vague title: open Canvas details',
+    'module label needs spec check'
+  ]);
+
+  assert.deepEqual(JSON.parse(JSON.stringify(planner.__test.inferAmbiguousAssignmentTitleHints({
+    title: 'Project',
+    description: 'See attached rubric'
+  }))), [
+    'vague title: open Canvas details',
+    'details likely hidden in attachment'
+  ]);
+});
+
+test('SmartPlanner buildPlannerPrompt includes ambiguous-title guardrails', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00');
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'Homework 4',
+      courseName: 'CS 61B',
+      ts: new Date('2026-07-11T23:59:00-07:00').getTime()
+    }
+  ], now);
+
+  assert.match(prompt, /ambiguous title: vague title: open Canvas details/);
+  assert.match(prompt, /no source notes: verify requirements/);
+});
+
 test('SmartPlanner compactDeadlineText trims noisy source notes', () => {
   const planner = loadSmartPlanner();
   const snippet = planner.__test.compactDeadlineText({ description: 'Alpha\n\nBeta   Gamma Delta' }, 16);
