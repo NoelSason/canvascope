@@ -91,8 +91,9 @@
       else if (/edstem\.org|piazza\.com|campuswire\.com/.test(lower)) add('discussion/help', url);
       else if (/notebooklm\.google\.com|quizlet\.com|coconote\.app/.test(lower)) add('ai study guide', url);
       else if (/otter\.ai|granola\.ai|fireflies\.ai|fathom\.video/.test(lower)) add('ai notes/transcript', url);
+      else if (/youtube\.com|youtu\.be|vimeo\.com|panopto\.|kaltura\.|\/kaltura\/|mediasite\.|echo360\./.test(lower)) add('lecture/video', url);
       else if (/classroom\.google\.com/.test(lower)) add('classroom', url);
-      else if (/\.zip(?:$|[?#])|starter|template|scaffold|dataset|data[-_]?set|drive\.google\.com|docs\.google\.com|colab\.research\.google\.com|jupyter\.org|replit\.com/.test(lower)) add('starter/material', url);
+      else if (/\.zip(?:$|[?#])|starter|template|scaffold|dataset|data[-_]?set|drive\.google\.com|docs\.google\.com|colab\.research\.google\.com|jupyter\.org|replit\.com|github\.dev|codespaces\.new|stackblitz\.com|codesandbox\.io/.test(lower)) add('starter/material', url);
     }
 
     return links.slice(0, 4);

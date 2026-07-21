@@ -276,12 +276,25 @@ test('SmartPlanner inferAssignmentResourceLinks recognizes classroom launch URLs
 test('SmartPlanner inferAssignmentResourceLinks recognizes hosted coding notebooks and IDE starters', () => {
   const planner = loadSmartPlanner();
   const links = planner.__test.inferAssignmentResourceLinks({
-    description: 'Use the Colab starter https://colab.research.google.com/drive/abc123 and debug in https://replit.com/@course/lab-template before checking the spec.'
+    description: 'Use the Colab starter https://colab.research.google.com/drive/abc123 and debug in https://replit.com/@course/lab-template before checking the spec in https://github.dev/example/course.'
   });
 
   assert.deepEqual(JSON.parse(JSON.stringify(links)), [
     { label: 'starter/material', url: 'https://colab.research.google.com/drive/abc123' },
-    { label: 'starter/material', url: 'https://replit.com/@course/lab-template' }
+    { label: 'starter/material', url: 'https://replit.com/@course/lab-template' },
+    { label: 'starter/material', url: 'https://github.dev/example/course' }
+  ]);
+});
+
+test('SmartPlanner inferAssignmentResourceLinks recognizes lecture video resources', () => {
+  const planner = loadSmartPlanner();
+  const links = planner.__test.inferAssignmentResourceLinks({
+    description: 'Review the lecture recording at https://youtu.be/abc123 and captions in https://course.host/kaltura/media before generating practice questions.'
+  });
+
+  assert.deepEqual(JSON.parse(JSON.stringify(links)), [
+    { label: 'lecture/video', url: 'https://youtu.be/abc123' },
+    { label: 'lecture/video', url: 'https://course.host/kaltura/media' }
   ]);
 });
 
