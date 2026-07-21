@@ -1286,6 +1286,29 @@ test('SmartPlanner buildPlannerPrompt includes focus sprint hints', () => {
   assert.match(prompt, /focus sprint: start focus sprint, protect attention, define done for block/);
 });
 
+test('SmartPlanner inferEnergyAwareSessionHints detects sustainable study-session cues', () => {
+  const planner = loadSmartPlanner();
+
+  assert.deepEqual(Array.from(planner.__test.inferEnergyAwareSessionHints({
+    title: 'Late night final exam cram',
+    description: 'I am tired after a mock exam; take a recovery break before the next focus sprint.'
+  })), ['choose low-energy review', 'avoid last-minute overload', 'plan recovery break']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes energy-aware session hints', () => {
+  const planner = loadSmartPlanner();
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'Compiler project deep work',
+      courseName: 'CS 164',
+      ts: new Date('2026-07-11T12:00:00-07:00').getTime(),
+      description: 'Schedule peak focus for implementation, avoid burnout, and plan a reset break after debugging.'
+    }
+  ], new Date('2026-07-10T10:00:00-07:00'));
+
+  assert.match(prompt, /energy-aware session: choose low-energy review, schedule peak-focus work, plan recovery break/);
+});
+
 test('SmartPlanner buildPlannerPrompt includes learning strategy hints', () => {
   const planner = loadSmartPlanner();
   const prompt = planner.__test.buildPlannerPrompt([
