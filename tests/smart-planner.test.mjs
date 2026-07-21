@@ -1638,10 +1638,10 @@ test('SmartPlanner inferCollaborationHandoffHints detects group project handoffs
   const planner = loadSmartPlanner();
   const hints = planner.__test.inferCollaborationHandoffHints({
     title: 'Team demo checkpoint',
-    description: 'Coordinate with your partner, merge the shared GitHub branch, rehearse the slide walkthrough, and close peer review feedback.'
+    description: 'Coordinate with your partner, split frontend/backend roles, merge the shared GitHub branch during the integration handoff, rehearse the slide walkthrough, and close peer review feedback.'
   });
 
-  assert.deepEqual(Array.from(hints), ['confirm owners', 'sync branch early', 'rehearse demo handoff']);
+  assert.deepEqual(Array.from(hints), ['confirm owners', 'write role checklist', 'sync branch early', 'schedule integration handoff']);
 });
 
 test('SmartPlanner buildPlannerPrompt includes collaboration handoff hints', () => {

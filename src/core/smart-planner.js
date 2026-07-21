@@ -543,8 +543,14 @@
     if (/\b(group|partner|team|peer review|collab(?:oration)?|shared repo|pair programming)\b/.test(source)) {
       add('confirm owners');
     }
+    if (/\b(role(?:s)?|owner(?:s)?|assignee(?:s)?|division of labor|divide work|split work|frontend|backend|api|ui\b|design|researcher|driver|navigator)\b/.test(source)) {
+      add('write role checklist');
+    }
     if (/\b(shared repo|branch|merge|pull request|pr\b|github|gitlab|commit|push|conflicts?)\b/.test(source)) {
       add('sync branch early');
+    }
+    if (/\b(integration|integrate|merge window|merge deadline|handoff|handover|blocking|blocked by|depends on|dependency)\b/.test(source)) {
+      add('schedule integration handoff');
     }
     if (/\b(demo|presentation|slides?|walkthrough|recording|screencast|showcase)\b/.test(source)) {
       add('rehearse demo handoff');
@@ -553,7 +559,7 @@
       add('close feedback loop');
     }
 
-    return hints.slice(0, 3);
+    return hints.slice(0, 4);
   }
 
   function inferLectureCaptureHints(item) {
