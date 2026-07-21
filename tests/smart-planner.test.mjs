@@ -350,6 +350,31 @@ test('SmartPlanner inferConceptReviewHints detects CS weak-spot topics', () => {
   assert.deepEqual(Array.from(hints), ['concurrency pitfalls', 'memory model']);
 });
 
+test('SmartPlanner inferWeakConceptBacklogHints turns confusion and misses into review actions', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferWeakConceptBacklogHints({
+    title: 'Graphs office hours prep',
+    description: 'I am stuck and confused by BFS mistakes from the last practice set; ask the TA on EdStem.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['mark weak concept', 'add mistake to review queue', 'prepare help question']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes weak concept backlog hints', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00');
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'Algorithms weak spots review',
+      courseName: 'CS 61B',
+      ts: new Date('2026-07-11T18:00:00-07:00').getTime(),
+      description: 'Review confusing graph traversal misses and prepare questions for office hours.'
+    }
+  ], now);
+
+  assert.match(prompt, /weak concept backlog: mark weak concept, add mistake to review queue, prepare help question/);
+});
+
 test('SmartPlanner inferStudyPhases starts open-note exams with source-pack building', () => {
   const planner = loadSmartPlanner();
   const phases = planner.__test.inferStudyPhases({
