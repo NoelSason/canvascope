@@ -165,6 +165,14 @@ test('SmartPlanner classifyDeadline labels urgency and likely effort', () => {
   assert.equal(project.urgency, 'today');
   assert.equal(project.effort, 'high');
 
+  const practical = planner.__test.classifyDeadline({
+    title: 'Biology practicum checkoff',
+    description: 'Lab practical on microscopy and technique stations.',
+    ts: new Date('2026-07-11T15:00:00-07:00').getTime()
+  }, now);
+  assert.equal(practical.urgency, 'soon');
+  assert.equal(practical.effort, 'high');
+
   const discussion = planner.__test.classifyDeadline({
     title: 'Discussion check-in',
     ts: new Date('2026-07-12T09:00:00-07:00').getTime()

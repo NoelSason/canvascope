@@ -51,7 +51,7 @@
     else if (hoursUntilDue <= 72) urgency = 'soon';
 
     let effort = 'normal';
-    if (/\b(exam|midterm|final|project|presentation|essay|paper|lab|portfolio|capstone|research)\b/.test(body)) {
+    if (/\b(exam|midterm|final|project|presentation|essay|paper|lab|lab practical|practicum|portfolio|capstone|research)\b/.test(body)) {
       effort = 'high';
     } else if (/\b(quiz|worksheet|discussion|reading|reflection|survey|exit ticket|check[- ]?in)\b/.test(body)) {
       effort = 'quick';
