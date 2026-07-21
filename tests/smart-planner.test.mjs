@@ -836,6 +836,16 @@ test('SmartPlanner buildPlannerPrompt includes Socratic tutor mode hints', () =>
   assert.match(prompt, /Socratic tutor mode: ask guiding questions first, diagnose misconception before answer, prefer hints over solutions/);
 });
 
+test('SmartPlanner inferSocraticStudyHints catches answer-withholding AI tutor workflows', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferSocraticStudyHints({
+    title: 'Aporium-style AI tutor review',
+    description: 'Practice with a tutor that refuses to give answers until I show my scratch work and initial attempt.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['prefer hints over solutions', 'require learner attempt first']);
+});
+
 test('SmartPlanner buildPlannerPrompt includes teach-back hints for active recall', () => {
   const planner = loadSmartPlanner();
   const now = new Date('2026-07-10T10:00:00-07:00');

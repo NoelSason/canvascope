@@ -403,6 +403,9 @@
     if (/\b(answer key|solutions?|spoilers?|academic integrity|unauthorized assistance|allowed tools?)\b/.test(source)) {
       add('avoid answer dumping');
     }
+    if (/\b(attempt first|show (?:my )?work|scratch work|worked attempt|initial attempt|no direct answers?|refuse(?:s)? to give answers?|don'?t give answers?|without giving answers?|Socratic)\b/.test(source)) {
+      add('require learner attempt first');
+    }
 
     return hints.slice(0, 3);
   }
