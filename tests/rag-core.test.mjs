@@ -172,6 +172,18 @@ test('RAGCore source audit guidance separates evidence strength for grounded stu
   assert.match(compiled.prompt, /weakly supported assumptions/);
 });
 
+test('RAGCore audio overview guidance formats listenable study scripts', async () => {
+  mockTabUrl = 'https://google.com';
+  assert.equal(RAGCore.hasAudioOverviewIntent('make an audio overview to review this lecture'), true);
+  assert.equal(RAGCore.hasAudioOverviewIntent('play a podcast'), false);
+
+  const compiled = await RAGCore.compileUnifiedPrompt('make an audio overview to review this lecture');
+  assert.match(compiled.prompt, /audio-style study overview/);
+  assert.match(compiled.prompt, /20-second roadmap/);
+  assert.match(compiled.prompt, /pause-and-recall prompts/);
+  assert.match(compiled.prompt, /notes to ink in Lectra/);
+});
+
 test('RAGCore.retrieveLocalContext surfaces tasks for schedule queries with no keyword match', async () => {
   // "what do I need to do?" does not lexically match any stored title/course,
   // but the context-aware fallback should still surface the pending to-do.
