@@ -531,6 +531,30 @@ test('SmartPlanner buildPlannerPrompt includes due-date ambiguity guardrails', (
   assert.match(prompt, /due-date ambiguity: confirm tentative deadline, verify exact due time, check timezone/);
 });
 
+test('SmartPlanner inferDueDateConfidenceLabel distinguishes Canvas, inferred, and ambiguous dates', () => {
+  const planner = loadSmartPlanner();
+
+  assert.equal(planner.__test.inferDueDateConfidenceLabel({ dueAt: '2026-07-11T23:59:00-07:00', dueSource: 'canvas_api' }), 'confirmed from Canvas');
+  assert.equal(planner.__test.inferDueDateConfidenceLabel({ ts: Date.now(), description: 'Submit by 11:59 PM on Friday.' }), 'parsed from text');
+  assert.equal(planner.__test.inferDueDateConfidenceLabel({ ts: Date.now(), description: 'Tentative deadline with a separate lock date after grace period.' }), 'verify due vs availability');
+  assert.equal(planner.__test.inferDueDateConfidenceLabel({ title: 'Practice set' }), 'missing due date');
+});
+
+test('SmartPlanner buildPlannerPrompt includes due-date confidence labels', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00');
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'Canvas confirmed lab',
+      courseName: 'CS 61C',
+      ts: new Date('2026-07-11T23:59:00-07:00').getTime(),
+      dueSource: 'canvas_assignment_api'
+    }
+  ], now);
+
+  assert.match(prompt, /due-date confidence: confirmed from Canvas/);
+});
+
 test('SmartPlanner inferHiddenDeadlineHints detects interim and live checkoff dates', () => {
   const planner = loadSmartPlanner();
   const hints = planner.__test.inferHiddenDeadlineHints({
