@@ -41,5 +41,9 @@ test('sidepanel exposes assignment-context prompt chips for planning and rubric 
   assert.match(sidepanelHtml, /source-aware study guide/);
   assert.match(sidepanelHtml, /source sections to reread/);
   assert.match(sidepanelHtml, /verify AI-generated notes before submitting work/);
+  assert.match(sidepanelHtml, /Source Audit/);
+  assert.match(sidepanelHtml, /Audit these AI-generated or class notes against the source page/);
+  assert.match(sidepanelHtml, /unsupported claims, missing citations, transcript or slide gaps/);
+  assert.match(sidepanelHtml, /exact source sections I should re-check/);
   assert.match(sidepanelHtml, /AI help can be wrong/);
 });
