@@ -331,6 +331,20 @@ test('SmartPlanner inferAssignmentResourceLinks recognizes newer AI note-taking 
   ]);
 });
 
+test('SmartPlanner inferAssignmentResourceLinks recognizes current study and transcript tools', () => {
+  const planner = loadSmartPlanner();
+  const links = planner.__test.inferAssignmentResourceLinks({
+    description: 'Use Knowt flashcards at https://knowt.com/note/demo, StudyFetch notes https://www.studyfetch.com/course/demo, Tactiq transcript https://tactiq.io/r/demo, and Limitless meeting memory https://limitless.ai/app/demo.'
+  });
+
+  assert.deepEqual(JSON.parse(JSON.stringify(links)), [
+    { label: 'ai study guide', url: 'https://knowt.com/note/demo' },
+    { label: 'ai study guide', url: 'https://www.studyfetch.com/course/demo' },
+    { label: 'ai notes/transcript', url: 'https://tactiq.io/r/demo' },
+    { label: 'ai notes/transcript', url: 'https://limitless.ai/app/demo' }
+  ]);
+});
+
 test('SmartPlanner inferSpecDeltaHints detects changed assignment instructions', () => {
   const planner = loadSmartPlanner();
   const hints = planner.__test.inferSpecDeltaHints({
