@@ -1597,6 +1597,9 @@
     if (/\b(answer key|answer explanations?|solutions?|exemplar|rubric|worked examples?|sample answers?|official answers?)\b/.test(source)) {
       add('include answer explanations');
     }
+    if (/\b(citations?|sources?|ground(?:ed|ing)|evidence|page\s*\d+|slide\s*\d+|timestamp(?:ed)?|hallucinat(?:e|ion)|fact[- ]?check|verify)\b/.test(source)) {
+      add('verify against source notes');
+    }
     if (/\b(wrong answers?|mistakes?|missed questions?|weak spots?|confidence|spaced repetition|retry|review queue)\b/.test(source)) {
       add('schedule weak-question retry');
     }

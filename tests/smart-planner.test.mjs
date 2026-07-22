@@ -574,6 +574,31 @@ test('SmartPlanner buildPlannerPrompt includes AI quiz-generation hints', () => 
   assert.match(prompt, /AI quiz generation: generate practice set, convert notes to quiz, include answer explanations/);
 });
 
+test('SmartPlanner inferAiQuizGenerationHints asks AI quizzes to verify source-grounded answers', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferAiQuizGenerationHints({
+    title: 'NotebookLM source-grounded quiz',
+    description: 'Generate AI self-quiz questions from slide 12 and timestamped lecture notes, then fact-check each answer against citations.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['generate practice set', 'convert notes to quiz', 'verify against source notes']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes AI quiz source verification hints', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00');
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'AI quiz citation check',
+      courseName: 'CS 188',
+      ts: new Date('2026-07-11T18:00:00-07:00').getTime(),
+      description: 'Turn transcript notes into practice questions and verify answers against cited slide sources.'
+    }
+  ], now);
+
+  assert.match(prompt, /AI quiz generation: generate practice set, convert notes to quiz, verify against source notes/);
+});
+
 test('SmartPlanner inferNotebookLmStudyPlanHints detects source-grounded personalized study plans', () => {
   const planner = loadSmartPlanner();
   const hints = planner.__test.inferNotebookLmStudyPlanHints({
