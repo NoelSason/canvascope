@@ -2725,6 +2725,31 @@ test('SmartPlanner buildPlannerPrompt includes study pack artifact hints', () =>
   assert.match(prompt, /study pack artifacts: make key-term summary, draft recall questions, export flashcards/);
 });
 
+test('SmartPlanner inferThreeTwoOneReviewHints detects lecture review recap workflows', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferThreeTwoOneReviewHints({
+    title: 'Recorded algorithms lecture review',
+    description: 'Use the transcript summary to prep for the quiz, tag confusing weak spots, and choose what to review next.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['3 key ideas', '2 likely test questions', '1 next review target']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes 3-2-1 review hints', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00');
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'Recorded lecture recap',
+      courseName: 'CS 188',
+      ts: new Date('2026-07-12T18:00:00-07:00').getTime(),
+      description: 'Review the lecture transcript summary, prepare for the quiz, and mark confusing weak spots.'
+    }
+  ], now);
+
+  assert.match(prompt, /3-2-1 review: 3 key ideas, 2 likely test questions, 1 next review target/);
+});
+
 test('SmartPlanner inferReadingTriageHints detects dense source triage workflows', () => {
   const planner = loadSmartPlanner();
   const hints = planner.__test.inferReadingTriageHints({
