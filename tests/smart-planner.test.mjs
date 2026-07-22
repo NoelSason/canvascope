@@ -1740,6 +1740,30 @@ test('SmartPlanner buildPlannerPrompt includes recovery guardrails', () => {
   assert.match(prompt, /recovery guardrail: protect sleep window, plan recovery break, end with light recall/);
 });
 
+test('SmartPlanner inferCalendarConflictHints detects scheduling collisions and buffers', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferCalendarConflictHints({
+    title: 'Group project demo slot conflict',
+    description: 'The presentation slot overlaps a work shift; reschedule to an alternate time with the team and account for the across-campus commute.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['check calendar conflicts', 'add transition buffer', 'pick alternate study slot']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes calendar conflict hints', () => {
+  const planner = loadSmartPlanner();
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'AI notes group demo',
+      courseName: 'CS 160',
+      ts: new Date('2026-07-12T15:00:00-07:00').getTime(),
+      description: 'Demo slot has a calendar conflict with a back-to-back lab section; use the recording or office hours as an alternate.'
+    }
+  ], new Date('2026-07-10T10:00:00-07:00'));
+
+  assert.match(prompt, /calendar conflicts: check calendar conflicts, add transition buffer, pick alternate study slot/);
+});
+
 test('SmartPlanner inferCodeDebugHints detects explicit code and error workflows', () => {
   const planner = loadSmartPlanner();
   const hints = planner.__test.inferCodeDebugHints({
