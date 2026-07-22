@@ -250,6 +250,10 @@
       if (sameDay >= 3) add('busy day');
     }
 
+    if (/\b(moved earlier|deadline (?:moved up|changed|updated)|due date (?:moved up|changed|updated)|shortened|less time|now due|instead due|rescheduled earlier)\b/.test(source)) {
+      add('recheck changed deadline');
+    }
+
     if (/\b(upload|submit|submission|gradescope|canvas|autograder|attach|screenshot|pdf|slides?|repo|github|push)\b/.test(source)) {
       add('submission check');
     }

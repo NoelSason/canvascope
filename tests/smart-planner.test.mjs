@@ -1253,6 +1253,21 @@ test('SmartPlanner inferPlannerRiskFlags can read point value from assignment te
   assert.ok(flags.includes('submission check'));
 });
 
+test('SmartPlanner buildPlannerPrompt includes changed-deadline risk hints', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00');
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'Algorithms homework update',
+      courseName: 'CS 170',
+      ts: new Date('2026-07-11T18:00:00-07:00').getTime(),
+      description: 'Announcement: deadline moved earlier; the problem set is now due Saturday instead of Monday.'
+    }
+  ], now);
+
+  assert.match(prompt, /risk: recheck changed deadline/);
+});
+
 test('SmartPlanner buildPlannerPrompt includes large point-value risk hints', () => {
   const planner = loadSmartPlanner();
   const now = new Date('2026-07-10T10:00:00-07:00');
