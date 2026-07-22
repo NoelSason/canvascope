@@ -240,6 +240,69 @@
     };
   }
 
+  // Turn assignment text into a grounded, academic-integrity-safe checklist.
+  // This deliberately uses conservative regexes instead of AI so it can run
+  // locally on Canvas pages and feed the sidepanel prompt builder without
+  // exfiltrating coursework.
+  const ASSIGNMENT_CHECKLIST_RULES = [
+    { key: 'deadline', label: 'Confirm the due date/time and timezone', re: /\b(due|deadline|submit by|closes?|available until)\b/i },
+    { key: 'deliverable', label: 'List every required deliverable before starting', re: /\b(submit|turn in|upload|deliverable|include|attach|provide)\b/i },
+    { key: 'code', label: 'Verify required code files, repo, and branch names', re: /\b(github|git\b|repository|repo|commit|branch|\.py\b|\.java\b|\.js\b|\.ts\b|\.swift\b|notebook|\.ipynb\b)\b/i },
+    { key: 'tests', label: 'Run the required tests/autograder before submission', re: /\b(test|pytest|unit test|autograder|gradescope|checkoff|make test|npm test|xcodebuild)\b/i },
+    { key: 'rubric', label: 'Review rubric/point values and cover high-value criteria first', re: /\b(rubric|points?|pts\.?|criteria|graded|score)\b/i },
+    { key: 'format', label: 'Check file format, naming, and submission location', re: /\b(pdf|zip|csv|docx?|format|filename|file name|naming|canvas|gradescope)\b/i },
+    { key: 'collaboration', label: 'Check collaboration and AI/tool-use policy constraints', re: /\b(collaboration|partner|group|individual|plagiarism|academic integrity|chatgpt|ai tools?|generative ai)\b/i }
+  ];
+
+  function normalizeAssignmentText(text) {
+    return String(text || '')
+      .replace(/\r/g, '\n')
+      .replace(/[ \t]+/g, ' ')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+  }
+
+  function extractMatchingSnippet(text, re) {
+    const lines = normalizeAssignmentText(text).split('\n').map(s => s.trim()).filter(Boolean);
+    const line = lines.find(l => re.test(l));
+    if (!line) return '';
+    return line.length > 180 ? `${line.slice(0, 177)}…` : line;
+  }
+
+  function buildAssignmentChecklist(text, opts = {}) {
+    const sourceText = normalizeAssignmentText(text);
+    const title = String(opts.title || '').trim() || 'Assignment';
+    const items = [];
+    const seen = new Set();
+
+    for (const rule of ASSIGNMENT_CHECKLIST_RULES) {
+      const source = extractMatchingSnippet(sourceText, rule.re);
+      if (!source) continue;
+      seen.add(rule.key);
+      items.push({ key: rule.key, label: rule.label, source, done: false });
+    }
+
+    if (!seen.has('deliverable')) {
+      items.push({ key: 'deliverable', label: 'Identify what must be submitted', source: '', done: false });
+    }
+    if (!seen.has('deadline')) {
+      items.push({ key: 'deadline', label: 'Confirm whether there is a due date or grace period', source: '', done: false });
+    }
+    items.push({
+      key: 'final-review',
+      label: 'Before submitting, re-open the uploaded file or submission receipt and verify it is correct',
+      source: '',
+      done: false
+    });
+
+    return {
+      title,
+      generatedAt: new Date().toISOString(),
+      items,
+      academicIntegrityReminder: 'Use AI to understand, plan, test, and review your work — not to produce a final graded submission against course policy.'
+    };
+  }
+
   async function fetchLiveCourses() {
     try {
       const res = await chrome.runtime.sendMessage({ action: 'csTools.fetchGrades' });
@@ -1451,6 +1514,7 @@ ${docTextSample}`;
     closeModal,
     computeGpa,
     percentToLetter,
+    buildAssignmentChecklist,
     openZenSpace,
     openSyllabusAutopilot,
     showSyllabusAutopilotPrompt,

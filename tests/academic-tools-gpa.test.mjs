@@ -127,3 +127,32 @@ test('computeGpa accepts student-entered string grades, credits, and weights', (
   const weighted = api.computeGpa([{ letter: 'b+', credits: '2', weight: '0.5 honors' }], 'hs-5.0-weighted');
   assert.equal(weighted.gpa, 3.8);
 });
+
+test('buildAssignmentChecklist extracts CS submission risks from assignment text', () => {
+  const api = loadAcademicTools();
+  const checklist = api.buildAssignmentChecklist(`
+    Due Friday at 11:59 PM.
+    Submit your GitHub repository link and include main.py plus README.pdf.
+    Run pytest and upload screenshots to Gradescope.
+    Rubric: tests are 40 points, writeup is 20 points.
+    Follow the academic integrity policy; generative AI may only be used for debugging help.
+  `, { title: 'Project 2' });
+
+  assert.equal(checklist.title, 'Project 2');
+  assert.ok(checklist.generatedAt);
+  assert.match(checklist.academicIntegrityReminder, /not to produce a final graded submission/i);
+  assert.equal(
+    checklist.items.map(item => item.key).join(','),
+    'deadline,deliverable,code,tests,rubric,format,collaboration,final-review'
+  );
+  assert.match(checklist.items.find(item => item.key === 'tests').source, /pytest/);
+});
+
+test('buildAssignmentChecklist adds safe defaults when assignment text is sparse', () => {
+  const api = loadAcademicTools();
+  const checklist = api.buildAssignmentChecklist('Read chapter 4 and be ready for discussion.');
+  assert.equal(checklist.title, 'Assignment');
+  assert.ok(checklist.items.some(item => item.key === 'deliverable'));
+  assert.ok(checklist.items.some(item => item.key === 'deadline'));
+  assert.equal(checklist.items.at(-1).key, 'final-review');
+});
