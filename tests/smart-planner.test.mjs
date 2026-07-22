@@ -2861,3 +2861,28 @@ test('SmartPlanner buildPlannerPrompt includes first study step hints', () => {
 
   assert.match(prompt, /first study step: state target skill, write one help question, pick 10-minute starter task/);
 });
+
+test('SmartPlanner inferErrorNotebookHints detects mistake-pattern workflows', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferErrorNotebookHints({
+    title: 'Autograder error notebook',
+    description: 'After failed tests, tag the root cause and retry similar edge cases with confidence notes.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['log misses by pattern', 'tag root cause', 'schedule targeted retry']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes error notebook hints', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00');
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'CS autograder recovery',
+      courseName: 'CS 61B',
+      ts: new Date('2026-07-12T18:00:00-07:00').getTime(),
+      description: 'Hidden tests failed with a traceback. Keep an error log, tag root cause, and retry edge cases.'
+    }
+  ], now);
+
+  assert.match(prompt, /error notebook: log misses by pattern, tag root cause, schedule targeted retry/);
+});
