@@ -832,6 +832,31 @@ test('SmartPlanner buildPlannerPrompt includes AI source boundary hints', () => 
   assert.match(prompt, /AI source boundaries: separate source facts from AI hints, keep citation trail, flag unsupported claims/);
 });
 
+test('SmartPlanner inferDiscussionReplyPrepHints detects peer discussion workflow', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferDiscussionReplyPrepHints({
+    title: 'Week 6 discussion replies',
+    description: 'Post a response citing the reading, then reply to two peers. Use AI only for a rough draft.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['draft discussion reply', 'anchor reply in course evidence', 'schedule peer-response pass']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes discussion reply preparation hints', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00');
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'AI ethics forum post',
+      courseName: 'CS 195',
+      ts: new Date('2026-07-11T20:00:00-07:00').getTime(),
+      description: 'Draft a discussion board reply with evidence from lecture slides, then respond to classmates.'
+    }
+  ], now);
+
+  assert.match(prompt, /discussion reply prep: draft discussion reply, anchor reply in course evidence/);
+});
+
 test('SmartPlanner inferTeachBackHints detects explain-aloud study needs', () => {
   const planner = loadSmartPlanner();
   const hints = planner.__test.inferTeachBackHints({
