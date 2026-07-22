@@ -12,6 +12,10 @@ test('sidepanel exposes assignment-context prompt chips for planning and rubric 
   assert.match(sidepanelHtml, /Turn this assignment into a step-by-step work plan with deliverables, dependencies, and a safe submission buffer/);
   assert.match(sidepanelHtml, /Rubric Risks/);
   assert.match(sidepanelHtml, /Extract rubric risks, hidden requirements, allowed-tool constraints, and pre-submit checks from this page/);
+  assert.match(sidepanelHtml, /Submission Check/);
+  assert.match(sidepanelHtml, /Run a submission readiness check/);
+  assert.match(sidepanelHtml, /required files, accepted file types, rubric items, allowed tools, source citations, last test command/);
+  assert.match(sidepanelHtml, /Do not submit anything automatically/);
   assert.match(sidepanelHtml, /Exam Day Prep/);
   assert.match(sidepanelHtml, /exam-day readiness checklist/);
   assert.match(sidepanelHtml, /allowed materials, logistics, timing, weak-topic review plan/);
