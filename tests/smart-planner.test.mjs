@@ -181,6 +181,13 @@ test('SmartPlanner classifyDeadline labels urgency and likely effort', () => {
   assert.equal(discussion.effort, 'quick');
 });
 
+test('SmartPlanner formatPlannerDueLabel includes an explicit timezone', () => {
+  const planner = loadSmartPlanner();
+  const label = planner.__test.formatPlannerDueLabel(new Date('2026-07-10T18:00:00-07:00').getTime());
+
+  assert.match(label, /\b(?:GMT|UTC|[ECMP][SD]T)\b|GMT[+-]\d{1,2}/);
+});
+
 test('SmartPlanner buildPlannerPrompt includes triage hints and source notes', () => {
   const planner = loadSmartPlanner();
   const now = new Date('2026-07-10T10:00:00-07:00');
