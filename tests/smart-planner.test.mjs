@@ -318,6 +318,19 @@ test('SmartPlanner inferAssignmentResourceLinks recognizes Canvas, discussion, a
   ]);
 });
 
+test('SmartPlanner inferAssignmentResourceLinks recognizes newer AI note-taking and study tools', () => {
+  const planner = loadSmartPlanner();
+  const links = planner.__test.inferAssignmentResourceLinks({
+    description: 'Review the Read AI recap at https://read.ai/meetings/demo, compare the Supernormal notes https://supernormal.com/notes/demo, and turn the Notion study page https://notion.so/class-study-guide into practice questions.'
+  });
+
+  assert.deepEqual(JSON.parse(JSON.stringify(links)), [
+    { label: 'ai notes/transcript', url: 'https://read.ai/meetings/demo' },
+    { label: 'ai notes/transcript', url: 'https://supernormal.com/notes/demo' },
+    { label: 'ai study guide', url: 'https://notion.so/class-study-guide' }
+  ]);
+});
+
 test('SmartPlanner inferSpecDeltaHints detects changed assignment instructions', () => {
   const planner = loadSmartPlanner();
   const hints = planner.__test.inferSpecDeltaHints({
