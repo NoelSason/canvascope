@@ -845,6 +845,31 @@ test('SmartPlanner buildPlannerPrompt includes AI source boundary hints', () => 
   assert.match(prompt, /AI source boundaries: separate source facts from AI hints, keep citation trail, flag unsupported claims/);
 });
 
+test('SmartPlanner inferLectureChapteringHints creates timestamped long-recording study steps', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferLectureChapteringHints({
+    title: 'NotebookLM long lecture review',
+    description: 'Chapter a 90 minute Panopto recording transcript with timestamps, flag low confidence segments, and turn it into quiz prompts.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['chapterize long recording', 'keep timestamp anchors', 'flag unclear segments']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes lecture chaptering hints', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00');
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'AI note-taking lecture cleanup',
+      courseName: 'CS 188',
+      ts: new Date('2026-07-11T18:00:00-07:00').getTime(),
+      description: 'Review a long lecture recording transcript, keep timestamp anchors, and mark confusing segments before making flashcards.'
+    }
+  ], now);
+
+  assert.match(prompt, /lecture chaptering: chapterize long recording, keep timestamp anchors, flag unclear segments/);
+});
+
 test('SmartPlanner inferDiscussionReplyPrepHints detects peer discussion workflow', () => {
   const planner = loadSmartPlanner();
   const hints = planner.__test.inferDiscussionReplyPrepHints({
