@@ -76,6 +76,19 @@
       .slice(0, 32);
   }
 
+  function buildGeneratedFromLabel(item, dueAt) {
+    const parts = [];
+    const course = String(item?.courseName || item?.course || '').trim();
+    const sourceName = String(item?.sourceTitle || item?.moduleName || item?.pageTitle || '').trim();
+    const kind = String(item?.type || item?.kind || '').trim();
+    if (course) parts.push(course);
+    if (sourceName && sourceName.toLowerCase() !== course.toLowerCase()) parts.push(sourceName);
+    if (kind && !/^(assignment|todo|deadline)$/i.test(kind)) parts.push(kind);
+    if (dueAt) parts.push(`due ${dueAt}`);
+    if (item?.url) parts.push('Canvas source link');
+    return parts.length ? parts.join(' · ') : 'selected Canvas course material';
+  }
+
   function buildDeadlineStudyPack(items, now = new Date()) {
     const sourceItems = (Array.isArray(items) ? items : [items]).filter(Boolean);
     const generatedAt = now && typeof now.getTime === 'function' && Number.isFinite(now.getTime()) ? now.toISOString() : new Date().toISOString();
@@ -89,6 +102,7 @@
       if (course) citationBits.push(course);
       if (dueAt) citationBits.push(`due ${dueAt}`);
       if (item.url) citationBits.push(String(item.url));
+      const generatedFrom = buildGeneratedFromLabel(item, dueAt);
       const tags = [
         normalizeStudyPackTag(course),
         ...inferConceptReviewHints({ ...item, ts: dueTs }).map(normalizeStudyPackTag),
@@ -102,6 +116,7 @@
         course,
         dueAt,
         excerpt,
+        generatedFrom,
         citation: citationBits.join(' | '),
         tags: Array.from(new Set(tags)).slice(0, 6),
         recallQuestions
@@ -117,6 +132,7 @@
         `## ${card.title}`,
         card.course ? `Course: ${card.course}` : '',
         card.dueAt ? `Due: ${card.dueAt}` : '',
+        `Generated from: ${card.generatedFrom}`,
         card.citation ? `Citation: ${card.citation}` : '',
         card.tags.length ? `Tags: ${card.tags.join(', ')}` : '',
         card.excerpt ? `Notes: ${card.excerpt}` : '',

@@ -2991,6 +2991,7 @@ test('SmartPlanner buildDeadlineStudyPack preserves source metadata for AI study
       id: 'assign-42',
       title: 'Graph traversal project',
       courseName: 'CS 61B',
+      moduleName: 'Module 8 algorithms',
       ts: new Date('2026-07-12T18:00:00-07:00').getTime(),
       url: 'https://canvas.example/courses/1/assignments/42',
       description: 'Submit the GitHub repo, README write-up, and tests. Review BFS and DFS complexity notes.'
@@ -3001,6 +3002,7 @@ test('SmartPlanner buildDeadlineStudyPack preserves source metadata for AI study
   assert.equal(pack.cards.length, 1);
   assert.equal(pack.cards[0].id, 'assign-42');
   assert.equal(pack.cards[0].course, 'CS 61B');
+  assert.equal(pack.cards[0].generatedFrom, 'CS 61B · Module 8 algorithms · due 2026-07-13T01:00:00.000Z · Canvas source link');
   assert.match(pack.cards[0].citation, /CS 61B \| due 2026-07-13T01:00:00\.000Z \| https:\/\/canvas\.example/);
   assert.deepEqual(JSON.parse(JSON.stringify(pack.cards[0].tags)), ['cs-61b', 'big-o-runtime', 'graph-traversal', 'push-repo', 'attach-write-up']);
   assert.deepEqual(JSON.parse(JSON.stringify(pack.cards[0].recallQuestions)), [
@@ -3009,8 +3011,20 @@ test('SmartPlanner buildDeadlineStudyPack preserves source metadata for AI study
     'What is the smallest end-to-end path you can implement and test for Graph traversal project?'
   ]);
   assert.match(pack.markdown, /# Canvascope Study Pack/);
+  assert.match(pack.markdown, /Generated from: CS 61B · Module 8 algorithms · due 2026-07-13T01:00:00\.000Z · Canvas source link/);
   assert.match(pack.markdown, /Notes: Submit the GitHub repo, README write-up, and tests/);
   assert.match(pack.markdown, /Recall questions:\n- Trace the graph algorithm ideas/);
+});
+
+test('SmartPlanner buildDeadlineStudyPack labels unknown sources transparently', () => {
+  const planner = loadSmartPlanner();
+  const pack = planner.__test.buildDeadlineStudyPack({
+    title: 'Untitled review item',
+    description: 'Review lecture notes and write one self-check question.'
+  }, new Date('2026-07-10T10:00:00-07:00'));
+
+  assert.equal(pack.cards[0].generatedFrom, 'selected Canvas course material');
+  assert.match(pack.markdown, /Generated from: selected Canvas course material/);
 });
 
 test('SmartPlanner inferActiveRecallQuestions falls back to generic source-grounded prompts', () => {
