@@ -293,6 +293,19 @@ test('SmartPlanner inferAssignmentResourceLinks recognizes hosted coding noteboo
   ]);
 });
 
+test('SmartPlanner inferAssignmentResourceLinks recognizes AI tutor workspaces', () => {
+  const planner = loadSmartPlanner();
+  const links = planner.__test.inferAssignmentResourceLinks({
+    description: 'Use study mode in https://chatgpt.com/g/g-study-helper for hints, compare with guided learning at https://gemini.google.com/app, and keep the final explanation in https://claude.ai/project/abc.'
+  });
+
+  assert.deepEqual(JSON.parse(JSON.stringify(links)), [
+    { label: 'ai tutor', url: 'https://chatgpt.com/g/g-study-helper' },
+    { label: 'ai tutor', url: 'https://gemini.google.com/app' },
+    { label: 'ai tutor', url: 'https://claude.ai/project/abc' }
+  ]);
+});
+
 test('SmartPlanner inferAssignmentResourceLinks recognizes lecture video resources', () => {
   const planner = loadSmartPlanner();
   const links = planner.__test.inferAssignmentResourceLinks({

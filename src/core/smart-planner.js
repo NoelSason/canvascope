@@ -150,6 +150,7 @@
       else if (/gradescope\.com|submitty|codegrade|autograder/.test(lower)) add('autograder', url);
       else if (/canvas\.instructure\.com|instructure\.com\/courses\//.test(lower)) add('canvas', url);
       else if (/edstem\.org|piazza\.com|campuswire\.com/.test(lower)) add('discussion/help', url);
+      else if (/chatgpt\.com|claude\.ai|gemini\.google\.com|aistudio\.google\.com|perplexity\.ai|khanmigo\.ai/.test(lower)) add('ai tutor', url);
       else if (/notebooklm\.google\.com|quizlet\.com|coconote\.app|notion\.so|knowt\.com|studyfetch\.com|gizmo\.ai|brainscape\.com/.test(lower)) add('ai study guide', url);
       else if (/otter\.ai|granola\.ai|fireflies\.ai|fathom\.video|read\.ai|tldv\.io|supernormal\.com|plaud\.ai|limitless\.ai|tactiq\.io|meetgeek\.ai/.test(lower)) add('ai notes/transcript', url);
       else if (/youtube\.com|youtu\.be|vimeo\.com|panopto\.|kaltura\.|\/kaltura\/|mediasite\.|echo360\./.test(lower)) add('lecture/video', url);
