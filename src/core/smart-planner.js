@@ -237,8 +237,11 @@
     if (/\b(test cases?|unit tests?|pytest|npm test|xcodebuild|junit|coverage)\b/.test(source)) add('run tests');
     if (/\b(pdf|slides?|screenshot|screen recording|demo video|presentation)\b/.test(source)) add('upload artifact');
     if (/\b(partner|team|group|peer review|collab(?:oration)?)\b/.test(source)) add('coordinate team');
+    if (/\b(ai tutor|ai study|study mode|guided learning|notebooklm|chatgpt|claude|gemini|perplexity|quizlet|knowt|anki|flashcards?|spaced repetition)\b/.test(source)) {
+      add('verify AI study output against source');
+    }
 
-    return checks.slice(0, 4);
+    return checks.slice(0, 5);
   }
 
   function inferConceptReviewHints(item) {

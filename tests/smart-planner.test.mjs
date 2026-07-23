@@ -274,6 +274,16 @@ test('SmartPlanner buildAssignmentBriefMarkdown creates a copyable sourced assig
   assert.match(brief, /Questions to ask or self-test:/);
 });
 
+test('SmartPlanner inferSubmissionChecklist adds AI source verification for study tools', () => {
+  const planner = loadSmartPlanner();
+  const checklist = planner.__test.inferSubmissionChecklist({
+    title: 'Final exam study pack',
+    description: 'Use ChatGPT study mode, NotebookLM, and Anki spaced repetition flashcards, then compare every answer with the official slides.'
+  });
+
+  assert.ok(checklist.includes('verify AI study output against source'));
+});
+
 test('SmartPlanner inferAssignmentResourceLinks surfaces starter, submission, and AI study URLs', () => {
   const planner = loadSmartPlanner();
   const links = planner.__test.inferAssignmentResourceLinks({
