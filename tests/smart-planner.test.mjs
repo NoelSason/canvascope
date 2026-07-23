@@ -3028,6 +3028,7 @@ test('SmartPlanner buildDeadlineStudyPack preserves source metadata for AI study
   assert.equal(pack.cards[0].id, 'assign-42');
   assert.equal(pack.cards[0].course, 'CS 61B');
   assert.equal(pack.cards[0].generatedFrom, 'CS 61B · Module 8 algorithms · due 2026-07-13T01:00:00.000Z · Canvas source link');
+  assert.equal(pack.cards[0].groundingConfidence, 'high — Canvas link, source title, course, due date');
   assert.match(pack.cards[0].citation, /CS 61B \| due 2026-07-13T01:00:00\.000Z \| https:\/\/canvas\.example/);
   assert.deepEqual(JSON.parse(JSON.stringify(pack.cards[0].tags)), ['cs-61b', 'big-o-runtime', 'graph-traversal', 'push-repo', 'attach-write-up']);
   assert.deepEqual(JSON.parse(JSON.stringify(pack.cards[0].recallQuestions)), [
@@ -3037,6 +3038,7 @@ test('SmartPlanner buildDeadlineStudyPack preserves source metadata for AI study
   ]);
   assert.match(pack.markdown, /# Canvascope Study Pack/);
   assert.match(pack.markdown, /Generated from: CS 61B · Module 8 algorithms · due 2026-07-13T01:00:00\.000Z · Canvas source link/);
+  assert.match(pack.markdown, /Grounding: high — Canvas link, source title, course, due date/);
   assert.match(pack.markdown, /Notes: Submit the GitHub repo, README write-up, and tests/);
   assert.match(pack.markdown, /Recall questions:\n- Trace the graph algorithm ideas/);
 });
@@ -3049,7 +3051,9 @@ test('SmartPlanner buildDeadlineStudyPack labels unknown sources transparently',
   }, new Date('2026-07-10T10:00:00-07:00'));
 
   assert.equal(pack.cards[0].generatedFrom, 'selected Canvas course material');
+  assert.equal(pack.cards[0].groundingConfidence, 'low — missing Canvas source metadata; verify against the assignment page');
   assert.match(pack.markdown, /Generated from: selected Canvas course material/);
+  assert.match(pack.markdown, /Grounding: low — missing Canvas source metadata; verify against the assignment page/);
 });
 
 test('SmartPlanner inferActiveRecallQuestions falls back to generic source-grounded prompts', () => {

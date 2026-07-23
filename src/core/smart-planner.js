@@ -89,6 +89,23 @@
     return parts.length ? parts.join(' · ') : 'selected Canvas course material';
   }
 
+  function buildGroundingConfidenceLabel(item, dueAt) {
+    const sourceSignals = [];
+    const course = String(item?.courseName || item?.course || '').trim();
+    const sourceName = String(item?.sourceTitle || item?.moduleName || item?.pageTitle || '').trim();
+    const hasBody = Boolean(String(item?.description || item?.text || item?.content || '').trim());
+
+    if (item?.url) sourceSignals.push('Canvas link');
+    if (sourceName) sourceSignals.push('source title');
+    if (course) sourceSignals.push('course');
+    if (dueAt) sourceSignals.push('due date');
+    if (hasBody) sourceSignals.push('assignment notes');
+
+    if (sourceSignals.length >= 4) return `high — ${sourceSignals.slice(0, 4).join(', ')}`;
+    if (sourceSignals.length >= 2) return `medium — ${sourceSignals.join(', ')}`;
+    return 'low — missing Canvas source metadata; verify against the assignment page';
+  }
+
   function buildDeadlineStudyPack(items, now = new Date()) {
     const sourceItems = (Array.isArray(items) ? items : [items]).filter(Boolean);
     const generatedAt = now && typeof now.getTime === 'function' && Number.isFinite(now.getTime()) ? now.toISOString() : new Date().toISOString();
@@ -103,6 +120,7 @@
       if (dueAt) citationBits.push(`due ${dueAt}`);
       if (item.url) citationBits.push(String(item.url));
       const generatedFrom = buildGeneratedFromLabel(item, dueAt);
+      const groundingConfidence = buildGroundingConfidenceLabel(item, dueAt);
       const tags = [
         normalizeStudyPackTag(course),
         ...inferConceptReviewHints({ ...item, ts: dueTs }).map(normalizeStudyPackTag),
@@ -117,6 +135,7 @@
         dueAt,
         excerpt,
         generatedFrom,
+        groundingConfidence,
         citation: citationBits.join(' | '),
         tags: Array.from(new Set(tags)).slice(0, 6),
         recallQuestions
@@ -133,6 +152,7 @@
         card.course ? `Course: ${card.course}` : '',
         card.dueAt ? `Due: ${card.dueAt}` : '',
         `Generated from: ${card.generatedFrom}`,
+        `Grounding: ${card.groundingConfidence}`,
         card.citation ? `Citation: ${card.citation}` : '',
         card.tags.length ? `Tags: ${card.tags.join(', ')}` : '',
         card.excerpt ? `Notes: ${card.excerpt}` : '',
