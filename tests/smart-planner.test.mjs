@@ -2970,3 +2970,26 @@ test('SmartPlanner buildPlannerPrompt includes error notebook hints', () => {
 
   assert.match(prompt, /error notebook: log misses by pattern, tag root cause, schedule targeted retry/);
 });
+
+test('SmartPlanner buildDeadlineStudyPack preserves source metadata for AI study handoff', () => {
+  const planner = loadSmartPlanner();
+  const pack = planner.__test.buildDeadlineStudyPack([
+    {
+      id: 'assign-42',
+      title: 'Graph traversal project',
+      courseName: 'CS 61B',
+      ts: new Date('2026-07-12T18:00:00-07:00').getTime(),
+      url: 'https://canvas.example/courses/1/assignments/42',
+      description: 'Submit the GitHub repo, README write-up, and tests. Review BFS and DFS complexity notes.'
+    }
+  ], new Date('2026-07-10T10:00:00-07:00'));
+
+  assert.equal(pack.generatedAt, '2026-07-10T17:00:00.000Z');
+  assert.equal(pack.cards.length, 1);
+  assert.equal(pack.cards[0].id, 'assign-42');
+  assert.equal(pack.cards[0].course, 'CS 61B');
+  assert.match(pack.cards[0].citation, /CS 61B \| due 2026-07-13T01:00:00\.000Z \| https:\/\/canvas\.example/);
+  assert.deepEqual(JSON.parse(JSON.stringify(pack.cards[0].tags)), ['cs-61b', 'big-o-runtime', 'graph-traversal', 'push-repo', 'attach-write-up']);
+  assert.match(pack.markdown, /# Canvascope Study Pack/);
+  assert.match(pack.markdown, /Notes: Submit the GitHub repo, README write-up, and tests/);
+});
