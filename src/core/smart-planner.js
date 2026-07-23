@@ -2131,13 +2131,13 @@
     const hints = [];
     const add = (label) => { if (!hints.includes(label)) hints.push(label); };
 
-    if (/\b(ai tutor|study mode|chatgpt|claude|gemini|notebooklm|coconote|quizlet|copilot|llm|assistant|agent(?:ic)? tutor)\b/.test(source)) {
+    if (/\b(ai tutor|study mode|chatgpt|claude|gemini|notebooklm|coconote|quizlet|knowt|studyfetch|perplexity|scispace|elicit|scholarcy|copilot|llm|assistant|agent(?:ic)? tutor)\b/.test(source)) {
       add('separate source facts from AI hints');
     }
-    if (/\b(transcript|summary|summar(?:y|ize|ise)|notes?|lecture capture|record(?:ing)?|slides?|reading|paper|article|source packet)\b/.test(source)) {
+    if (/\b(transcript|summary|summar(?:y|ize|ise)|notes?|lecture capture|record(?:ing)?|slides?|reading|paper|article|source packet|source-grounded|grounded answer|citation(?:s)?|cited answer|inline evidence)\b/.test(source)) {
       add('keep citation trail');
     }
-    if (/\b(hallucinat(?:e|ion)|unsupported|unverified|low confidence|confidence|fact[- ]?check|verify|cross[- ]?check)\b/.test(source)) {
+    if (/\b(hallucinat(?:e|ion)|unsupported|unverified|low confidence|confidence|fact[- ]?check|verify|cross[- ]?check|made[- ]?up|invented|citation drift)\b/.test(source)) {
       add('flag unsupported claims');
     }
     if (/\b(prompt injection|ignore previous|system prompt|jailbreak|malicious|untrusted|external content|web page|uploaded file)\b/.test(source)) {

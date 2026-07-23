@@ -860,6 +860,16 @@ test('SmartPlanner inferAiSourceBoundaryHints detects AI source verification gua
   assert.deepEqual(Array.from(hints), ['separate source facts from AI hints', 'keep citation trail', 'flag unsupported claims']);
 });
 
+test('SmartPlanner inferAiSourceBoundaryHints catches cited-answer study tools', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferAiSourceBoundaryHints({
+    title: 'Perplexity and SciSpace exam prep',
+    description: 'Build a source-grounded answer with citations from Elicit, then check for citation drift and invented claims before trusting it.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['separate source facts from AI hints', 'keep citation trail', 'flag unsupported claims']);
+});
+
 test('SmartPlanner buildPlannerPrompt includes AI source boundary hints', () => {
   const planner = loadSmartPlanner();
   const now = new Date('2026-07-10T10:00:00-07:00');
