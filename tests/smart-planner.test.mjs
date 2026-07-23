@@ -3132,3 +3132,28 @@ test('SmartPlanner inferActiveRecallQuestions falls back to generic source-groun
     'What are the key requirements or learning objectives for Week 4 lecture notes?'
   ]);
 });
+
+test('SmartPlanner inferRubricRevisionLoopHints detects redo and regrade workflows', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferRubricRevisionLoopHints({
+    title: 'Project resubmission revision memo',
+    description: 'Use grader feedback, rubric score breakdown, lost points, office hours notes, and a change log before requesting a regrade.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['compare feedback to rubric', 'list lost-point causes', 'write revision memo']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes revision loop hints', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00');
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'Lab correction resubmission',
+      courseName: 'CS 61B',
+      ts: new Date('2026-07-12T18:00:00-07:00').getTime(),
+      description: 'Revise from TA feedback, compare the score breakdown against the rubric, and include a revision memo.'
+    }
+  ], now);
+
+  assert.match(prompt, /revision loop: compare feedback to rubric, list lost-point causes, write revision memo/);
+});
