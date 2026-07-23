@@ -254,6 +254,26 @@ test('SmartPlanner compactDeadlineText trims noisy source notes', () => {
   assert.equal(snippet, 'Alpha Beta Gamm…');
 });
 
+test('SmartPlanner buildAssignmentBriefMarkdown creates a copyable sourced assignment summary', () => {
+  const planner = loadSmartPlanner();
+  const brief = planner.__test.buildAssignmentBriefMarkdown({
+    title: 'Project 2 GitHub checkpoint',
+    courseName: 'CS 61B',
+    sourceTitle: 'Module 4',
+    url: 'https://canvas.instructure.com/courses/123/assignments/456',
+    description: 'Push your repo at https://github.com/example/cs61b-proj2, run unit tests, submit to Gradescope, and include a README write-up. Covers graph traversal and Big-O analysis.'
+  }, '2026-07-14T23:59:00.000Z');
+
+  assert.match(brief, /Assignment: Project 2 GitHub checkpoint/);
+  assert.match(brief, /Course: CS 61B/);
+  assert.match(brief, /Due: 2026-07-14T23:59:00\.000Z/);
+  assert.match(brief, /Grounding: high/);
+  assert.match(brief, /- repo: https:\/\/github\.com\/example\/cs61b-proj2/);
+  assert.match(brief, /- \[ \] push repo/);
+  assert.match(brief, /Review focus: Big-O\/runtime, graph traversal/);
+  assert.match(brief, /Questions to ask or self-test:/);
+});
+
 test('SmartPlanner inferAssignmentResourceLinks surfaces starter, submission, and AI study URLs', () => {
   const planner = loadSmartPlanner();
   const links = planner.__test.inferAssignmentResourceLinks({
