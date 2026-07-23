@@ -2990,6 +2990,25 @@ test('SmartPlanner buildDeadlineStudyPack preserves source metadata for AI study
   assert.equal(pack.cards[0].course, 'CS 61B');
   assert.match(pack.cards[0].citation, /CS 61B \| due 2026-07-13T01:00:00\.000Z \| https:\/\/canvas\.example/);
   assert.deepEqual(JSON.parse(JSON.stringify(pack.cards[0].tags)), ['cs-61b', 'big-o-runtime', 'graph-traversal', 'push-repo', 'attach-write-up']);
+  assert.deepEqual(JSON.parse(JSON.stringify(pack.cards[0].recallQuestions)), [
+    'Trace the graph algorithm ideas in Graph traversal project on a tiny example.',
+    'What runtime or space-complexity claim would you defend for Graph traversal project?',
+    'What is the smallest end-to-end path you can implement and test for Graph traversal project?'
+  ]);
   assert.match(pack.markdown, /# Canvascope Study Pack/);
   assert.match(pack.markdown, /Notes: Submit the GitHub repo, README write-up, and tests/);
+  assert.match(pack.markdown, /Recall questions:\n- Trace the graph algorithm ideas/);
+});
+
+test('SmartPlanner inferActiveRecallQuestions falls back to generic source-grounded prompts', () => {
+  const planner = loadSmartPlanner();
+  const questions = planner.__test.inferActiveRecallQuestions({
+    title: 'Week 4 lecture notes',
+    description: 'Review the slides and transcript before section.'
+  }, 2);
+
+  assert.deepEqual(JSON.parse(JSON.stringify(questions)), [
+    'Explain the main idea of Week 4 lecture notes without looking at the notes, then verify against the source.',
+    'What are the key requirements or learning objectives for Week 4 lecture notes?'
+  ]);
 });
