@@ -726,6 +726,33 @@ test('SmartPlanner buildPlannerPrompt includes due-date ambiguity guardrails', (
   assert.match(prompt, /due-date ambiguity: confirm tentative deadline, verify exact due time, check timezone/);
 });
 
+test('SmartPlanner inferNextClassPrepHints prepares tomorrow class materials', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00').getTime();
+  const hints = planner.__test.inferNextClassPrepHints({
+    title: 'AI seminar lecture prep',
+    ts: new Date('2026-07-11T09:00:00-07:00').getTime(),
+    description: 'Skim chapter 4 slides, bring one discussion question, and download the worksheet before class.'
+  }, now);
+
+  assert.deepEqual(Array.from(hints), ['prep before next class', 'skim assigned material', 'write one question to bring']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes next-class prep hints', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00');
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'Machine learning lecture prep',
+      courseName: 'CS 188',
+      ts: new Date('2026-07-11T09:00:00-07:00').getTime(),
+      description: 'Before class, skim the slides and prepare one question for discussion.'
+    }
+  ], now);
+
+  assert.match(prompt, /next-class prep: prep before next class, skim assigned material, write one question to bring/);
+});
+
 test('SmartPlanner inferDueDateConfidenceLabel distinguishes Canvas, inferred, and ambiguous dates', () => {
   const planner = loadSmartPlanner();
 
