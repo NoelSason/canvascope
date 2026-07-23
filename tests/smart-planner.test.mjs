@@ -1624,6 +1624,30 @@ test('SmartPlanner buildPlannerPrompt includes exam constraint hints', () => {
   assert.match(prompt, /exam constraints: practice from memory, run proctoring setup check/);
 });
 
+test('SmartPlanner inferExamSignalHints detects professor emphasis and common mistakes', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferExamSignalHints({
+    title: 'Lecture 8 review notes',
+    description: 'This is on the midterm. Important: students often make a common mistake with Big-O proofs. Practice problems are posted.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['pin likely testable clue', 'prioritize professor emphasis', 'practice common mistake']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes exam signal hints', () => {
+  const planner = loadSmartPlanner();
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'Graph traversal review sheet',
+      courseName: 'CS 61B',
+      ts: new Date('2026-07-12T23:59:00-07:00').getTime(),
+      description: 'Key idea: BFS edge cases are testable and the professor said to remember this for the quiz.'
+    }
+  ], new Date('2026-07-10T10:00:00-07:00'));
+
+  assert.match(prompt, /exam signals: pin likely testable clue, prioritize professor emphasis/);
+});
+
 test('SmartPlanner inferPlannerRiskFlags surfaces deadline and submission risks', () => {
   const planner = loadSmartPlanner();
   const now = new Date('2026-07-10T10:00:00-07:00').getTime();
