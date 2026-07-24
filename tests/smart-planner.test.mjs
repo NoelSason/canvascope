@@ -2755,6 +2755,33 @@ test('SmartPlanner inferAutograderFeedbackHints summarizes CS grader feedback wo
   assert.deepEqual(Array.from(hints), ['summarize failing tests', 'capture error evidence', 'map feedback to fixes']);
 });
 
+test('SmartPlanner inferRubricFeedbackDigest separates wins, fixes, review, and evidence', () => {
+  const planner = loadSmartPlanner();
+  const digest = planner.__test.inferRubricFeedbackDigest({
+    title: 'Project 2 feedback',
+    description: 'Great job on the design. Rubric comments show partial credit lost for hidden tests and edge cases; review the lecture notes before resubmit.'
+  });
+
+  assert.deepEqual(Array.from(digest), [
+    'What went well: preserve the approach that earned credit',
+    'Fix next time: convert deductions into a short correction checklist',
+    'Review next: tie each comment back to the matching rubric criterion or course topic',
+    'Evidence to keep: save failing tests, edge cases, and the final passing run'
+  ]);
+});
+
+test('SmartPlanner assignment brief includes rubric feedback digest when available', () => {
+  const planner = loadSmartPlanner();
+  const brief = planner.__test.buildAssignmentBriefMarkdown({
+    title: 'Lab revision',
+    description: 'Rubric feedback: missing boundary case tests cost partial credit.'
+  });
+
+  assert.match(brief, /Feedback digest:/);
+  assert.match(brief, /Fix next time: convert deductions into a short correction checklist/);
+  assert.match(brief, /Evidence to keep: save failing tests, edge cases, and the final passing run/);
+});
+
 test('SmartPlanner buildPlannerPrompt includes autograder feedback hints', () => {
   const planner = loadSmartPlanner();
   const now = new Date('2026-07-10T10:00:00-07:00');
