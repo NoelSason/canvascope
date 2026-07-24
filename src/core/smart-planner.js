@@ -60,6 +60,33 @@
     return { urgency, effort };
   }
 
+  function inferEstimatedWorkMinutes(item, nowMs = Date.now()) {
+    const source = `${item?.title || ''} ${item?.description || item?.text || item?.content || ''}`.toLowerCase();
+    const explicitMinuteMatches = Array.from(source.matchAll(/\b(\d{1,3})\s*(?:m|min|mins|minute|minutes)\b/g), match => Number(match[1]))
+      .filter(value => Number.isFinite(value) && value > 0);
+    const explicitHourMatches = Array.from(source.matchAll(/\b(\d{1,2}(?:\.\d+)?)\s*(?:h|hr|hrs|hour|hours)\b/g), match => Math.round(Number(match[1]) * 60))
+      .filter(value => Number.isFinite(value) && value > 0);
+    const explicit = [...explicitMinuteMatches, ...explicitHourMatches]
+      .filter(value => value >= 10 && value <= 600);
+    if (explicit.length) return Math.max(...explicit);
+
+    const triage = classifyDeadline(item, nowMs);
+    let minutes = triage.effort === 'high' ? 120 : triage.effort === 'quick' ? 30 : 60;
+    const pointValue = getAssignmentPointValue(item);
+    if (Number.isFinite(pointValue)) {
+      if (pointValue >= 100) minutes += 60;
+      else if (pointValue >= 50) minutes += 30;
+      else if (pointValue <= 10 && triage.effort !== 'high') minutes = Math.min(minutes, 30);
+    }
+    if (/\b(multi[- ]?part|milestone|checkpoint|implementation|debug(?:ging)?|starter repo|autograder|gradescope|write[- ]?up|report|presentation)\b/.test(source)) {
+      minutes += 30;
+    }
+    if (/\b(exam|midterm|final|practice exam|study guide)\b/.test(source)) {
+      minutes += 60;
+    }
+    return Math.max(15, Math.min(360, minutes));
+  }
+
   function compactDeadlineText(item, maxLength = 180) {
     const text = String((item && (item.description || item.text || item.content)) || '')
       .replace(/\s+/g, ' ')
@@ -2368,6 +2395,7 @@
         count: 0,
         highEffort: 0,
         quick: 0,
+        estimatedMinutes: 0,
         isToday: offset === 0,
         load: 'empty'
       };
@@ -2381,13 +2409,15 @@
       if (!bucket) continue;
       const triage = classifyDeadline({ ...item, ts }, nowMs);
       bucket.count += 1;
+      bucket.estimatedMinutes += inferEstimatedWorkMinutes({ ...item, ts }, nowMs);
       if (triage.effort === 'high') bucket.highEffort += 1;
       if (triage.effort === 'quick') bucket.quick += 1;
     }
 
     return buckets.map(bucket => ({
       ...bucket,
-      load: bucket.count === 0 ? 'empty' : bucket.count >= 4 || bucket.highEffort >= 2 ? 'heavy' : bucket.count >= 2 || bucket.highEffort === 1 ? 'medium' : 'light'
+      estimatedHours: Math.round((bucket.estimatedMinutes / 60) * 10) / 10,
+      load: bucket.count === 0 ? 'empty' : bucket.estimatedMinutes >= 240 || bucket.count >= 4 || bucket.highEffort >= 2 ? 'heavy' : bucket.estimatedMinutes >= 120 || bucket.count >= 2 || bucket.highEffort === 1 ? 'medium' : 'light'
     }));
   }
 
@@ -2401,10 +2431,11 @@
       <div class="plan-section-head"><span class="plan-section-title">7-day workload</span><span class="plan-section-meta">deadlines by day</span></div>
       <div class="plan-workload-days">
         ${timeline.map(day => `
-          <div class="plan-workload-day is-${escapeHtml(day.load)}${day.isToday ? ' is-today' : ''}" title="${escapeHtml(day.dateLabel)}: ${day.count} deadline${day.count === 1 ? '' : 's'}${day.highEffort ? `, ${day.highEffort} high-effort` : ''}">
+          <div class="plan-workload-day is-${escapeHtml(day.load)}${day.isToday ? ' is-today' : ''}" title="${escapeHtml(day.dateLabel)}: ${day.count} deadline${day.count === 1 ? '' : 's'}${day.highEffort ? `, ${day.highEffort} high-effort` : ''}${day.estimatedMinutes ? `, about ${day.estimatedHours}h estimated` : ''}">
             <span class="plan-workload-label">${escapeHtml(day.label)}</span>
             <span class="plan-workload-count">${day.count}</span>
             <span class="plan-workload-date">${escapeHtml(day.dateLabel)}</span>
+            ${day.estimatedMinutes ? `<span class="plan-workload-estimate">~${escapeHtml(day.estimatedHours)}h</span>` : ''}
           </div>
         `).join('')}
       </div>
@@ -3140,6 +3171,6 @@
     init,
     refresh,
     draftWeek,
-    __test: { classifyDeadline, compactDeadlineText, buildAssignmentBriefMarkdown, buildDeadlineStudyPack, inferAssignmentResourceLinks, getSubmissionSnapshot, classifyActionBucket, getAssignmentPointValue, inferSubmissionChecklist, inferConceptReviewHints, inferActiveRecallQuestions, inferWeakConceptBacklogHints, inferGradeImpactHints, inferSubmissionStatusFlags, inferPlannerRiskFlags, inferStudyPhases, inferExecutionPlanHints, inferLearningStrategyHints, inferFocusSprintHints, inferEnergyAwareSessionHints, inferPracticeArtifactHints, inferRetrievalCalibrationHints, inferSocraticStudyHints, inferTeachBackHints, inferAcademicIntegrityHints, inferPrivacyConsentHints, inferAccessibilityStudyHints, inferCodeDebugHints, inferMinimalReproHints, inferAutograderFeedbackHints, inferOfficeHoursPrepHints, inferCollaborationHandoffHints, inferLectureCaptureHints, inferLectureActionChecklistHints, inferSourceCoverageAuditHints, inferAiNoteQualityAuditHints, inferConfusionCaptureHints, inferAudioReviewHints, inferTranscriptStudyGuideHints, inferMultimodalStudyAssetHints, inferSourceGroundingHints, inferEvidencePackHints, inferTutorContextPackHints, inferFeedbackLoopHints, inferPortabilityBackupHints, inferStudyWrapUpHints, inferRubricScoringHints, inferPreSubmitVerificationHints, inferSubmissionReceiptHints, inferAvailabilityWindowHints, inferNotebookStudyPackHints, inferStudyPackArtifactHints, inferThreeTwoOneReviewHints, inferReadingTriageHints, inferLectureQuestionQueueHints, inferAiHandoffHints, inferCsWorkflowHints, inferCommandSnippetHints, inferAssignmentSpecExtractionHints, inferMilestoneDecompositionHints, inferRequirementClarificationHints, inferActivePracticeLoopHints, inferInterleavedPracticeHints, inferMetacognitiveCalibrationHints, inferSpacedReviewPlan, inferExamCountdownHints, inferExamConstraintHints, inferExamSignalHints, inferPeerStudyAccountabilityHints, inferRecurringRoutineHints, inferTimeEstimateCalibrationHints, inferBlockedDependencyHints, inferWorkedExampleHints, inferEvidenceConfidenceHints, inferChangeAwarenessHints, inferSpecDeltaHints, inferQuestionBankHints, inferAiQuizGenerationHints, inferFreshnessGuardHints, inferDueDateAmbiguityHints, inferNextClassPrepHints, formatPlannerDueLabel, inferDueDateConfidenceLabel, inferHiddenDeadlineHints, inferAiStudySessionSetupHints, inferPersonalizedMemoryHints, inferErrorNotebookHints, inferNotebookLmStudyPlanHints, inferConceptMapBridgeHints, inferFirstStudyStepHints, inferStudyRecoveryHints, inferCalendarConflictHints, inferAssignmentQuestionQueueHints, inferQuestionFirstNoteHints, inferMissedLectureCatchUpHints, inferAiSourceBoundaryHints, inferLectureChapteringHints, inferDiscussionReplyPrepHints, inferRubricRevisionLoopHints, inferAmbiguousAssignmentTitleHints, recommendTopStudyActions, recommendNextStudyAction, buildWorkloadTimeline, renderDeadlineList, buildPlannerPrompt, extractJsonArray, nextStudyWindowStart, findRelevantDeadlineForBlock, normalizeStudyBlocks, buildFallbackStudyBlocks, toLocalInputValue }
+    __test: { classifyDeadline, inferEstimatedWorkMinutes, compactDeadlineText, buildAssignmentBriefMarkdown, buildDeadlineStudyPack, inferAssignmentResourceLinks, getSubmissionSnapshot, classifyActionBucket, getAssignmentPointValue, inferSubmissionChecklist, inferConceptReviewHints, inferActiveRecallQuestions, inferWeakConceptBacklogHints, inferGradeImpactHints, inferSubmissionStatusFlags, inferPlannerRiskFlags, inferStudyPhases, inferExecutionPlanHints, inferLearningStrategyHints, inferFocusSprintHints, inferEnergyAwareSessionHints, inferPracticeArtifactHints, inferRetrievalCalibrationHints, inferSocraticStudyHints, inferTeachBackHints, inferAcademicIntegrityHints, inferPrivacyConsentHints, inferAccessibilityStudyHints, inferCodeDebugHints, inferMinimalReproHints, inferAutograderFeedbackHints, inferOfficeHoursPrepHints, inferCollaborationHandoffHints, inferLectureCaptureHints, inferLectureActionChecklistHints, inferSourceCoverageAuditHints, inferAiNoteQualityAuditHints, inferConfusionCaptureHints, inferAudioReviewHints, inferTranscriptStudyGuideHints, inferMultimodalStudyAssetHints, inferSourceGroundingHints, inferEvidencePackHints, inferTutorContextPackHints, inferFeedbackLoopHints, inferPortabilityBackupHints, inferStudyWrapUpHints, inferRubricScoringHints, inferPreSubmitVerificationHints, inferSubmissionReceiptHints, inferAvailabilityWindowHints, inferNotebookStudyPackHints, inferStudyPackArtifactHints, inferThreeTwoOneReviewHints, inferReadingTriageHints, inferLectureQuestionQueueHints, inferAiHandoffHints, inferCsWorkflowHints, inferCommandSnippetHints, inferAssignmentSpecExtractionHints, inferMilestoneDecompositionHints, inferRequirementClarificationHints, inferActivePracticeLoopHints, inferInterleavedPracticeHints, inferMetacognitiveCalibrationHints, inferSpacedReviewPlan, inferExamCountdownHints, inferExamConstraintHints, inferExamSignalHints, inferPeerStudyAccountabilityHints, inferRecurringRoutineHints, inferTimeEstimateCalibrationHints, inferBlockedDependencyHints, inferWorkedExampleHints, inferEvidenceConfidenceHints, inferChangeAwarenessHints, inferSpecDeltaHints, inferQuestionBankHints, inferAiQuizGenerationHints, inferFreshnessGuardHints, inferDueDateAmbiguityHints, inferNextClassPrepHints, formatPlannerDueLabel, inferDueDateConfidenceLabel, inferHiddenDeadlineHints, inferAiStudySessionSetupHints, inferPersonalizedMemoryHints, inferErrorNotebookHints, inferNotebookLmStudyPlanHints, inferConceptMapBridgeHints, inferFirstStudyStepHints, inferStudyRecoveryHints, inferCalendarConflictHints, inferAssignmentQuestionQueueHints, inferQuestionFirstNoteHints, inferMissedLectureCatchUpHints, inferAiSourceBoundaryHints, inferLectureChapteringHints, inferDiscussionReplyPrepHints, inferRubricRevisionLoopHints, inferAmbiguousAssignmentTitleHints, recommendTopStudyActions, recommendNextStudyAction, buildWorkloadTimeline, renderDeadlineList, buildPlannerPrompt, extractJsonArray, nextStudyWindowStart, findRelevantDeadlineForBlock, normalizeStudyBlocks, buildFallbackStudyBlocks, toLocalInputValue }
   };
 })();

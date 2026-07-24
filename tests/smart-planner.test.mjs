@@ -181,6 +181,29 @@ test('SmartPlanner classifyDeadline labels urgency and likely effort', () => {
   assert.equal(discussion.effort, 'quick');
 });
 
+test('SmartPlanner inferEstimatedWorkMinutes prefers explicit workload and otherwise uses assignment heuristics', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00').getTime();
+
+  assert.equal(planner.__test.inferEstimatedWorkMinutes({
+    title: 'Project checkpoint',
+    description: 'Budget 2.5 hours for implementation and Gradescope submission.',
+    ts: new Date('2026-07-11T12:00:00-07:00').getTime()
+  }, now), 150);
+
+  assert.equal(planner.__test.inferEstimatedWorkMinutes({
+    title: 'Reading quiz',
+    description: 'Short 10 points check-in.',
+    ts: new Date('2026-07-11T12:00:00-07:00').getTime()
+  }, now), 30);
+
+  assert.equal(planner.__test.inferEstimatedWorkMinutes({
+    title: 'Final project milestone',
+    description: '100 points, include implementation report and presentation.',
+    ts: new Date('2026-07-11T12:00:00-07:00').getTime()
+  }, now), 270);
+});
+
 test('SmartPlanner formatPlannerDueLabel includes an explicit timezone', () => {
   const planner = loadSmartPlanner();
   const label = planner.__test.formatPlannerDueLabel(new Date('2026-07-10T18:00:00-07:00').getTime());
@@ -1821,9 +1844,12 @@ test('SmartPlanner buildWorkloadTimeline buckets upcoming deadlines by local day
   assert.equal(timeline.length, 3);
   assert.equal(timeline[0].count, 1);
   assert.equal(timeline[0].highEffort, 1);
+  assert.equal(timeline[0].estimatedMinutes, 150);
+  assert.equal(timeline[0].estimatedHours, 2.5);
   assert.equal(timeline[0].load, 'medium');
   assert.equal(timeline[1].count, 1);
   assert.equal(timeline[1].quick, 1);
+  assert.equal(timeline[1].estimatedMinutes, 30);
   assert.equal(timeline[1].load, 'light');
   assert.equal(timeline[2].count, 0);
   assert.equal(timeline[2].load, 'empty');
