@@ -581,6 +581,27 @@ test('SmartPlanner inferConceptReviewHints detects networking and security revie
   assert.deepEqual(Array.from(hints), ['networking fundamentals', 'security model']);
 });
 
+test('SmartPlanner inferConceptReviewHints detects systems and compiler review topics', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferConceptReviewHints({
+    title: 'Compiler and OS project review',
+    description: 'Trace parser AST output, type checking, kernel syscalls, paging, and scheduler tradeoffs.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['operating systems', 'compilers/parsing']);
+});
+
+test('SmartPlanner inferActiveRecallQuestions creates systems-specific prompts', () => {
+  const planner = loadSmartPlanner();
+  const questions = planner.__test.inferActiveRecallQuestions({
+    title: 'Raft and virtual memory lab',
+    description: 'Compare consensus replication failures with OS paging and kernel process scheduling.'
+  }, 4);
+
+  assert.match(questions.join('\n'), /Which OS abstraction, invariant, or resource tradeoff explains Raft and virtual memory lab\?/);
+  assert.match(questions.join('\n'), /What failure mode or consistency tradeoff should you test for Raft and virtual memory lab\?/);
+});
+
 test('SmartPlanner inferTutorContextPackHints detects materials to gather for AI tutoring', () => {
   const planner = loadSmartPlanner();
   const hints = planner.__test.inferTutorContextPackHints({

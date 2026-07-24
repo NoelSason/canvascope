@@ -258,9 +258,12 @@
     if (/\b(security|cryptograph(?:y|ic)|crypto\b|encryption|authentication|authorization|oauth|hash(?:ing)?|xss|csrf|injection)\b/.test(source)) add('security model');
     if (/\b(concurrency|parallel|threads?|locks?|mutex|semaphore|race condition|deadlock)\b/.test(source)) add('concurrency pitfalls');
     if (/\b(memory|pointers?|heap|stack|malloc|free|segfault|garbage collection)\b/.test(source)) add('memory model');
+    if (/\b(operating systems?|\bos\b|kernel|process(?:es)?|scheduler|virtual memory|paging|file systems?|syscalls?|system calls?)\b/.test(source)) add('operating systems');
+    if (/\b(compilers?|lex(?:er|ing|ical)?|parser|parsing|ast\b|syntax tree|semantic analysis|type check(?:er|ing)?|code generation|llvm|interpreter)\b/.test(source)) add('compilers/parsing');
+    if (/\b(distributed systems?|consensus|raft|paxos|replication|fault tolerance|sharding|eventual consistency)\b/.test(source)) add('distributed systems');
     if (/\b(probability|bayes|regression|gradient|matrix|linear algebra|statistics)\b/.test(source)) add('math foundations');
 
-    return hints.slice(0, 3);
+    return hints.slice(0, 4);
   }
 
   function inferActiveRecallQuestions(item, maxQuestions = 3) {
@@ -280,6 +283,15 @@
     }
     if (/\b(sql|database|joins?|normalization|index(?:es|ing)?|transactions?)\b/.test(source)) {
       add(`Which tables, joins, or invariants matter most for ${title}?`);
+    }
+    if (/\b(operating systems?|\bos\b|kernel|process(?:es)?|scheduler|virtual memory|paging|file systems?|syscalls?|system calls?)\b/.test(source)) {
+      add(`Which OS abstraction, invariant, or resource tradeoff explains ${title}?`);
+    }
+    if (/\b(compilers?|lex(?:er|ing|ical)?|parser|parsing|ast\b|syntax tree|semantic analysis|type check(?:er|ing)?|code generation|llvm|interpreter)\b/.test(source)) {
+      add(`What input, intermediate representation, and output should you trace for ${title}?`);
+    }
+    if (/\b(distributed systems?|consensus|raft|paxos|replication|fault tolerance|sharding|eventual consistency)\b/.test(source)) {
+      add(`What failure mode or consistency tradeoff should you test for ${title}?`);
     }
     if (/\b(project|lab|implementation|coding|programming|github|repo|autograder|gradescope)\b/.test(source)) {
       add(`What is the smallest end-to-end path you can implement and test for ${title}?`);
