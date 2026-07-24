@@ -1003,6 +1003,16 @@ test('SmartPlanner inferPrivacyConsentHints detects AI notetaker consent and dat
   assert.deepEqual(Array.from(hints), ['confirm recording consent', 'avoid private peer details', 'check AI data sharing']);
 });
 
+test('SmartPlanner inferPrivacyConsentHints flags named AI note tools for data-sharing review', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferPrivacyConsentHints({
+    title: 'Granola and Read AI lecture recap cleanup',
+    description: 'Compare Fireflies, Fathom, Tactiq, and MeetGeek notes before sharing the group-study summary.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['avoid private peer details', 'check AI data sharing']);
+});
+
 test('SmartPlanner inferAiNoteQualityAuditHints detects summary verification loops', () => {
   const planner = loadSmartPlanner();
   const hints = planner.__test.inferAiNoteQualityAuditHints({

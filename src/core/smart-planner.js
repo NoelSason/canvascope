@@ -654,7 +654,7 @@
     if (/\b(classmates?|peers?|group|team|partner|interview|participant|discussion|seminar|meeting)\b/.test(source)) {
       add('avoid private peer details');
     }
-    if (/\b(ai note[- ]?tak(?:er|ing)|notebooklm|chatgpt|claude|gemini|llm|assistant|upload(?:ing)? notes?|cloud transcription)\b/.test(source)) {
+    if (/\b(ai note[- ]?tak(?:er|ing)|notebooklm|chatgpt|claude|gemini|llm|assistant|upload(?:ing)? notes?|cloud transcription|otter|granola|fireflies|fathom|read ai|tldv|supernormal|plaud|limitless|tactiq|meetgeek)\b/.test(source)) {
       add('check AI data sharing');
     }
     if (/\b(privacy|consent|ferpa|confidential|sensitive|personal data|pii|student data|anonymi[sz]e)\b/.test(source)) {
