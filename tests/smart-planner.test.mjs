@@ -995,6 +995,31 @@ test('SmartPlanner buildPlannerPrompt includes lecture chaptering hints', () => 
   assert.match(prompt, /lecture chaptering: chapterize long recording, keep timestamp anchors, flag unclear segments/);
 });
 
+test('SmartPlanner inferLectureEmphasisHints tracks instructor emphasis from AI notes', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferLectureEmphasisHints({
+    title: 'NotebookLM lecture emphasis review',
+    description: 'The professor repeatedly highlighted this demo as important and said it will be on the exam; optional tangent can be skipped.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['capture instructor emphasis', 'promote repeated themes', 'separate low-priority material']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes lecture emphasis hints', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00');
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'Lecture 12 AI notes cleanup',
+      courseName: 'CS 188',
+      ts: new Date('2026-07-11T18:00:00-07:00').getTime(),
+      description: 'Review the lecture transcript: professor called out a worked problem, repeated the key theme twice, and said it is important for the quiz.'
+    }
+  ], now);
+
+  assert.match(prompt, /lecture emphasis: capture instructor emphasis, promote repeated themes, turn instructor examples into practice/);
+});
+
 test('SmartPlanner inferDiscussionReplyPrepHints detects peer discussion workflow', () => {
   const planner = loadSmartPlanner();
   const hints = planner.__test.inferDiscussionReplyPrepHints({
