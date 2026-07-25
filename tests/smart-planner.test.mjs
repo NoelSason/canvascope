@@ -411,6 +411,20 @@ test('SmartPlanner inferAssignmentResourceLinks recognizes current study and tra
   ]);
 });
 
+test('SmartPlanner inferAssignmentResourceLinks recognizes newer meeting recap tools', () => {
+  const planner = loadSmartPlanner();
+  const links = planner.__test.inferAssignmentResourceLinks({
+    description: 'Cross-check class notes from Circleback https://circleback.ai/recap/demo, Notta https://notta.ai/en/transcript/demo, Jamie https://jamie.ai/notes/demo, and Sembly https://sembly.ai/workspace/demo.'
+  });
+
+  assert.deepEqual(JSON.parse(JSON.stringify(links)), [
+    { label: 'ai notes/transcript', url: 'https://circleback.ai/recap/demo' },
+    { label: 'ai notes/transcript', url: 'https://notta.ai/en/transcript/demo' },
+    { label: 'ai notes/transcript', url: 'https://jamie.ai/notes/demo' },
+    { label: 'ai notes/transcript', url: 'https://sembly.ai/workspace/demo' }
+  ]);
+});
+
 test('SmartPlanner inferSpecDeltaHints detects changed assignment instructions', () => {
   const planner = loadSmartPlanner();
   const hints = planner.__test.inferSpecDeltaHints({

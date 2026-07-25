@@ -290,7 +290,7 @@
       else if (/edstem\.org|piazza\.com|campuswire\.com/.test(lower)) add('discussion/help', url);
       else if (/chatgpt\.com|claude\.ai|gemini\.google\.com|aistudio\.google\.com|perplexity\.ai|khanmigo\.ai/.test(lower)) add('ai tutor', url);
       else if (/notebooklm\.google\.com|quizlet\.com|coconote\.app|notion\.so|knowt\.com|studyfetch\.com|gizmo\.ai|brainscape\.com/.test(lower)) add('ai study guide', url);
-      else if (/otter\.ai|granola\.ai|fireflies\.ai|fathom\.video|read\.ai|tldv\.io|supernormal\.com|plaud\.ai|limitless\.ai|tactiq\.io|meetgeek\.ai/.test(lower)) add('ai notes/transcript', url);
+      else if (/otter\.ai|granola\.ai|fireflies\.ai|fathom\.video|read\.ai|tldv\.io|supernormal\.com|plaud\.ai|limitless\.ai|tactiq\.io|meetgeek\.ai|circleback\.ai|notta\.ai|jamie\.ai|sembly\.ai/.test(lower)) add('ai notes/transcript', url);
       else if (/youtube\.com|youtu\.be|vimeo\.com|panopto\.|kaltura\.|\/kaltura\/|mediasite\.|echo360\./.test(lower)) add('lecture/video', url);
       else if (/classroom\.google\.com/.test(lower)) add('classroom', url);
       else if (/\.zip(?:$|[?#])|starter|template|scaffold|dataset|data[-_]?set|drive\.google\.com|docs\.google\.com|colab\.research\.google\.com|jupyter\.org|replit\.com|github\.dev|codespaces\.new|stackblitz\.com|codesandbox\.io/.test(lower)) add('starter/material', url);
