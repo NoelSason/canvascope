@@ -3244,6 +3244,35 @@ test('SmartPlanner buildDeadlineStudyPack preserves source metadata for AI study
   assert.match(pack.markdown, /Grounding: high — Canvas link, source title, course, due date/);
   assert.match(pack.markdown, /Notes: Submit the GitHub repo, README write-up, and tests/);
   assert.match(pack.markdown, /Recall questions:\n- Trace the graph algorithm ideas/);
+  assert.deepEqual(JSON.parse(JSON.stringify(pack.cards[0].reviewSchedule)), [
+    'today: answer from memory, then verify source',
+    '2 days: spaced recall pass',
+    '1 day before due: final check',
+    'project mode: retest edge case'
+  ]);
+  assert.match(pack.markdown, /Review schedule:\n- today: answer from memory, then verify source/);
+});
+
+test('SmartPlanner buildStudyPackReviewSchedule adapts to exam and overdue timing', () => {
+  const planner = loadSmartPlanner();
+
+  assert.deepEqual(JSON.parse(JSON.stringify(planner.__test.buildStudyPackReviewSchedule({
+    title: 'Cumulative final exam',
+    description: 'Practice exam and flashcards allowed.'
+  }, '2026-07-25T17:00:00.000Z', '2026-07-10T17:00:00.000Z'))), [
+    'today: answer from memory, then verify source',
+    '2 days: spaced recall pass',
+    '1 week: interleaved review',
+    '1 day before due: final check'
+  ]);
+
+  assert.deepEqual(JSON.parse(JSON.stringify(planner.__test.buildStudyPackReviewSchedule({
+    title: 'Past due quiz correction',
+    description: 'Review wrong answers and source notes.'
+  }, '2026-07-09T17:00:00.000Z', '2026-07-10T17:00:00.000Z'))), [
+    'now: final source check',
+    'after submit: log misses'
+  ]);
 });
 
 test('SmartPlanner buildDeadlineStudyPack labels unknown sources transparently', () => {
