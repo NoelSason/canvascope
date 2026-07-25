@@ -2508,6 +2508,16 @@ test('SmartPlanner inferCsWorkflowHints calls out edge-case planning for CS spec
   assert.deepEqual(Array.from(hints), ['read spec first', 'implement core path', 'list edge cases', 'run tests before submit']);
 });
 
+test('SmartPlanner inferCsWorkflowHints starts debugging work from evidence', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferCsWorkflowHints({
+    title: 'Debug parser regression',
+    description: 'Investigate the failing pytest case, traceback, and stack trace before changing the implementation.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['read spec first', 'reproduce failing case', 'inspect error evidence', 'implement core path']);
+});
+
 test('SmartPlanner buildPlannerPrompt includes CS workflow hints', () => {
   const planner = loadSmartPlanner();
   const prompt = planner.__test.buildPlannerPrompt([

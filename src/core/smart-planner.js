@@ -1417,6 +1417,10 @@
     if (/\b(ai pair|ai coding|vibe cod(?:e|ing)|chatgpt|claude|gemini|copilot|cursor|llm|assistant-generated|generated patch|model changes?)\b/.test(source)) {
       add('review AI diff');
     }
+    if (/\b(debug(?:ging)?|bug|failing|failure|error|exception|traceback|stack trace|segfault|crash|regression)\b/.test(source)) {
+      add('reproduce failing case');
+      add('inspect error evidence');
+    }
     if (/\b(implement|implementation|feature|algorithm|data structure|function|class|api|endpoint|component|logic)\b/.test(source)) {
       add('implement core path');
     }
