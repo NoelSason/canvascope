@@ -3233,7 +3233,7 @@ test('SmartPlanner inferErrorNotebookHints detects mistake-pattern workflows', (
     description: 'After failed tests, tag the root cause and retry similar edge cases with confidence notes.'
   });
 
-  assert.deepEqual(Array.from(hints), ['log misses by pattern', 'tag root cause', 'schedule targeted retry']);
+  assert.deepEqual(Array.from(hints), ['log misses by pattern', 'tag root cause', 'schedule targeted retry', 'compare confidence to result']);
 });
 
 test('SmartPlanner buildPlannerPrompt includes error notebook hints', () => {
@@ -3249,6 +3249,20 @@ test('SmartPlanner buildPlannerPrompt includes error notebook hints', () => {
   ], now);
 
   assert.match(prompt, /error notebook: log misses by pattern, tag root cause, schedule targeted retry/);
+});
+
+test('SmartPlanner inferErrorNotebookHints captures debugging-session learning notes', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferErrorNotebookHints({
+    title: 'Parser debugging session',
+    description: 'Document what I tried, expected vs actual output, the root cause, and the fixed solution after passing tests.'
+  });
+
+  assert.deepEqual(Array.from(hints), [
+    'tag root cause',
+    'record tried/expected/actual',
+    'save fix and verification'
+  ]);
 });
 
 test('SmartPlanner buildDeadlineStudyPack preserves source metadata for AI study handoff', () => {

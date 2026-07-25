@@ -2073,6 +2073,12 @@
     if (/\b(root cause|why|because|misconception|off[- ]?by[- ]?one|edge cases?|conceptual error|syntax error|logic error)\b/.test(source)) {
       add('tag root cause');
     }
+    if (/\b(tried|attempted|what i tried|hypothesis|expected|actual|repro(?:duction)?|minimal repro|steps to reproduce|debug(?:ging)? session)\b/.test(source)) {
+      add('record tried/expected/actual');
+    }
+    if (/\b(fix|fixed|resolved|solution|patched|verified|passing tests?|green tests?|regression test)\b/.test(source)) {
+      add('save fix and verification');
+    }
     if (/\b(retry|redo|reattempt|practice again|spaced repetition|review queue|next attempt|follow[- ]?up)\b/.test(source)) {
       add('schedule targeted retry');
     }
@@ -2080,7 +2086,7 @@
       add('compare confidence to result');
     }
 
-    return hints.slice(0, 3);
+    return hints.slice(0, 4);
   }
 
   function inferNotebookLmStudyPlanHints(item) {
