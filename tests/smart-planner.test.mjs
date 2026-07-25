@@ -970,6 +970,31 @@ test('SmartPlanner buildPlannerPrompt includes AI source boundary hints', () => 
   assert.match(prompt, /AI source boundaries: separate source facts from AI hints, keep citation trail, flag unsupported claims/);
 });
 
+test('SmartPlanner inferLiveStudyModeHints prepares voice and guided tutor sessions', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferLiveStudyModeHints({
+    title: 'Live study mode calculus review',
+    description: 'Use a voice AI tutor for guided hints, then rate confidence after each answer and save the transcript with source notes.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['practice aloud with live tutor', 'ask for hints before answers', 'rate confidence after each response']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes live study mode hints', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00');
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'Gemini Guided Learning voice review',
+      courseName: 'CS 188',
+      ts: new Date('2026-07-11T18:00:00-07:00').getTime(),
+      description: 'Practice aloud in live voice study mode, ask for hints before answers, and rate confidence for weak spots.'
+    }
+  ], now);
+
+  assert.match(prompt, /live study mode: practice aloud with live tutor, ask for hints before answers, rate confidence after each response/);
+});
+
 test('SmartPlanner inferLectureChapteringHints creates timestamped long-recording study steps', () => {
   const planner = loadSmartPlanner();
   const hints = planner.__test.inferLectureChapteringHints({
