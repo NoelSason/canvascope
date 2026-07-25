@@ -449,6 +449,20 @@ test('SmartPlanner inferAssignmentResourceLinks recognizes AI study synthesis an
   ]);
 });
 
+test('SmartPlanner inferAssignmentResourceLinks recognizes current AI study-map and recap tools', () => {
+  const planner = loadSmartPlanner();
+  const links = planner.__test.inferAssignmentResourceLinks({
+    description: 'Build flashcards from https://turbolearn.ai/course/demo, summarize dense slides in https://mindgrasp.ai/library/demo, save the meeting recap from https://recall.ai/calendar/demo, and turn the unit outline into a map at https://mapify.so/share/demo.'
+  });
+
+  assert.deepEqual(JSON.parse(JSON.stringify(links)), [
+    { label: 'ai study guide', url: 'https://turbolearn.ai/course/demo' },
+    { label: 'ai study guide', url: 'https://mindgrasp.ai/library/demo' },
+    { label: 'ai notes/transcript', url: 'https://recall.ai/calendar/demo' },
+    { label: 'concept map', url: 'https://mapify.so/share/demo' }
+  ]);
+});
+
 test('SmartPlanner inferSpecDeltaHints detects changed assignment instructions', () => {
   const planner = loadSmartPlanner();
   const hints = planner.__test.inferSpecDeltaHints({
