@@ -335,6 +335,7 @@
     if (/\b(operating systems?|\bos\b|kernel|process(?:es)?|scheduler|virtual memory|paging|file systems?|syscalls?|system calls?)\b/.test(source)) add('operating systems');
     if (/\b(compilers?|lex(?:er|ing|ical)?|parser|parsing|ast\b|syntax tree|semantic analysis|type check(?:er|ing)?|code generation|llvm|interpreter)\b/.test(source)) add('compilers/parsing');
     if (/\b(distributed systems?|consensus|raft|paxos|replication|fault tolerance|sharding|eventual consistency)\b/.test(source)) add('distributed systems');
+    if (/\b(machine learning|\bml\b|neural networks?|deep learning|classification|clustering|overfitting|regularization|loss function|gradient descent|backprop(?:agation)?|transformers?|attention|embeddings?|rag\b|retrieval augmented generation)\b/.test(source)) add('ML model behavior');
     if (/\b(probability|bayes|regression|gradient|matrix|linear algebra|statistics)\b/.test(source)) add('math foundations');
 
     return hints.slice(0, 4);
@@ -366,6 +367,9 @@
     }
     if (/\b(distributed systems?|consensus|raft|paxos|replication|fault tolerance|sharding|eventual consistency)\b/.test(source)) {
       add(`What failure mode or consistency tradeoff should you test for ${title}?`);
+    }
+    if (/\b(machine learning|\bml\b|neural networks?|deep learning|classification|clustering|overfitting|regularization|loss function|gradient descent|backprop(?:agation)?|transformers?|attention|embeddings?|rag\b|retrieval augmented generation)\b/.test(source)) {
+      add(`What data, loss signal, or model limitation should you explain for ${title}?`);
     }
     if (/\b(project|lab|implementation|coding|programming|github|repo|autograder|gradescope)\b/.test(source)) {
       add(`What is the smallest end-to-end path you can implement and test for ${title}?`);

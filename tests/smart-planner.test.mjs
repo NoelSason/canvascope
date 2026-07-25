@@ -663,6 +663,20 @@ test('SmartPlanner inferActiveRecallQuestions creates systems-specific prompts',
   assert.match(questions.join('\n'), /What failure mode or consistency tradeoff should you test for Raft and virtual memory lab\?/);
 });
 
+test('SmartPlanner detects ML study topics and asks source-grounded model questions', () => {
+  const planner = loadSmartPlanner();
+  const item = {
+    title: 'Transformer overfitting review',
+    description: 'Study attention, embeddings, gradient descent, loss functions, and RAG evaluation tradeoffs.'
+  };
+
+  assert.ok(planner.__test.inferConceptReviewHints(item).includes('ML model behavior'));
+  assert.match(
+    planner.__test.inferActiveRecallQuestions(item, 4).join('\n'),
+    /What data, loss signal, or model limitation should you explain for Transformer overfitting review\?/
+  );
+});
+
 test('SmartPlanner inferTutorContextPackHints detects materials to gather for AI tutoring', () => {
   const planner = loadSmartPlanner();
   const hints = planner.__test.inferTutorContextPackHints({
