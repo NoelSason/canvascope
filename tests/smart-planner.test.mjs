@@ -425,6 +425,19 @@ test('SmartPlanner inferAssignmentResourceLinks recognizes newer meeting recap t
   ]);
 });
 
+test('SmartPlanner inferAssignmentResourceLinks recognizes AI study synthesis and concept-map tools', () => {
+  const planner = loadSmartPlanner();
+  const links = planner.__test.inferAssignmentResourceLinks({
+    description: 'Turn the paper into a Google Illuminate audio review https://illuminate.google.com/library/demo, capture dictation in Wispr Flow https://wisprflow.ai/notes/demo, and sketch the dependency map in Napkin https://napkin.ai/board/demo.'
+  });
+
+  assert.deepEqual(JSON.parse(JSON.stringify(links)), [
+    { label: 'ai study guide', url: 'https://illuminate.google.com/library/demo' },
+    { label: 'ai notes/transcript', url: 'https://wisprflow.ai/notes/demo' },
+    { label: 'concept map', url: 'https://napkin.ai/board/demo' }
+  ]);
+});
+
 test('SmartPlanner inferSpecDeltaHints detects changed assignment instructions', () => {
   const planner = loadSmartPlanner();
   const hints = planner.__test.inferSpecDeltaHints({
