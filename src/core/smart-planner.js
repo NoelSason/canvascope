@@ -283,8 +283,8 @@
     for (const match of source.matchAll(urlPattern)) {
       const url = match[0].replace(/[.,;:!?]+$/g, '');
       const lower = url.toLowerCase();
-      if (/github\.com|gitlab\.com|bitbucket\.org/.test(lower)) add('repo', url);
-      else if (/classroom\.github\.com/.test(lower)) add('repo', url);
+      if (/classroom\.github\.com/.test(lower)) add('GitHub Classroom', url);
+      else if (/github\.com|gitlab\.com|bitbucket\.org/.test(lower)) add('repo', url);
       else if (/gradescope\.com|submitty|codegrade|autograder/.test(lower)) add('autograder', url);
       else if (/canvas\.instructure\.com|instructure\.com\/courses\//.test(lower)) add('canvas', url);
       else if (/edstem\.org|piazza\.com|campuswire\.com/.test(lower)) add('discussion/help', url);

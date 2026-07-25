@@ -321,6 +321,17 @@ test('SmartPlanner inferAssignmentResourceLinks surfaces starter, submission, an
   ]);
 });
 
+test('SmartPlanner inferAssignmentResourceLinks recognizes GitHub Classroom assignment launch URLs', () => {
+  const planner = loadSmartPlanner();
+  const links = planner.__test.inferAssignmentResourceLinks({
+    description: 'Accept the starter repo at https://classroom.github.com/a/CS61B-Proj2 before submitting to Gradescope.'
+  });
+
+  assert.deepEqual(JSON.parse(JSON.stringify(links)), [
+    { label: 'GitHub Classroom', url: 'https://classroom.github.com/a/CS61B-Proj2' }
+  ]);
+});
+
 test('SmartPlanner inferAssignmentResourceLinks recognizes classroom launch URLs', () => {
   const planner = loadSmartPlanner();
   const links = planner.__test.inferAssignmentResourceLinks({
