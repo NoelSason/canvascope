@@ -1967,6 +1967,35 @@ test('SmartPlanner buildWorkloadTimeline buckets upcoming deadlines by local day
   assert.equal(timeline[2].load, 'empty');
 });
 
+test('SmartPlanner buildWorkloadRiskSummary flags overloaded weeks for earlier prep', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00').getTime();
+  const risks = planner.__test.buildWorkloadRiskSummary([
+    { title: 'Final project milestone', description: '100 points implementation report and presentation', ts: new Date('2026-07-10T18:00:00-07:00').getTime() },
+    { title: 'Midterm exam', description: 'Study guide and practice exam', ts: new Date('2026-07-10T20:00:00-07:00').getTime() },
+    { title: 'Lab practical', description: 'Lab practical technique stations', ts: new Date('2026-07-11T15:00:00-07:00').getTime() },
+    { title: 'Capstone checkpoint', description: 'Project implementation checkpoint', ts: new Date('2026-07-11T18:00:00-07:00').getTime() }
+  ], now, 3);
+
+  assert.match(risks.join(' | '), /about \d+(?:\.\d)?h across 2 deadlines/);
+  assert.ok(risks.includes('2 heavy days in the next 3 days'));
+  assert.ok(risks.includes('back-to-back heavy deadline days; pull prep earlier'));
+  assert.match(risks.join(' | '), /high-effort items/);
+});
+
+test('SmartPlanner buildPlannerPrompt includes workload risk flags', () => {
+  const planner = loadSmartPlanner();
+  const prompt = planner.__test.buildPlannerPrompt([
+    { title: 'Final project milestone', description: '100 points implementation report and presentation', ts: new Date('2026-07-10T18:00:00-07:00').getTime() },
+    { title: 'Midterm exam', description: 'Study guide and practice exam', ts: new Date('2026-07-10T20:00:00-07:00').getTime() },
+    { title: 'Lab practical', description: 'Lab practical technique stations', ts: new Date('2026-07-11T15:00:00-07:00').getTime() },
+    { title: 'Capstone checkpoint', description: 'Project implementation checkpoint', ts: new Date('2026-07-11T18:00:00-07:00').getTime() }
+  ], new Date('2026-07-10T10:00:00-07:00'));
+
+  assert.match(prompt, /7-day workload risk flags:/);
+  assert.match(prompt, /pull preparation earlier/);
+});
+
 test('SmartPlanner inferSubmissionStatusFlags detects Canvas submission states', () => {
   const planner = loadSmartPlanner();
   const now = new Date('2026-07-10T10:00:00-07:00').getTime();
