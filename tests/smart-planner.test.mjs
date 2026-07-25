@@ -1161,6 +1161,16 @@ test('SmartPlanner inferSocraticStudyHints catches answer-withholding AI tutor w
   assert.deepEqual(Array.from(hints), ['prefer hints over solutions', 'require learner attempt first']);
 });
 
+test('SmartPlanner inferSocraticStudyHints recognizes guided-learning study modes', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferSocraticStudyHints({
+    title: 'Gemini Guided Learning review',
+    description: 'Use guided learning with Khanmigo-style coaching so the tutor asks hints instead of giving final answers.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['prefer hints over solutions']);
+});
+
 test('SmartPlanner buildPlannerPrompt includes teach-back hints for active recall', () => {
   const planner = loadSmartPlanner();
   const now = new Date('2026-07-10T10:00:00-07:00');
@@ -1958,6 +1968,24 @@ test('SmartPlanner buildPlannerPrompt includes AI study session setup hints', ()
   ], new Date('2026-07-10T10:00:00-07:00'));
 
   assert.match(prompt, /AI study session: start with learning goal, attach source packet, choose study artifact/);
+});
+
+test('SmartPlanner guided-learning prompts keep current AI study sessions grounded', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00');
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'Guided Learning final review',
+      courseName: 'Biology',
+      ts: new Date('2026-07-12T18:00:00-07:00').getTime(),
+      description: 'Use Gemini Guided Learning or Khanmigo with lecture slides and transcript citations to make a personalized study plan.'
+    }
+  ], now);
+
+  assert.match(prompt, /Socratic tutor mode: prefer hints over solutions/);
+  assert.match(prompt, /AI study session: start with learning goal, attach source packet/);
+  assert.match(prompt, /NotebookLM study plan: create source-grounded study plan, bundle textbook and lecture notes/);
+  assert.match(prompt, /AI source boundaries: separate source facts from AI hints, keep citation trail/);
 });
 
 test('SmartPlanner inferConceptMapBridgeHints detects source-backed topic mapping', () => {

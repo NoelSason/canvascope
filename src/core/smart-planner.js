@@ -629,7 +629,7 @@
     if (/\b(stuck|blocked|confus(?:ed|ing|ion)|unclear|don'?t understand|wrong answer|failed attempt|not working)\b/.test(source)) {
       add('diagnose misconception before answer');
     }
-    if (/\b(ai tutor|tutor|chatgpt|copilot|llm|study mode|assistant|office hours|ta\b)\b/.test(source)) {
+    if (/\b(ai tutor|tutor|chatgpt|copilot|llm|study mode|guided learning|learning coach|khanmigo|assistant|office hours|ta\b)\b/.test(source)) {
       add('prefer hints over solutions');
     }
     if (/\b(answer key|solutions?|spoilers?|academic integrity|unauthorized assistance|allowed tools?)\b/.test(source)) {
@@ -1982,7 +1982,7 @@
     const hints = [];
     const add = (label) => { if (!hints.includes(label)) hints.push(label); };
 
-    if (/\b(ai tutor|study mode|study session|chatgpt|claude|gemini|notebooklm|llm|assistant|agent(?:ic)? tutor)\b/.test(source)) {
+    if (/\b(ai tutor|study mode|guided learning|learning coach|study session|chatgpt|claude|gemini|notebooklm|khanmigo|llm|assistant|agent(?:ic)? tutor)\b/.test(source)) {
       add('start with learning goal');
     }
     if (/\b(lecture|slides?|notes?|transcript|reading|chapter|paper|article|rubric|prompt|assignment page|source packet)\b/.test(source)) {
@@ -2045,7 +2045,7 @@
     const hints = [];
     const add = (label) => { if (!hints.includes(label)) hints.push(label); };
 
-    if (/\b(notebooklm|gemini|ai study plan|personalized study plan|study plan|learning guide)\b/.test(source)) {
+    if (/\b(notebooklm|gemini|guided learning|ai study plan|personalized study plan|study plan|learning guide|learning coach)\b/.test(source)) {
       add('create source-grounded study plan');
     }
     if (/\b(textbooks?|lecture notes?|slides?|transcripts?|readings?|chapters?|source packet|uploaded sources?|course materials?)\b/.test(source)) {
@@ -2220,7 +2220,7 @@
     const hints = [];
     const add = (label) => { if (!hints.includes(label)) hints.push(label); };
 
-    if (/\b(ai tutor|study mode|chatgpt|claude|gemini|notebooklm|coconote|quizlet|knowt|studyfetch|perplexity|scispace|elicit|scholarcy|copilot|llm|assistant|agent(?:ic)? tutor)\b/.test(source)) {
+    if (/\b(ai tutor|study mode|guided learning|learning coach|chatgpt|claude|gemini|notebooklm|coconote|quizlet|knowt|studyfetch|khanmigo|perplexity|scispace|elicit|scholarcy|copilot|llm|assistant|agent(?:ic)? tutor)\b/.test(source)) {
       add('separate source facts from AI hints');
     }
     if (/\b(transcript|summary|summar(?:y|ize|ise)|notes?|lecture capture|record(?:ing)?|slides?|reading|paper|article|source packet|source-grounded|grounded answer|citation(?:s)?|cited answer|inline evidence)\b/.test(source)) {
