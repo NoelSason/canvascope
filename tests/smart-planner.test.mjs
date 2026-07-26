@@ -3539,6 +3539,46 @@ test('SmartPlanner buildDeadlineStudyPack preserves source metadata for AI study
   assert.match(pack.markdown, /Review schedule:\n- today: answer from memory, then verify source/);
 });
 
+test('SmartPlanner summarizePriorityFilters builds dashboard filter counts', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00').getTime();
+  const counts = planner.__test.summarizePriorityFilters([
+    {
+      title: 'CS project milestone',
+      courseName: 'CS 61B',
+      ts: new Date('2026-07-09T18:00:00-07:00').getTime(),
+      description: 'Submit GitHub repo and pytest output.',
+      missing: true
+    },
+    {
+      title: 'Reading check-in',
+      courseName: 'History 10',
+      ts: new Date('2026-07-11T09:00:00-07:00').getTime(),
+      description: 'Short discussion post.'
+    },
+    {
+      title: 'Submitted lab',
+      courseName: 'CSE 110',
+      ts: new Date('2026-07-12T09:00:00-07:00').getTime(),
+      submission: { workflow_state: 'submitted', submitted_at: '2026-07-10T08:00:00-07:00' }
+    },
+    {
+      title: 'Optional club task'
+    }
+  ], now);
+
+  assert.deepEqual(JSON.parse(JSON.stringify(counts)), {
+    overdue: 1,
+    dueSoon: 1,
+    submitted: 1,
+    noDueDate: 1,
+    later: 0,
+    csWorkflow: 2,
+    needsAttention: 1
+  });
+  assert.equal(planner.__test.formatPriorityFilterSummary(counts), 'Needs attention 1 · Overdue 1 · Due soon 1 · CS/lab 2 · Submitted 1');
+});
+
 test('SmartPlanner buildTodayCourseBrief summarizes urgent Canvas workload with next actions', () => {
   const planner = loadSmartPlanner();
   const brief = planner.__test.buildTodayCourseBrief([
@@ -3568,6 +3608,7 @@ test('SmartPlanner buildTodayCourseBrief summarizes urgent Canvas workload with 
   assert.equal(brief.highLeverage[0].title, 'Final graph project milestone');
   assert.equal(brief.highLeverage[0].estimatedMinutes, 270);
   assert.match(brief.markdown, /# Canvascope Today Brief/);
+  assert.match(brief.markdown, /Priority filters: Needs attention 1 · Overdue 0 · Due soon 2 · CS\/lab 1 · Submitted 0/);
   assert.match(brief.markdown, /CS 61B: Final graph project milestone/);
   assert.match(brief.markdown, /Watch: large point value, submission check/);
 });
