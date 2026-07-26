@@ -333,7 +333,8 @@
     const requiredFilenames = inferRequiredFilenames(item);
     if (requiredFilenames.length) add(`submit exact file${requiredFilenames.length > 1 ? 's' : ''}: ${requiredFilenames.join(', ')}`);
 
-    if (/\b(github|git\b|commit|push|pull request|repo(?:sitory)?|branch)\b/.test(source)) add('push repo');
+    if (/\b(github|git\b|commit|push|repo(?:sitory)?|branch)\b/.test(source)) add('push repo');
+    if (/\b(pull request|pr\b|merge request|reviewer approval|review comments?)\b/.test(source)) add('open pull request');
     if (/\b(jupyter|notebook|\.ipynb\b|colab|r markdown|rmarkdown|observable notebook)\b/.test(source)) add('run notebook top-to-bottom');
     if (/\b(gradescope|autograder|auto[- ]?grader|submitty|codegrade)\b/.test(source)) add('submit autograder');
     if (/\b(readme|write[- ]?up|report|reflection|design doc|implementation notes?)\b/.test(source)) add('attach write-up');

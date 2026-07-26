@@ -321,6 +321,16 @@ test('SmartPlanner inferSubmissionChecklist adds AI source verification for stud
   assert.ok(checklist.includes('verify AI study output against source'));
 });
 
+test('SmartPlanner inferSubmissionChecklist distinguishes pull request submissions', () => {
+  const planner = loadSmartPlanner();
+  const checklist = planner.__test.inferSubmissionChecklist({
+    title: 'Parser PR review',
+    description: 'Commit parser changes, open a pull request, request reviewer approval, and submit the PR link.'
+  });
+
+  assert.deepEqual(JSON.parse(JSON.stringify(checklist)), ['push repo', 'open pull request']);
+});
+
 test('SmartPlanner inferSubmissionChecklist adds execution checks for notebook assignments', () => {
   const planner = loadSmartPlanner();
   const checklist = planner.__test.inferSubmissionChecklist({
