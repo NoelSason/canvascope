@@ -297,6 +297,20 @@ test('SmartPlanner buildAssignmentBriefMarkdown creates a copyable sourced assig
   assert.match(brief, /Questions to ask or self-test:/);
 });
 
+test('SmartPlanner inferRequiredFilenames extracts exact submission files', () => {
+  const planner = loadSmartPlanner();
+  const item = {
+    title: 'Programming lab',
+    description: 'Submit `Main.java`, upload README.md, and include results.json before the lock date.'
+  };
+
+  assert.deepEqual(JSON.parse(JSON.stringify(planner.__test.inferRequiredFilenames(item))), ['Main.java', 'README.md', 'results.json']);
+  assert.deepEqual(JSON.parse(JSON.stringify(planner.__test.inferSubmissionChecklist(item).slice(0, 2))), [
+    'submit exact files: Main.java, README.md, results.json',
+    'attach write-up'
+  ]);
+});
+
 test('SmartPlanner inferSubmissionChecklist adds AI source verification for study tools', () => {
   const planner = loadSmartPlanner();
   const checklist = planner.__test.inferSubmissionChecklist({
