@@ -563,6 +563,23 @@ test('SmartPlanner inferConceptReviewHints detects CS weak-spot topics', () => {
   assert.deepEqual(Array.from(hints), ['concurrency pitfalls', 'memory model']);
 });
 
+test('SmartPlanner inferCodeDebugHints captures language/runtime context for explain-my-error workflows', () => {
+  const planner = loadSmartPlanner();
+  const pythonHints = planner.__test.inferCodeDebugHints({
+    title: 'Python pytest failure',
+    description: 'Traceback shows ModuleNotFoundError while running pytest in the terminal.'
+  });
+  assert.ok(pythonHints.includes('explain error'));
+  assert.ok(pythonHints.includes('capture Python runtime context'));
+  assert.ok(pythonHints.includes('verify commands'));
+
+  const nativeHints = planner.__test.inferCodeDebugHints({
+    title: 'C++ segfault lab',
+    description: 'Use g++ and AddressSanitizer to debug the segmentation fault.'
+  });
+  assert.ok(nativeHints.includes('capture native runtime context'));
+});
+
 test('SmartPlanner inferWeakConceptBacklogHints turns confusion and misses into review actions', () => {
   const planner = loadSmartPlanner();
   const hints = planner.__test.inferWeakConceptBacklogHints({
@@ -2228,7 +2245,7 @@ test('SmartPlanner inferCodeDebugHints detects explicit code and error workflows
     description: 'Fix the TypeError stack trace, rerun npm test, and explain the async endpoint flow.'
   });
 
-  assert.deepEqual(Array.from(hints), ['explain error', 'write debug notes', 'trace API flow']);
+  assert.deepEqual(Array.from(hints), ['explain error', 'capture JS runtime context', 'write debug notes', 'trace API flow']);
 });
 
 test('SmartPlanner buildPlannerPrompt includes code/debug hints', () => {
@@ -2242,7 +2259,7 @@ test('SmartPlanner buildPlannerPrompt includes code/debug hints', () => {
     }
   ], new Date('2026-07-10T10:00:00-07:00'));
 
-  assert.match(prompt, /code\/debug: explain error, write debug notes, trace API flow/);
+  assert.match(prompt, /code\/debug: explain error, capture Python runtime context, write debug notes, trace API flow/);
 });
 
 test('SmartPlanner inferMinimalReproHints prepares AI and TA debugging handoffs', () => {

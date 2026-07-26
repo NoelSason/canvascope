@@ -800,11 +800,15 @@
     if (/```|\b(stack trace|traceback|exception|segfault|null pointer|undefined is not|typeerror|syntaxerror|referenceerror|assertion(?: failed)?|failing tests?)\b/i.test(source)) {
       add('explain error');
     }
+    if (/\b(python|py\b|pytest|traceback|indentationerror|importerror|module(?:notfound)?error)\b/.test(lower)) add('capture Python runtime context');
+    if (/\b(java|javac|junit|nullpointerexception|classnotfoundexception|gradle|maven)\b/.test(lower)) add('capture Java runtime context');
+    if (/\b(c\+\+|cpp\b|g\+\+|clang|segfault|segmentation fault|addresssanitizer|asan|valgrind)\b/.test(lower)) add('capture native runtime context');
+    if (/\b(javascript|typescript|js\b|ts\b|node|npm|promise|async|await|typeerror|referenceerror)\b/.test(lower)) add('capture JS runtime context');
     if (/\b(debug|bug|fix|failing|failure|regression|test failure|red test|flaky)\b/.test(lower)) add('write debug notes');
     if (/\b(api|endpoint|sdk|library|framework|hooks?|promise|async|await|component|state|props)\b/.test(lower)) add('trace API flow');
     if (/\b(cli|terminal|shell|command line|npm|pip|pytest|node|git|docker|make)\b/.test(lower)) add('verify commands');
 
-    return hints.slice(0, 3);
+    return hints.slice(0, 4);
   }
 
   function inferMinimalReproHints(item) {
