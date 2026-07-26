@@ -3710,3 +3710,32 @@ test('SmartPlanner buildPlannerPrompt includes revision loop hints', () => {
 
   assert.match(prompt, /revision loop: compare feedback to rubric, list lost-point causes, write revision memo/);
 });
+
+test('SmartPlanner inferSourceLinkedReviewCardHints detects source-anchored flashcard workflows', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferSourceLinkedReviewCardHints({
+    title: 'Lecture flashcards with citations',
+    description: 'Create review cards from PDF highlights and transcript timestamps; include question/answer sides and tag confusing weak spots.'
+  });
+
+  assert.deepEqual(Array.from(hints), [
+    'keep source anchor on each card',
+    'split prompt and answer cleanly',
+    'tag weak-concept cards'
+  ]);
+});
+
+test('SmartPlanner buildPlannerPrompt includes source-linked review card hints', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00');
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'NotebookLM flashcard export',
+      courseName: 'CS 188',
+      ts: new Date('2026-07-12T18:00:00-07:00').getTime(),
+      description: 'Turn lecture slides and PDF highlights into flashcards with citations and clean question answer pairs.'
+    }
+  ], now);
+
+  assert.match(prompt, /source-linked review cards: keep source anchor on each card, split prompt and answer cleanly/);
+});
