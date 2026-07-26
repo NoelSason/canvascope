@@ -3477,6 +3477,39 @@ test('SmartPlanner buildDeadlineStudyPack preserves source metadata for AI study
   assert.match(pack.markdown, /Review schedule:\n- today: answer from memory, then verify source/);
 });
 
+test('SmartPlanner buildTodayCourseBrief summarizes urgent Canvas workload with next actions', () => {
+  const planner = loadSmartPlanner();
+  const brief = planner.__test.buildTodayCourseBrief([
+    {
+      title: 'Final graph project milestone',
+      courseName: 'CS 61B',
+      ts: new Date('2026-07-12T18:00:00-07:00').getTime(),
+      description: '100 points. Submit GitHub repo, README write-up, and tests on Gradescope.'
+    },
+    {
+      title: 'Reading check-in',
+      courseName: 'History 10',
+      ts: new Date('2026-07-11T09:00:00-07:00').getTime(),
+      description: 'Short discussion post.'
+    },
+    {
+      title: 'Done quiz',
+      done: true,
+      ts: new Date('2026-07-11T09:00:00-07:00').getTime()
+    }
+  ], new Date('2026-07-10T10:00:00-07:00'));
+
+  assert.equal(brief.generatedAt, '2026-07-10T17:00:00.000Z');
+  assert.equal(brief.dueSoonCount, 2);
+  assert.equal(brief.overdueCount, 0);
+  assert.equal(brief.highLeverage.length, 1);
+  assert.equal(brief.highLeverage[0].title, 'Final graph project milestone');
+  assert.equal(brief.highLeverage[0].estimatedMinutes, 270);
+  assert.match(brief.markdown, /# Canvascope Today Brief/);
+  assert.match(brief.markdown, /CS 61B: Final graph project milestone/);
+  assert.match(brief.markdown, /Watch: large point value, submission check/);
+});
+
 test('SmartPlanner buildStudyPackReviewSchedule adapts to exam and overdue timing', () => {
   const planner = loadSmartPlanner();
 

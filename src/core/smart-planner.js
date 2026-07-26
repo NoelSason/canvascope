@@ -229,9 +229,65 @@
     return lines.filter(Boolean).join('\n');
   }
 
+  function normalizeBriefDate(now = new Date()) {
+    return now && typeof now.getTime === 'function' && Number.isFinite(now.getTime()) ? now : new Date();
+  }
+
+  function buildTodayCourseBrief(items, now = new Date()) {
+    const generatedDate = normalizeBriefDate(now);
+    const generatedAt = generatedDate.toISOString();
+    const nowMs = generatedDate.getTime();
+    const sourceItems = (Array.isArray(items) ? items : [items]).filter(Boolean)
+      .map((item, index) => ({
+        ...item,
+        _index: index,
+        ts: Number(item.ts || (item.dueAt && new Date(item.dueAt).getTime()))
+      }))
+      .filter(item => Number.isFinite(item.ts) && !item.done)
+      .sort((a, b) => a.ts - b.ts || a._index - b._index);
+
+    const dueSoon = sourceItems.filter(item => item.ts >= nowMs - MS_DAY && item.ts <= nowMs + 7 * MS_DAY);
+    const overdue = sourceItems.filter(item => item.ts < nowMs);
+    const highLeverage = dueSoon
+      .filter(item => classifyDeadline(item, nowMs).effort === 'high' || inferPlannerRiskFlags(item, dueSoon, nowMs).length)
+      .slice(0, 5)
+      .map(item => {
+        const risks = inferPlannerRiskFlags(item, dueSoon, nowMs);
+        const firstAction = recommendNextStudyAction(item, nowMs);
+        return {
+          title: String(item.title || 'Canvas item').trim(),
+          course: String(item.courseName || item.course || '').trim(),
+          dueAt: new Date(item.ts).toISOString(),
+          estimatedMinutes: inferEstimatedWorkMinutes(item, nowMs),
+          risks,
+          firstAction
+        };
+      });
+
+    const markdown = [
+      '# Canvascope Today Brief',
+      '',
+      `Generated: ${generatedAt}`,
+      '',
+      `Due this week: ${dueSoon.length}`,
+      overdue.length ? `Overdue: ${overdue.length}` : '',
+      '',
+      highLeverage.length ? '## High-leverage next actions' : '## High-leverage next actions',
+      ...(highLeverage.length ? highLeverage.flatMap(item => [
+        `- ${item.course ? `${item.course}: ` : ''}${item.title}`,
+        `  - Due: ${item.dueAt}`,
+        `  - Estimate: ${item.estimatedMinutes}m`,
+        item.firstAction ? `  - First action: ${item.firstAction}` : '',
+        item.risks.length ? `  - Watch: ${item.risks.join(', ')}` : ''
+      ].filter(Boolean)) : ['- No urgent high-risk Canvas items detected.'])
+    ].filter(line => line !== '').join('\n');
+
+    return { generatedAt, dueSoonCount: dueSoon.length, overdueCount: overdue.length, highLeverage, markdown };
+  }
+
   function buildDeadlineStudyPack(items, now = new Date()) {
     const sourceItems = (Array.isArray(items) ? items : [items]).filter(Boolean);
-    const generatedAt = now && typeof now.getTime === 'function' && Number.isFinite(now.getTime()) ? now.toISOString() : new Date().toISOString();
+    const generatedAt = normalizeBriefDate(now).toISOString();
     const cards = sourceItems.slice(0, 20).map((item, index) => {
       const dueTs = Number(item.ts || (item.dueAt && new Date(item.dueAt).getTime()));
       const title = String(item.title || `Canvas item ${index + 1}`).trim();
@@ -3379,6 +3435,6 @@
     init,
     refresh,
     draftWeek,
-    __test: { classifyDeadline, inferEstimatedWorkMinutes, compactDeadlineText, inferRequiredFilenames, buildAssignmentBriefMarkdown, buildDeadlineStudyPack, buildStudyPackReviewSchedule, inferAssignmentResourceLinks, getSubmissionSnapshot, classifyActionBucket, getAssignmentPointValue, inferSubmissionChecklist, inferConceptReviewHints, inferActiveRecallQuestions, inferWeakConceptBacklogHints, inferGradeImpactHints, inferSubmissionStatusFlags, inferPlannerRiskFlags, inferStudyPhases, inferExecutionPlanHints, inferLearningStrategyHints, inferFocusSprintHints, inferEnergyAwareSessionHints, inferPracticeArtifactHints, inferRetrievalCalibrationHints, inferSocraticStudyHints, inferTeachBackHints, inferAcademicIntegrityHints, inferPrivacyConsentHints, inferAccessibilityStudyHints, inferCodeDebugHints, inferMinimalReproHints, inferAutograderFeedbackHints, inferRubricFeedbackDigest, inferOfficeHoursPrepHints, inferCollaborationHandoffHints, inferLectureCaptureHints, inferLectureActionChecklistHints, inferSourceCoverageAuditHints, inferAiNoteQualityAuditHints, inferConfusionCaptureHints, inferAudioReviewHints, inferTranscriptStudyGuideHints, inferMultimodalStudyAssetHints, inferSourceGroundingHints, inferEvidencePackHints, inferTutorContextPackHints, inferFeedbackLoopHints, inferPortabilityBackupHints, inferStudyWrapUpHints, inferRubricScoringHints, inferPreSubmitVerificationHints, inferSubmissionReceiptHints, inferAvailabilityWindowHints, inferNotebookStudyPackHints, inferStudyPackArtifactHints, inferThreeTwoOneReviewHints, inferReadingTriageHints, inferLectureQuestionQueueHints, inferAiHandoffHints, inferCsWorkflowHints, inferCommandSnippetHints, inferAssignmentSpecExtractionHints, inferMilestoneDecompositionHints, inferRequirementClarificationHints, inferActivePracticeLoopHints, inferInterleavedPracticeHints, inferMetacognitiveCalibrationHints, inferSpacedReviewPlan, inferExamCountdownHints, inferExamConstraintHints, inferExamSignalHints, inferPeerStudyAccountabilityHints, inferRecurringRoutineHints, inferTimeEstimateCalibrationHints, inferBlockedDependencyHints, inferWorkedExampleHints, inferEvidenceConfidenceHints, inferChangeAwarenessHints, inferSpecDeltaHints, inferQuestionBankHints, inferAiQuizGenerationHints, inferFreshnessGuardHints, inferDueDateAmbiguityHints, inferNextClassPrepHints, formatPlannerDueLabel, inferDueDateConfidenceLabel, inferHiddenDeadlineHints, inferAiStudySessionSetupHints, inferPersonalizedMemoryHints, inferErrorNotebookHints, inferNotebookLmStudyPlanHints, inferConceptMapBridgeHints, inferFirstStudyStepHints, inferStudyRecoveryHints, inferCalendarConflictHints, inferAssignmentQuestionQueueHints, inferQuestionFirstNoteHints, inferMissedLectureCatchUpHints, inferAiSourceBoundaryHints, inferLiveStudyModeHints, inferLectureChapteringHints, inferLectureEmphasisHints, inferDiscussionReplyPrepHints, inferRubricRevisionLoopHints, inferAmbiguousAssignmentTitleHints, recommendTopStudyActions, recommendNextStudyAction, buildWorkloadTimeline, buildWorkloadRiskSummary, renderDeadlineList, buildPlannerPrompt, extractJsonArray, nextStudyWindowStart, findRelevantDeadlineForBlock, normalizeStudyBlocks, buildFallbackStudyBlocks, toLocalInputValue }
+    __test: { classifyDeadline, inferEstimatedWorkMinutes, compactDeadlineText, inferRequiredFilenames, buildAssignmentBriefMarkdown, buildTodayCourseBrief, buildDeadlineStudyPack, buildStudyPackReviewSchedule, inferAssignmentResourceLinks, getSubmissionSnapshot, classifyActionBucket, getAssignmentPointValue, inferSubmissionChecklist, inferConceptReviewHints, inferActiveRecallQuestions, inferWeakConceptBacklogHints, inferGradeImpactHints, inferSubmissionStatusFlags, inferPlannerRiskFlags, inferStudyPhases, inferExecutionPlanHints, inferLearningStrategyHints, inferFocusSprintHints, inferEnergyAwareSessionHints, inferPracticeArtifactHints, inferRetrievalCalibrationHints, inferSocraticStudyHints, inferTeachBackHints, inferAcademicIntegrityHints, inferPrivacyConsentHints, inferAccessibilityStudyHints, inferCodeDebugHints, inferMinimalReproHints, inferAutograderFeedbackHints, inferRubricFeedbackDigest, inferOfficeHoursPrepHints, inferCollaborationHandoffHints, inferLectureCaptureHints, inferLectureActionChecklistHints, inferSourceCoverageAuditHints, inferAiNoteQualityAuditHints, inferConfusionCaptureHints, inferAudioReviewHints, inferTranscriptStudyGuideHints, inferMultimodalStudyAssetHints, inferSourceGroundingHints, inferEvidencePackHints, inferTutorContextPackHints, inferFeedbackLoopHints, inferPortabilityBackupHints, inferStudyWrapUpHints, inferRubricScoringHints, inferPreSubmitVerificationHints, inferSubmissionReceiptHints, inferAvailabilityWindowHints, inferNotebookStudyPackHints, inferStudyPackArtifactHints, inferThreeTwoOneReviewHints, inferReadingTriageHints, inferLectureQuestionQueueHints, inferAiHandoffHints, inferCsWorkflowHints, inferCommandSnippetHints, inferAssignmentSpecExtractionHints, inferMilestoneDecompositionHints, inferRequirementClarificationHints, inferActivePracticeLoopHints, inferInterleavedPracticeHints, inferMetacognitiveCalibrationHints, inferSpacedReviewPlan, inferExamCountdownHints, inferExamConstraintHints, inferExamSignalHints, inferPeerStudyAccountabilityHints, inferRecurringRoutineHints, inferTimeEstimateCalibrationHints, inferBlockedDependencyHints, inferWorkedExampleHints, inferEvidenceConfidenceHints, inferChangeAwarenessHints, inferSpecDeltaHints, inferQuestionBankHints, inferAiQuizGenerationHints, inferFreshnessGuardHints, inferDueDateAmbiguityHints, inferNextClassPrepHints, formatPlannerDueLabel, inferDueDateConfidenceLabel, inferHiddenDeadlineHints, inferAiStudySessionSetupHints, inferPersonalizedMemoryHints, inferErrorNotebookHints, inferNotebookLmStudyPlanHints, inferConceptMapBridgeHints, inferFirstStudyStepHints, inferStudyRecoveryHints, inferCalendarConflictHints, inferAssignmentQuestionQueueHints, inferQuestionFirstNoteHints, inferMissedLectureCatchUpHints, inferAiSourceBoundaryHints, inferLiveStudyModeHints, inferLectureChapteringHints, inferLectureEmphasisHints, inferDiscussionReplyPrepHints, inferRubricRevisionLoopHints, inferAmbiguousAssignmentTitleHints, recommendTopStudyActions, recommendNextStudyAction, buildWorkloadTimeline, buildWorkloadRiskSummary, renderDeadlineList, buildPlannerPrompt, extractJsonArray, nextStudyWindowStart, findRelevantDeadlineForBlock, normalizeStudyBlocks, buildFallbackStudyBlocks, toLocalInputValue }
   };
 })();
