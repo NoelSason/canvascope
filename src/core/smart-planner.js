@@ -400,6 +400,9 @@
     if (/\b(ai tutor|ai study|study mode|guided learning|notebooklm|chatgpt|claude|gemini|perplexity|quizlet|knowt|anki|flashcards?|spaced repetition)\b/.test(source)) {
       add('verify AI study output against source');
     }
+    if (/\b(record(?:ing)?|transcript|transcribe|meeting notes?|lecture capture|audio notes?|voice notes?|notetaker|note[- ]?taker|otter|granola|fireflies|fathom|read\.ai|limitless|plaud|tactiq|notta)\b/.test(source)) {
+      add('confirm recording/transcript policy');
+    }
 
     return checks.slice(0, 5);
   }

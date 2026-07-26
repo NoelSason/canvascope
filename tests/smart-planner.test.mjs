@@ -314,11 +314,19 @@ test('SmartPlanner inferRequiredFilenames extracts exact submission files', () =
 test('SmartPlanner inferSubmissionChecklist adds AI source verification for study tools', () => {
   const planner = loadSmartPlanner();
   const checklist = planner.__test.inferSubmissionChecklist({
-    title: 'Final exam study pack',
-    description: 'Use ChatGPT study mode, NotebookLM, and Anki spaced repetition flashcards, then compare every answer with the official slides.'
+    description: 'Use NotebookLM to create an AI study guide, then practice flashcards.'
   });
 
   assert.ok(checklist.includes('verify AI study output against source'));
+});
+
+test('SmartPlanner inferSubmissionChecklist flags lecture transcript policy checks', () => {
+  const planner = loadSmartPlanner();
+  const checklist = planner.__test.inferSubmissionChecklist({
+    description: 'Upload the Granola lecture transcript and recording notes before discussion section.'
+  });
+
+  assert.ok(checklist.includes('confirm recording/transcript policy'));
 });
 
 test('SmartPlanner inferSubmissionChecklist distinguishes pull request submissions', () => {
