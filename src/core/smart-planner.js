@@ -369,9 +369,9 @@
       else if (/gradescope\.com|submitty|codegrade|autograder/.test(lower)) add('autograder', url);
       else if (/canvas\.instructure\.com|instructure\.com\/courses\//.test(lower)) add('canvas', url);
       else if (/edstem\.org|piazza\.com|campuswire\.com/.test(lower)) add('discussion/help', url);
-      else if (/chatgpt\.com|claude\.ai|gemini\.google\.com|aistudio\.google\.com|perplexity\.ai|khanmigo\.ai/.test(lower)) add('ai tutor', url);
-      else if (/notebooklm\.google\.com|illuminate\.google\.com|quizlet\.com|coconote\.app|notion\.(?:so|com)|knowt\.com|studyfetch\.com|turbolearn\.ai|mindgrasp\.ai|studyx\.ai|gizmo\.ai|brainscape\.com|remnote\.com|raena\.ai/.test(lower)) add('ai study guide', url);
-      else if (/otter\.ai|granola\.ai|fireflies\.ai|fathom\.video|read\.ai|recall\.ai|tldv\.io|supernormal\.com|plaud\.ai|limitless\.ai|tactiq\.io|meetgeek\.ai|circleback\.ai|notta\.ai|jamie\.ai|sembly\.ai|wisprflow\.ai|mem\.ai/.test(lower)) add('ai notes/transcript', url);
+      else if (/chatgpt\.com|claude\.ai|gemini\.google\.com|aistudio\.google\.com|perplexity\.ai|khanmigo\.ai|cursor\.com|windsurf\.com|replit\.com\/agent/.test(lower)) add('ai tutor', url);
+      else if (/notebooklm\.google\.com|illuminate\.google\.com|quizlet\.com|coconote\.app|notion\.(?:so|com)|knowt\.com|studyfetch\.com|turbolearn\.ai|mindgrasp\.ai|studyx\.ai|gizmo\.ai|brainscape\.com|remnote\.com|raena\.ai|studyable\.app|penseum\.com|monic\.ai|studyable\.ai/.test(lower)) add('ai study guide', url);
+      else if (/otter\.ai|granola\.ai|fireflies\.ai|fathom\.video|read\.ai|recall\.ai|tldv\.io|supernormal\.com|plaud\.ai|limitless\.ai|tactiq\.io|meetgeek\.ai|circleback\.ai|notta\.ai|jamie\.ai|sembly\.ai|wisprflow\.ai|mem\.ai|notion\.com\/product\/ai-meeting-notes/.test(lower)) add('ai notes/transcript', url);
       else if (/napkin\.ai|mapify\.so|miro\.com|whimsical\.com/.test(lower)) add('concept map', url);
       else if (/youtube\.com|youtu\.be|vimeo\.com|panopto\.|kaltura\.|\/kaltura\/|mediasite\.|echo360\./.test(lower)) add('lecture/video', url);
       else if (/classroom\.google\.com/.test(lower)) add('classroom', url);
@@ -769,7 +769,7 @@
     if (/\b(ai tutor|tutor|chatgpt|copilot|llm|study mode|guided learning|learning coach|khanmigo|assistant|office hours|ta\b)\b/.test(source)) {
       add('prefer hints over solutions');
     }
-    if (/\b(answer key|solutions?|spoilers?|academic integrity|unauthorized assistance|allowed tools?)\b/.test(source)) {
+    if (/\b(answer key|solutions?|spoilers?|academic integrity|unauthorized assistance|allowed tools?|do my (?:assignment|homework)|write the whole solution|give me the answer|complete this homework|submit[- ]?ready)\b/.test(source)) {
       add('avoid answer dumping');
     }
     if (/\b(attempt first|show (?:my )?work|scratch work|worked attempt|initial attempt|no direct answers?|refuse(?:s)? to give answers?|don'?t give answers?|without giving answers?|Socratic)\b/.test(source)) {
@@ -797,7 +797,7 @@
     const hints = [];
     const add = (label) => { if (!hints.includes(label)) hints.push(label); };
 
-    if (/\b(ai policy|generative ai|genai|chatgpt|copilot|llm|large language model|allowed tools?|unauthorized assistance)\b/.test(source)) {
+    if (/\b(ai policy|generative ai|genai|chatgpt|copilot|llm|large language model|allowed tools?|unauthorized assistance|do my (?:assignment|homework)|write the whole solution|give me the answer|complete this homework|submit[- ]?ready)\b/.test(source)) {
       add('check AI policy');
     }
     if (/\b(citations?|bibliograph(?:y|ies)|works cited|references?|quote|quoted|sources?|academic integrity|plagiarism|turnitin)\b/.test(source)) {

@@ -522,6 +522,31 @@ test('SmartPlanner inferAssignmentResourceLinks recognizes newer study-guide and
   ]);
 });
 
+test('SmartPlanner inferAssignmentResourceLinks recognizes emerging AI study and coding-assistant domains', () => {
+  const planner = loadSmartPlanner();
+  const links = planner.__test.inferAssignmentResourceLinks({
+    description: 'Compare flashcards in https://studyable.app/course/demo and https://penseum.com/class/demo, then ask for debugging hints in https://cursor.com/agents/project and https://windsurf.com/editor/demo.'
+  });
+
+  assert.deepEqual(JSON.parse(JSON.stringify(links)), [
+    { label: 'ai study guide', url: 'https://studyable.app/course/demo' },
+    { label: 'ai study guide', url: 'https://penseum.com/class/demo' },
+    { label: 'ai tutor', url: 'https://cursor.com/agents/project' },
+    { label: 'ai tutor', url: 'https://windsurf.com/editor/demo' }
+  ]);
+});
+
+test('SmartPlanner integrity heuristics detect submit-ready homework requests', () => {
+  const planner = loadSmartPlanner();
+  const item = {
+    title: 'Homework help',
+    description: 'Use the AI tutor to write the whole solution and make it submit-ready.'
+  };
+
+  assert.ok(planner.__test.inferAcademicIntegrityHints(item).includes('check AI policy'));
+  assert.ok(planner.__test.inferSocraticStudyHints(item).includes('avoid answer dumping'));
+});
+
 test('SmartPlanner inferSpecDeltaHints detects changed assignment instructions', () => {
   const planner = loadSmartPlanner();
   const hints = planner.__test.inferSpecDeltaHints({
