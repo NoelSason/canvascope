@@ -509,6 +509,19 @@ test('SmartPlanner inferAssignmentResourceLinks recognizes current AI study-map 
   ]);
 });
 
+test('SmartPlanner inferAssignmentResourceLinks recognizes newer study-guide and AI notes domains', () => {
+  const planner = loadSmartPlanner();
+  const links = planner.__test.inferAssignmentResourceLinks({
+    description: 'Keep the Notion class study page at https://notion.com/class/study-guide, generate flashcards in https://raena.ai/course/demo, and compare the Mem notes at https://mem.ai/m/class-recap.'
+  });
+
+  assert.deepEqual(JSON.parse(JSON.stringify(links)), [
+    { label: 'ai study guide', url: 'https://notion.com/class/study-guide' },
+    { label: 'ai study guide', url: 'https://raena.ai/course/demo' },
+    { label: 'ai notes/transcript', url: 'https://mem.ai/m/class-recap' }
+  ]);
+});
+
 test('SmartPlanner inferSpecDeltaHints detects changed assignment instructions', () => {
   const planner = loadSmartPlanner();
   const hints = planner.__test.inferSpecDeltaHints({
