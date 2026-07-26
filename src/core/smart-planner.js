@@ -334,6 +334,7 @@
     if (requiredFilenames.length) add(`submit exact file${requiredFilenames.length > 1 ? 's' : ''}: ${requiredFilenames.join(', ')}`);
 
     if (/\b(github|git\b|commit|push|pull request|repo(?:sitory)?|branch)\b/.test(source)) add('push repo');
+    if (/\b(jupyter|notebook|\.ipynb\b|colab|r markdown|rmarkdown|observable notebook)\b/.test(source)) add('run notebook top-to-bottom');
     if (/\b(gradescope|autograder|auto[- ]?grader|submitty|codegrade)\b/.test(source)) add('submit autograder');
     if (/\b(readme|write[- ]?up|report|reflection|design doc|implementation notes?)\b/.test(source)) add('attach write-up');
     if (/\b(test cases?|unit tests?|pytest|npm test|xcodebuild|junit|coverage)\b/.test(source)) add('run tests');

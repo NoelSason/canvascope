@@ -321,6 +321,20 @@ test('SmartPlanner inferSubmissionChecklist adds AI source verification for stud
   assert.ok(checklist.includes('verify AI study output against source'));
 });
 
+test('SmartPlanner inferSubmissionChecklist adds execution checks for notebook assignments', () => {
+  const planner = loadSmartPlanner();
+  const checklist = planner.__test.inferSubmissionChecklist({
+    title: 'Data science Colab lab',
+    description: 'Upload analysis.ipynb after running the Jupyter notebook, exporting plots, and submitting to Gradescope.'
+  });
+
+  assert.deepEqual(JSON.parse(JSON.stringify(checklist.slice(0, 3))), [
+    'submit exact file: analysis.ipynb',
+    'run notebook top-to-bottom',
+    'submit autograder'
+  ]);
+});
+
 test('SmartPlanner inferAssignmentResourceLinks surfaces starter, submission, and AI study URLs', () => {
   const planner = loadSmartPlanner();
   const links = planner.__test.inferAssignmentResourceLinks({
