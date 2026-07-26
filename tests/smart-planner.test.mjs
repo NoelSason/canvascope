@@ -3604,6 +3604,31 @@ test('SmartPlanner inferActiveRecallQuestions falls back to generic source-groun
   ]);
 });
 
+test('SmartPlanner inferStudyModeRoutingHints chooses AI study output modes by source intent', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferStudyModeRoutingHints({
+    title: 'NotebookLM exam prep',
+    description: 'Use uploaded lecture notes and transcript citations to make flashcards, a practice quiz, and an audio overview.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['route to source-grounded Q&A', 'route to flashcard drill', 'route to practice quiz']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes AI study mode routing hints', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00');
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'AI study guide review',
+      courseName: 'CS 188',
+      ts: new Date('2026-07-12T18:00:00-07:00').getTime(),
+      description: 'Use NotebookLM with uploaded slides, transcript citations, flashcards, and a practice quiz before the final.'
+    }
+  ], now);
+
+  assert.match(prompt, /study mode route: route to source-grounded Q&A, route to flashcard drill, route to practice quiz/);
+});
+
 test('SmartPlanner inferRubricRevisionLoopHints detects redo and regrade workflows', () => {
   const planner = loadSmartPlanner();
   const hints = planner.__test.inferRubricRevisionLoopHints({
