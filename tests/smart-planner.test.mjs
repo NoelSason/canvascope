@@ -297,6 +297,22 @@ test('SmartPlanner buildAssignmentBriefMarkdown creates a copyable sourced assig
   assert.match(brief, /Questions to ask or self-test:/);
 });
 
+test('SmartPlanner surfaces Canvas submission modes in assignment briefs', () => {
+  const planner = loadSmartPlanner();
+  const item = {
+    title: 'Project demo submission',
+    submissionTypes: ['online_upload', 'external_tool'],
+    description: 'Upload demo.mp4 and submit the Gradescope link.'
+  };
+
+  assert.deepEqual(JSON.parse(JSON.stringify(planner.__test.inferCanvasSubmissionTypeHints(item))), [
+    'file upload',
+    'external tool',
+    'URL submission'
+  ]);
+  assert.match(planner.__test.buildAssignmentBriefMarkdown(item), /Submission mode: file upload, external tool, URL submission/);
+});
+
 test('SmartPlanner inferRequiredFilenames extracts exact submission files', () => {
   const planner = loadSmartPlanner();
   const item = {
