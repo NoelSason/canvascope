@@ -532,3 +532,33 @@ test('RAGCore prompts add interleaved practice rotations for mixed-topic study r
     mockTabUrl = prevTabUrl;
   }
 });
+
+test('RAGCore prompts add rubric readiness checklists for assignment submissions', async () => {
+  assert.equal(RAGCore.hasRubricChecklistIntent('make a rubric checklist before I submit this project'), true);
+  assert.equal(RAGCore.hasRubricChecklistIntent('did I miss any requirements in this lab submission?'), true);
+  assert.equal(RAGCore.hasRubricChecklistIntent('summarize the reading'), false);
+
+  const prevIndexed = mockStorage.indexedContent;
+  const prevTabUrl = mockTabUrl;
+  mockTabUrl = 'https://google.com';
+  mockStorage.indexedContent = [
+    {
+      title: 'Project 2 spec',
+      courseName: 'CS 61B',
+      type: 'assignment',
+      content: 'Submit design.md, implementation code, tests, and a short reflection. Grading emphasizes correctness, style, and edge-case coverage.'
+    }
+  ];
+
+  try {
+    const compiled = await RAGCore.compileUnifiedPrompt('make a rubric checklist before I submit project 2');
+    assert.match(compiled.prompt, /submit-ready checklist/i);
+    assert.match(compiled.prompt, /required deliverables/i);
+    assert.match(compiled.prompt, /grading criteria/i);
+    assert.match(compiled.prompt, /hidden constraints/i);
+    assert.match(compiled.prompt, /not found in sources/i);
+  } finally {
+    mockStorage.indexedContent = prevIndexed;
+    mockTabUrl = prevTabUrl;
+  }
+});
