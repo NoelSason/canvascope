@@ -3579,6 +3579,38 @@ test('SmartPlanner summarizePriorityFilters builds dashboard filter counts', () 
   assert.equal(planner.__test.formatPriorityFilterSummary(counts), 'Needs attention 1 · Overdue 1 · Due soon 1 · CS/lab 2 · Submitted 1');
 });
 
+test('SmartPlanner summarizeDeadlineClusters highlights crowded high-risk due days', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00').getTime();
+  const clusters = planner.__test.summarizeDeadlineClusters([
+    {
+      title: 'CS project milestone',
+      courseName: 'CS 61B',
+      ts: new Date('2026-07-12T18:00:00-07:00').getTime(),
+      description: '100 points. Submit GitHub repo and Gradescope tests.'
+    },
+    {
+      title: 'Data structures lab',
+      courseName: 'CSE 110',
+      ts: new Date('2026-07-12T20:00:00-07:00').getTime(),
+      description: 'Lab autograder submission.'
+    },
+    {
+      title: 'History reading check-in',
+      courseName: 'History 10',
+      ts: new Date('2026-07-11T09:00:00-07:00').getTime(),
+      description: 'Short discussion post.'
+    }
+  ], now);
+
+  assert.equal(clusters.length, 1);
+  assert.equal(clusters[0].date, '2026-07-13');
+  assert.equal(clusters[0].count, 2);
+  assert.equal(clusters[0].highRisk, 2);
+  assert.equal(clusters[0].csWorkflow, 2);
+  assert.match(clusters[0].summary, /2 due, 2 high-risk, 2 CS\/lab/);
+});
+
 test('SmartPlanner buildTodayCourseBrief summarizes urgent Canvas workload with next actions', () => {
   const planner = loadSmartPlanner();
   const brief = planner.__test.buildTodayCourseBrief([
@@ -3607,8 +3639,11 @@ test('SmartPlanner buildTodayCourseBrief summarizes urgent Canvas workload with 
   assert.equal(brief.highLeverage.length, 1);
   assert.equal(brief.highLeverage[0].title, 'Final graph project milestone');
   assert.equal(brief.highLeverage[0].estimatedMinutes, 270);
+  assert.equal(brief.deadlineClusters.length, 1);
+  assert.match(brief.deadlineClusters[0].summary, /1 due, 1 high-risk, 1 CS\/lab/);
   assert.match(brief.markdown, /# Canvascope Today Brief/);
   assert.match(brief.markdown, /Priority filters: Needs attention 1 · Overdue 0 · Due soon 2 · CS\/lab 1 · Submitted 0/);
+  assert.match(brief.markdown, /Deadline clusters: .*1 due, 1 high-risk, 1 CS\/lab/);
   assert.match(brief.markdown, /CS 61B: Final graph project milestone/);
   assert.match(brief.markdown, /Watch: large point value, submission check/);
 });
