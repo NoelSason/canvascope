@@ -239,6 +239,7 @@
     const excerpt = compactDeadlineText(item, 420);
     const resources = inferAssignmentResourceLinks(item);
     const submissionModes = inferCanvasSubmissionTypeHints(item);
+    const workflowLabels = inferCsWorkflowTypeLabels(item);
     const checklist = inferSubmissionChecklist(item);
     const reviewHints = inferConceptReviewHints(item);
     const recallQuestions = inferActiveRecallQuestions(item, 3);
@@ -250,6 +251,7 @@
       dueAt ? `Due: ${dueAt}` : '',
       sourceName && sourceName.toLowerCase() !== course.toLowerCase() ? `Source: ${sourceName}` : '',
       item?.url ? `Canvas link: ${item.url}` : '',
+      workflowLabels.length ? `Workflow: ${workflowLabels.join(', ')}` : '',
       submissionModes.length ? `Submission mode: ${submissionModes.join(', ')}` : '',
       `Grounding: ${grounding}`,
       excerpt ? `Instructions/notes: ${excerpt}` : '',
@@ -299,6 +301,7 @@
           dueAt: new Date(item.ts).toISOString(),
           estimatedMinutes: inferEstimatedWorkMinutes(item, nowMs),
           nextActionLabel: inferNextActionLabel(item, nowMs),
+          workflowLabels: inferCsWorkflowTypeLabels(item),
           risks,
           firstAction
         };
@@ -319,6 +322,7 @@
         `- ${item.course ? `${item.course}: ` : ''}${item.title}`,
         `  - Due: ${item.dueAt}`,
         `  - Estimate: ${item.estimatedMinutes}m`,
+        item.workflowLabels.length ? `  - Workflow: ${item.workflowLabels.join(', ')}` : '',
         item.nextActionLabel ? `  - Next action: ${item.nextActionLabel}` : '',
         item.firstAction ? `  - First action: ${item.firstAction}` : '',
         item.risks.length ? `  - Watch: ${item.risks.join(', ')}` : ''
@@ -344,6 +348,7 @@
       const generatedFrom = buildGeneratedFromLabel(item, dueAt);
       const groundingConfidence = buildGroundingConfidenceLabel(item, dueAt);
       const reviewSchedule = buildStudyPackReviewSchedule(item, dueAt, generatedAt);
+      const workflowLabels = inferCsWorkflowTypeLabels(item);
       const tags = [
         normalizeStudyPackTag(course),
         ...inferConceptReviewHints({ ...item, ts: dueTs }).map(normalizeStudyPackTag),
@@ -360,6 +365,7 @@
         generatedFrom,
         groundingConfidence,
         citation: citationBits.join(' | '),
+        workflowLabels,
         tags: Array.from(new Set(tags)).slice(0, 6),
         recallQuestions,
         reviewSchedule
@@ -378,6 +384,7 @@
         `Generated from: ${card.generatedFrom}`,
         `Grounding: ${card.groundingConfidence}`,
         card.citation ? `Citation: ${card.citation}` : '',
+        card.workflowLabels.length ? `Workflow: ${card.workflowLabels.join(', ')}` : '',
         card.tags.length ? `Tags: ${card.tags.join(', ')}` : '',
         card.excerpt ? `Notes: ${card.excerpt}` : '',
         card.recallQuestions.length ? 'Recall questions:' : '',
@@ -583,6 +590,22 @@
   function isCsWorkflowItem(item) {
     const source = `${item?.courseName || item?.course || ''} ${item?.title || ''} ${item?.description || item?.text || item?.content || ''}`.toLowerCase();
     return /\b(cs|cse|cis|computer science|programming|coding|code|lab|project|repo(?:sitory)?|github|git\b|pull request|pr\b|autograder|gradescope|submitty|codegrade|pytest|unit tests?|debug(?:ging)?|algorithm|data structure|runtime|big[- ]?o|compiler|database|sql|operating systems?|machine learning|neural network)\b/.test(source);
+  }
+
+  function inferCsWorkflowTypeLabels(item) {
+    const source = `${item?.courseName || item?.course || ''} ${item?.title || ''} ${item?.description || item?.text || item?.content || ''}`.toLowerCase();
+    const labels = [];
+    const add = (label) => { if (label && !labels.includes(label)) labels.push(label); };
+
+    if (/\b(implement(?:ation)?|coding|programming|starter code|repo(?:sitory)?|github|git\b|pull request|pr\b|commit|branch|api|frontend|backend|full[- ]?stack)\b/.test(source)) add('coding');
+    if (/\b(debug(?:ging)?|bug(?:s)?|failing tests?|test cases?|unit tests?|pytest|jest|xcodebuild|junit|coverage|trace|stack trace|minimal repro)\b/.test(source)) add('debug/test');
+    if (/\b(gradescope|autograder|auto[- ]?grader|submitty|codegrade|hidden tests?|public tests?)\b/.test(source)) add('autograder');
+    if (/\b(read(?:ing)?|chapter|lecture|slides?|notes?|transcript|video|paper|article)\b/.test(source)) add('reading/review');
+    if (/\b(quiz|exam|midterm|final|practice exam|study guide|flashcards?|anki|spaced repetition)\b/.test(source)) add('exam prep');
+    if (/\b(write[- ]?up|report|readme|reflection|design doc|implementation notes?|memo|essay|paper)\b/.test(source)) add('write-up');
+    if (/\b(project|milestone|checkpoint|capstone|portfolio|presentation|demo)\b/.test(source)) add('project');
+
+    return labels.slice(0, 4);
   }
 
   function summarizePriorityFilters(items, nowMs = Date.now()) {
@@ -3636,6 +3659,6 @@
     init,
     refresh,
     draftWeek,
-    __test: { classifyDeadline, inferEstimatedWorkMinutes, compactDeadlineText, inferRequiredFilenames, buildAssignmentBriefMarkdown, buildTodayCourseBrief, buildDeadlineStudyPack, buildStudyPackReviewSchedule, inferAssignmentResourceLinks, inferCanvasSubmissionTypeHints, getSubmissionSnapshot, classifyActionBucket, inferNextActionLabel, isCsWorkflowItem, summarizePriorityFilters, formatPriorityFilterSummary, summarizeDeadlineClusters, getAssignmentPointValue, inferSubmissionChecklist, inferConceptReviewHints, inferActiveRecallQuestions, inferWeakConceptBacklogHints, inferGradeImpactHints, inferSubmissionStatusFlags, inferPlannerRiskFlags, inferStudyPhases, inferExecutionPlanHints, inferLearningStrategyHints, inferFocusSprintHints, inferEnergyAwareSessionHints, inferPracticeArtifactHints, inferRetrievalCalibrationHints, inferSocraticStudyHints, inferTeachBackHints, inferAcademicIntegrityHints, inferPrivacyConsentHints, inferAccessibilityStudyHints, inferCodeDebugHints, inferMinimalReproHints, inferAutograderFeedbackHints, inferRubricFeedbackDigest, inferOfficeHoursPrepHints, inferCollaborationHandoffHints, inferLectureCaptureHints, inferLectureActionChecklistHints, inferSourceCoverageAuditHints, inferAiNoteQualityAuditHints, inferConfusionCaptureHints, inferAudioReviewHints, inferTranscriptStudyGuideHints, inferMultimodalStudyAssetHints, inferSourceGroundingHints, inferEvidencePackHints, inferTutorContextPackHints, inferFeedbackLoopHints, inferPortabilityBackupHints, inferStudyWrapUpHints, inferRubricScoringHints, inferPreSubmitVerificationHints, inferSubmissionReceiptHints, inferAvailabilityWindowHints, inferNotebookStudyPackHints, inferStudyPackArtifactHints, inferThreeTwoOneReviewHints, inferReadingTriageHints, inferLectureQuestionQueueHints, inferAiHandoffHints, inferCsWorkflowHints, inferCommandSnippetHints, inferAssignmentSpecExtractionHints, inferMilestoneDecompositionHints, inferRequirementClarificationHints, inferActivePracticeLoopHints, inferInterleavedPracticeHints, inferMetacognitiveCalibrationHints, inferSpacedReviewPlan, inferExamCountdownHints, inferExamConstraintHints, inferExamSignalHints, inferPeerStudyAccountabilityHints, inferRecurringRoutineHints, inferTimeEstimateCalibrationHints, inferBlockedDependencyHints, inferWorkedExampleHints, inferEvidenceConfidenceHints, inferChangeAwarenessHints, inferSpecDeltaHints, inferQuestionBankHints, inferAiQuizGenerationHints, inferFreshnessGuardHints, inferDueDateAmbiguityHints, inferNextClassPrepHints, formatPlannerDueLabel, inferDueDateConfidenceLabel, inferHiddenDeadlineHints, inferAiStudySessionSetupHints, inferPersonalizedMemoryHints, inferErrorNotebookHints, inferNotebookLmStudyPlanHints, inferConceptMapBridgeHints, inferFirstStudyStepHints, inferStudyRecoveryHints, inferCalendarConflictHints, inferAssignmentQuestionQueueHints, inferQuestionFirstNoteHints, inferMissedLectureCatchUpHints, inferAiSourceBoundaryHints, inferLiveStudyModeHints, inferStudyModeRoutingHints, inferSourceLinkedReviewCardHints, inferLectureChapteringHints, inferLectureEmphasisHints, inferDiscussionReplyPrepHints, inferRubricRevisionLoopHints, inferAmbiguousAssignmentTitleHints, recommendTopStudyActions, recommendNextStudyAction, buildWorkloadTimeline, buildWorkloadRiskSummary, renderDeadlineList, buildPlannerPrompt, extractJsonArray, nextStudyWindowStart, findRelevantDeadlineForBlock, normalizeStudyBlocks, buildFallbackStudyBlocks, toLocalInputValue }
+    __test: { classifyDeadline, inferEstimatedWorkMinutes, compactDeadlineText, inferRequiredFilenames, buildAssignmentBriefMarkdown, buildTodayCourseBrief, buildDeadlineStudyPack, buildStudyPackReviewSchedule, inferAssignmentResourceLinks, inferCanvasSubmissionTypeHints, getSubmissionSnapshot, classifyActionBucket, inferNextActionLabel, isCsWorkflowItem, inferCsWorkflowTypeLabels, summarizePriorityFilters, formatPriorityFilterSummary, summarizeDeadlineClusters, getAssignmentPointValue, inferSubmissionChecklist, inferConceptReviewHints, inferActiveRecallQuestions, inferWeakConceptBacklogHints, inferGradeImpactHints, inferSubmissionStatusFlags, inferPlannerRiskFlags, inferStudyPhases, inferExecutionPlanHints, inferLearningStrategyHints, inferFocusSprintHints, inferEnergyAwareSessionHints, inferPracticeArtifactHints, inferRetrievalCalibrationHints, inferSocraticStudyHints, inferTeachBackHints, inferAcademicIntegrityHints, inferPrivacyConsentHints, inferAccessibilityStudyHints, inferCodeDebugHints, inferMinimalReproHints, inferAutograderFeedbackHints, inferRubricFeedbackDigest, inferOfficeHoursPrepHints, inferCollaborationHandoffHints, inferLectureCaptureHints, inferLectureActionChecklistHints, inferSourceCoverageAuditHints, inferAiNoteQualityAuditHints, inferConfusionCaptureHints, inferAudioReviewHints, inferTranscriptStudyGuideHints, inferMultimodalStudyAssetHints, inferSourceGroundingHints, inferEvidencePackHints, inferTutorContextPackHints, inferFeedbackLoopHints, inferPortabilityBackupHints, inferStudyWrapUpHints, inferRubricScoringHints, inferPreSubmitVerificationHints, inferSubmissionReceiptHints, inferAvailabilityWindowHints, inferNotebookStudyPackHints, inferStudyPackArtifactHints, inferThreeTwoOneReviewHints, inferReadingTriageHints, inferLectureQuestionQueueHints, inferAiHandoffHints, inferCsWorkflowHints, inferCommandSnippetHints, inferAssignmentSpecExtractionHints, inferMilestoneDecompositionHints, inferRequirementClarificationHints, inferActivePracticeLoopHints, inferInterleavedPracticeHints, inferMetacognitiveCalibrationHints, inferSpacedReviewPlan, inferExamCountdownHints, inferExamConstraintHints, inferExamSignalHints, inferPeerStudyAccountabilityHints, inferRecurringRoutineHints, inferTimeEstimateCalibrationHints, inferBlockedDependencyHints, inferWorkedExampleHints, inferEvidenceConfidenceHints, inferChangeAwarenessHints, inferSpecDeltaHints, inferQuestionBankHints, inferAiQuizGenerationHints, inferFreshnessGuardHints, inferDueDateAmbiguityHints, inferNextClassPrepHints, formatPlannerDueLabel, inferDueDateConfidenceLabel, inferHiddenDeadlineHints, inferAiStudySessionSetupHints, inferPersonalizedMemoryHints, inferErrorNotebookHints, inferNotebookLmStudyPlanHints, inferConceptMapBridgeHints, inferFirstStudyStepHints, inferStudyRecoveryHints, inferCalendarConflictHints, inferAssignmentQuestionQueueHints, inferQuestionFirstNoteHints, inferMissedLectureCatchUpHints, inferAiSourceBoundaryHints, inferLiveStudyModeHints, inferStudyModeRoutingHints, inferSourceLinkedReviewCardHints, inferLectureChapteringHints, inferLectureEmphasisHints, inferDiscussionReplyPrepHints, inferRubricRevisionLoopHints, inferAmbiguousAssignmentTitleHints, recommendTopStudyActions, recommendNextStudyAction, buildWorkloadTimeline, buildWorkloadRiskSummary, renderDeadlineList, buildPlannerPrompt, extractJsonArray, nextStudyWindowStart, findRelevantDeadlineForBlock, normalizeStudyBlocks, buildFallbackStudyBlocks, toLocalInputValue }
   };
 })();

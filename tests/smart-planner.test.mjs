@@ -3789,3 +3789,34 @@ test('SmartPlanner buildPlannerPrompt includes source-linked review card hints',
 
   assert.match(prompt, /source-linked review cards: keep source anchor on each card, split prompt and answer cleanly/);
 });
+
+test('SmartPlanner inferCsWorkflowTypeLabels distinguishes CS assignment workflow modes', () => {
+  const planner = loadSmartPlanner();
+  const labels = planner.__test.inferCsWorkflowTypeLabels({
+    courseName: 'CS 61B',
+    title: 'Project milestone implementation',
+    description: 'Clone the GitHub starter repo, add unit tests, submit to Gradescope, and include a README write-up.'
+  });
+
+  assert.deepEqual(Array.from(labels), ['coding', 'debug/test', 'autograder', 'write-up']);
+});
+
+test('SmartPlanner brief and study pack surface CS workflow labels', () => {
+  const planner = loadSmartPlanner();
+  const item = {
+    title: 'Graph project milestone',
+    courseName: 'CS 61B',
+    ts: new Date('2026-07-12T18:00:00-07:00').getTime(),
+    description: 'Implement the starter code, run pytest, submit on Gradescope, and attach a short report.'
+  };
+  const now = new Date('2026-07-10T10:00:00-07:00');
+  const brief = planner.__test.buildTodayCourseBrief([item], now);
+  const assignmentMarkdown = planner.__test.buildAssignmentBriefMarkdown(item, '2026-07-13T01:00:00.000Z');
+  const pack = planner.__test.buildDeadlineStudyPack(item, now);
+
+  assert.deepEqual(Array.from(brief.highLeverage[0].workflowLabels), ['coding', 'debug/test', 'autograder', 'write-up']);
+  assert.match(brief.markdown, /Workflow: coding, debug\/test, autograder, write-up/);
+  assert.match(assignmentMarkdown, /Workflow: coding, debug\/test, autograder, write-up/);
+  assert.deepEqual(Array.from(pack.cards[0].workflowLabels), ['coding', 'debug/test', 'autograder', 'write-up']);
+  assert.match(pack.markdown, /Workflow: coding, debug\/test, autograder, write-up/);
+});
