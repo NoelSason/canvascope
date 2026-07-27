@@ -2539,6 +2539,16 @@ test('SmartPlanner inferMultimodalStudyAssetHints detects visual and audio study
   assert.deepEqual(Array.from(hints), ['capture visual diagram', 'pair transcript with notes', 'make concept map']);
 });
 
+test('SmartPlanner inferMultimodalStudyAssetHints detects handwritten OCR study assets', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferMultimodalStudyAssetHints({
+    title: 'Calculus scanned notebook review',
+    description: 'OCR the handwritten GoodNotes pages, attach screenshots, and pair the voice note recap with the diagram.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['capture visual diagram', 'attach screenshots', 'OCR handwritten notes', 'pair transcript with notes']);
+});
+
 test('SmartPlanner buildPlannerPrompt includes multimodal study asset hints', () => {
   const planner = loadSmartPlanner();
   const prompt = planner.__test.buildPlannerPrompt([
@@ -2546,11 +2556,11 @@ test('SmartPlanner buildPlannerPrompt includes multimodal study asset hints', ()
       title: 'Design review study pack',
       courseName: 'CS 160',
       ts: new Date('2026-07-12T18:00:00-07:00').getTime(),
-      description: 'Prepare screenshots, a Figma prototype walkthrough, and a concept map for the interface critique.'
+      description: 'Prepare screenshots, a Figma prototype walkthrough, OCR handwritten sketch notes, and a concept map for the interface critique.'
     }
   ], new Date('2026-07-10T10:00:00-07:00'));
 
-  assert.match(prompt, /multimodal study assets: capture visual diagram, attach screenshots, make concept map/);
+  assert.match(prompt, /multimodal study assets: capture visual diagram, attach screenshots, OCR handwritten notes, make concept map/);
 });
 
 test('SmartPlanner inferSourceGroundingHints detects citation-first study workflows', () => {

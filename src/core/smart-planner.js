@@ -1308,6 +1308,9 @@
     if (/\b(screenshot|screenshots|screen recording|demo video|walkthrough|ui|interface|prototype|figma|slides?)\b/.test(source)) {
       add('attach screenshots');
     }
+    if (/\b(handwritten|handwriting|scanned notes?|scan(?:ned)? pages?|camera roll|photo(?:s)? of notes?|notebook photo|ocr\b|mathpix|apple pencil notes?|goodnotes|notability)\b/.test(source)) {
+      add('OCR handwritten notes');
+    }
     if (/\b(audio|recording|voice note|podcast|lecture capture|transcript|captions?)\b/.test(source)) {
       add('pair transcript with notes');
     }
@@ -1315,7 +1318,7 @@
       add('make concept map');
     }
 
-    return hints.slice(0, 3);
+    return hints.slice(0, 4);
   }
 
   function inferSourceGroundingHints(item) {
