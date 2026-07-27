@@ -313,6 +313,33 @@ test('SmartPlanner surfaces Canvas submission modes in assignment briefs', () =>
   assert.match(planner.__test.buildAssignmentBriefMarkdown(item), /Submission mode: file upload, external tool, URL submission/);
 });
 
+test('SmartPlanner inferFreshnessWarnings flags stale Canvas snapshots and changed due dates', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00').getTime();
+  const item = {
+    title: 'Project checkpoint',
+    ts: new Date('2026-07-11T23:59:00-07:00').getTime(),
+    updatedAt: '2026-07-08T09:00:00-07:00',
+    previousDueAt: '2026-07-12T23:59:00-07:00'
+  };
+
+  assert.deepEqual(JSON.parse(JSON.stringify(planner.__test.inferFreshnessWarnings(item, now))), [
+    're-sync before planning: source older than 24h',
+    'due date changed since last snapshot'
+  ]);
+});
+
+test('SmartPlanner assignment briefs include freshness guardrails for near-term work', () => {
+  const planner = loadSmartPlanner();
+  const item = {
+    title: 'Lab submit',
+    ts: Date.now() + 6 * 60 * 60 * 1000,
+    description: 'Submit lab.py to Gradescope.'
+  };
+
+  assert.match(planner.__test.buildAssignmentBriefMarkdown(item), /Freshness: freshness unknown: open Canvas before finalizing work/);
+});
+
 test('SmartPlanner inferRequiredFilenames extracts exact submission files', () => {
   const planner = loadSmartPlanner();
   const item = {
