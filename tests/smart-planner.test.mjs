@@ -3639,6 +3639,8 @@ test('SmartPlanner buildTodayCourseBrief summarizes urgent Canvas workload with 
   assert.equal(brief.highLeverage.length, 1);
   assert.equal(brief.highLeverage[0].title, 'Final graph project milestone');
   assert.equal(brief.highLeverage[0].estimatedMinutes, 270);
+  assert.equal(brief.highLeverage[0].firstAction.action, 'Do a 45-minute deep-work sprint on Final graph project milestone');
+  assert.match(brief.highLeverage[0].firstAction.reason, /due soon/);
   assert.equal(brief.deadlineClusters.length, 1);
   assert.match(brief.deadlineClusters[0].summary, /1 due, 1 high-risk, 1 CS\/lab/);
   assert.match(brief.markdown, /# Canvascope Today Brief/);

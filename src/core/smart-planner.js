@@ -2751,9 +2751,14 @@
     };
   }
 
+  function normalizeStudyActionItems(items) {
+    if (Array.isArray(items)) return items;
+    return items ? [items] : [];
+  }
+
   function recommendTopStudyActions(items, nowMs = Date.now(), limit = 3) {
     const safeLimit = Math.max(1, Math.min(5, Number(limit) || 3));
-    return (Array.isArray(items) ? items : [])
+    return normalizeStudyActionItems(items)
       .map(item => scoreStudyActionCandidate(item, nowMs))
       .filter(Boolean)
       .sort((a, b) => b.score - a.score || a.ts - b.ts)
