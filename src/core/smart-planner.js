@@ -2197,6 +2197,9 @@
     if (/\b(wrong answers?|mistakes?|missed questions?|weak spots?|confidence|spaced repetition|retry|review queue)\b/.test(source)) {
       add('schedule weak-question retry');
     }
+    if (/\b(application|applied|scenario|case study|transfer|debug(?:ging)?|trace|predict output|practice problems?|problem set|coding|programming|implementation|lab|autograder|gradescope)\b/.test(source)) {
+      add('prefer application questions');
+    }
 
     return hints.slice(0, 3);
   }

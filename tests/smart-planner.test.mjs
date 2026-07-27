@@ -939,6 +939,16 @@ test('SmartPlanner inferAiQuizGenerationHints asks AI quizzes to verify source-g
   assert.deepEqual(Array.from(hints), ['generate practice set', 'convert notes to quiz', 'verify against source notes']);
 });
 
+test('SmartPlanner inferAiQuizGenerationHints steers coding practice toward applied questions', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferAiQuizGenerationHints({
+    title: 'AI practice set for debugging lab',
+    description: 'Create practice problems for trace-based coding and predict-output questions before the Gradescope autograder.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['generate practice set', 'prefer application questions']);
+});
+
 test('SmartPlanner buildPlannerPrompt includes AI quiz source verification hints', () => {
   const planner = loadSmartPlanner();
   const now = new Date('2026-07-10T10:00:00-07:00');
