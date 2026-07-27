@@ -959,7 +959,7 @@ test('SmartPlanner inferDueDateAmbiguityHints detects tentative and timezone-sen
     description: 'Instructor says the due time is end of day in PDT, with a separate Canvas lock date after the grace period.'
   });
 
-  assert.deepEqual(Array.from(hints), ['confirm tentative deadline', 'verify exact due time', 'check timezone']);
+  assert.deepEqual(Array.from(hints), ['confirm tentative deadline', 'verify exact due time', 'check timezone', 'separate due vs lock date']);
 });
 
 test('SmartPlanner buildPlannerPrompt includes due-date ambiguity guardrails', () => {
@@ -1010,7 +1010,29 @@ test('SmartPlanner inferDueDateConfidenceLabel distinguishes Canvas, inferred, a
   assert.equal(planner.__test.inferDueDateConfidenceLabel({ dueAt: '2026-07-11T23:59:00-07:00', dueSource: 'canvas_api' }), 'confirmed from Canvas');
   assert.equal(planner.__test.inferDueDateConfidenceLabel({ ts: Date.now(), description: 'Submit by 11:59 PM on Friday.' }), 'parsed from text');
   assert.equal(planner.__test.inferDueDateConfidenceLabel({ ts: Date.now(), description: 'Tentative deadline with a separate lock date after grace period.' }), 'verify due vs availability');
+  assert.equal(planner.__test.inferDueDateConfidenceLabel({
+    dueAt: '2026-07-12T23:59:00-07:00',
+    originalDueAt: '2026-07-10T23:59:00-07:00',
+    dueSource: 'canvas_api'
+  }), 'changed Canvas due date');
+  assert.equal(planner.__test.inferDueDateConfidenceLabel({
+    dueAt: '2026-07-12T23:59:00-07:00',
+    lockAt: '2026-07-12T18:00:00-07:00',
+    dueSource: 'canvas_api'
+  }), 'verify lock before due date');
   assert.equal(planner.__test.inferDueDateConfidenceLabel({ title: 'Practice set' }), 'missing due date');
+});
+
+test('SmartPlanner inferDueDateAmbiguityHints uses structured Canvas date metadata', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferDueDateAmbiguityHints({
+    title: 'Rescheduled project submission',
+    dueAt: '2026-07-12T23:59:00-07:00',
+    originalDueAt: '2026-07-10T23:59:00-07:00',
+    lockAt: '2026-07-12T18:00:00-07:00'
+  });
+
+  assert.deepEqual(Array.from(hints), ['due date changed from Canvas metadata', 'lock date precedes due date']);
 });
 
 test('SmartPlanner buildPlannerPrompt includes due-date confidence labels', () => {

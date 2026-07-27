@@ -2190,10 +2190,24 @@
     return hints.slice(0, 3);
   }
 
+  function firstFiniteDateMs(...values) {
+    for (const value of values) {
+      if (value == null || value === '') continue;
+      const numeric = Number(value);
+      if (Number.isFinite(numeric) && numeric > 0) return numeric;
+      const parsed = new Date(value).getTime();
+      if (Number.isFinite(parsed)) return parsed;
+    }
+    return NaN;
+  }
+
   function inferDueDateAmbiguityHints(item) {
     const source = `${item?.title || ''} ${item?.description || item?.text || item?.content || ''}`.toLowerCase();
     const hints = [];
     const add = (label) => { if (!hints.includes(label)) hints.push(label); };
+    const dueMs = firstFiniteDateMs(item?.ts, item?.dueAt, item?.due_at, item?.dueDate, item?.due_date);
+    const originalDueMs = firstFiniteDateMs(item?.originalDueAt, item?.original_due_at, item?.previousDueAt, item?.previous_due_at);
+    const lockMs = firstFiniteDateMs(item?.lockAt, item?.lock_at, item?.availableUntil, item?.available_until, item?.assignment?.lock_at);
 
     if (/\b(tba|tbd|to be announced|to be determined|date pending|tentative|placeholder|approx(?:\.|imate(?:ly)?)?)\b/.test(source)) {
       add('confirm tentative deadline');
@@ -2207,8 +2221,14 @@
     if (/\b(lock date|available until|grace period|late policy|extension|extended|resubmit|resubmission)\b/.test(source)) {
       add('separate due vs lock date');
     }
+    if (Number.isFinite(originalDueMs) && Number.isFinite(dueMs) && Math.abs(originalDueMs - dueMs) > 5 * 60 * 1000) {
+      add('due date changed from Canvas metadata');
+    }
+    if (Number.isFinite(lockMs) && Number.isFinite(dueMs) && lockMs < dueMs) {
+      add('lock date precedes due date');
+    }
 
-    return hints.slice(0, 3);
+    return hints.slice(0, 4);
   }
 
   function inferNextClassPrepHints(item, nowMs = Date.now()) {
@@ -2253,8 +2273,13 @@
     const source = raw.toLowerCase();
     const dueSource = String(item?.dueSource || item?.due_source || item?.dueAtSource || item?.due_at_source || '').toLowerCase();
     const normalizedDueSource = dueSource.replace(/[_-]+/g, ' ');
+    const dueMs = firstFiniteDateMs(item?.ts, item?.dueAt, item?.due_at, item?.dueDate, item?.due_date);
+    const originalDueMs = firstFiniteDateMs(item?.originalDueAt, item?.original_due_at, item?.previousDueAt, item?.previous_due_at);
+    const lockMs = firstFiniteDateMs(item?.lockAt, item?.lock_at, item?.availableUntil, item?.available_until, item?.assignment?.lock_at);
 
-    if (!item?.dueAt && !Number.isFinite(Number(item?.ts))) return 'missing due date';
+    if (!Number.isFinite(dueMs)) return 'missing due date';
+    if (Number.isFinite(lockMs) && lockMs < dueMs) return 'verify lock before due date';
+    if (Number.isFinite(originalDueMs) && Math.abs(originalDueMs - dueMs) > 5 * 60 * 1000) return 'changed Canvas due date';
     if (/\b(canvas|assignment|calendar|api|official)\b/.test(normalizedDueSource) || /\bcanvas[-_ ]?(assignment|calendar|api)\b/.test(sourceKind)) {
       return 'confirmed from Canvas';
     }
