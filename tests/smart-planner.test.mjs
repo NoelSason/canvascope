@@ -1672,7 +1672,7 @@ test('SmartPlanner inferAudioReviewHints detects lecture audio recap opportuniti
     description: 'Use the transcript and recorded summary for a commute review before the cumulative exam.'
   });
 
-  assert.deepEqual(Array.from(hints), ['queue audio recap', 'convert lecture to recap', 'listen before practice']);
+  assert.deepEqual(Array.from(hints), ['queue audio recap', 'convert lecture to recap', 'listen before practice', 'pause for recall checks']);
 });
 
 test('SmartPlanner buildPlannerPrompt includes audio review guidance', () => {

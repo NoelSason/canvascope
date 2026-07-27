@@ -1225,8 +1225,11 @@
     if (/\b(confus(?:ed|ing|ion)|unclear|weak spots?|missed|absent|catch up)\b/.test(source)) {
       add('replay unclear sections');
     }
+    if (/\b(audio overview|audio recap|podcast|recorded summary|ai summary|notebooklm)\b/.test(source) && /\b(exam|quiz|review|study guide|practice|flashcards?|recall)\b/.test(source)) {
+      add('pause for recall checks');
+    }
 
-    return hints.slice(0, 3);
+    return hints.slice(0, 4);
   }
 
   function inferTranscriptStudyGuideHints(item) {
