@@ -1628,6 +1628,17 @@ test('SmartPlanner classifyActionBucket groups Canvas assignments by needs-actio
   assert.equal(planner.__test.classifyActionBucket({ title: 'Submitted quiz', ts: new Date('2026-07-10T23:59:00-07:00').getTime(), submission: { submitted_at: '2026-07-10T09:30:00-07:00' } }, now), 'submitted');
 });
 
+test('SmartPlanner inferNextActionLabel turns Canvas state into concrete next actions', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00').getTime();
+
+  assert.equal(planner.__test.inferNextActionLabel({ submitted: true, ts: now + 24 * 60 * 60 * 1000 }, now), 'waiting on grade');
+  assert.equal(planner.__test.inferNextActionLabel({ submission: { score: 91 }, ts: now - 24 * 60 * 60 * 1000 }, now), 'review feedback');
+  assert.equal(planner.__test.inferNextActionLabel({ title: 'Project upload', description: 'Submit to Gradescope', ts: now + 6 * 60 * 60 * 1000 }, now), 'needs submission');
+  assert.equal(planner.__test.inferNextActionLabel({ title: 'Final project milestone', ts: now + 48 * 60 * 60 * 1000 }, now), 'start now');
+  assert.equal(planner.__test.inferNextActionLabel({ title: 'Optional reading', ts: now + 21 * 24 * 60 * 60 * 1000 }, now), 'low priority');
+});
+
 test('SmartPlanner recommendNextStudyAction de-prioritizes already submitted work', () => {
   const planner = loadSmartPlanner();
   const now = new Date('2026-07-10T10:00:00-07:00').getTime();
@@ -3639,6 +3650,7 @@ test('SmartPlanner buildTodayCourseBrief summarizes urgent Canvas workload with 
   assert.equal(brief.highLeverage.length, 1);
   assert.equal(brief.highLeverage[0].title, 'Final graph project milestone');
   assert.equal(brief.highLeverage[0].estimatedMinutes, 270);
+  assert.equal(brief.highLeverage[0].nextActionLabel, 'start now');
   assert.equal(brief.highLeverage[0].firstAction.action, 'Do a 45-minute deep-work sprint on Final graph project milestone');
   assert.match(brief.highLeverage[0].firstAction.reason, /due soon/);
   assert.equal(brief.deadlineClusters.length, 1);
@@ -3647,6 +3659,7 @@ test('SmartPlanner buildTodayCourseBrief summarizes urgent Canvas workload with 
   assert.match(brief.markdown, /Priority filters: Needs attention 1 · Overdue 0 · Due soon 2 · CS\/lab 1 · Submitted 0/);
   assert.match(brief.markdown, /Deadline clusters: .*1 due, 1 high-risk, 1 CS\/lab/);
   assert.match(brief.markdown, /CS 61B: Final graph project milestone/);
+  assert.match(brief.markdown, /Next action: start now/);
   assert.match(brief.markdown, /Watch: large point value, submission check/);
 });
 
