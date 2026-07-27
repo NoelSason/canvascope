@@ -451,8 +451,8 @@
       else if (/gradescope\.com|submitty|codegrade|autograder/.test(lower)) add('autograder', url);
       else if (/canvas\.instructure\.com|instructure\.com\/courses\//.test(lower)) add('canvas', url);
       else if (/edstem\.org|piazza\.com|campuswire\.com/.test(lower)) add('discussion/help', url);
-      else if (/chatgpt\.com|claude\.ai|gemini\.google\.com|aistudio\.google\.com|perplexity\.ai|khanmigo\.ai|cursor\.com|windsurf\.com|replit\.com\/agent/.test(lower)) add('ai tutor', url);
-      else if (/notebooklm\.google\.com|illuminate\.google\.com|quizlet\.com|coconote\.app|notion\.(?:so|com)|knowt\.com|studyfetch\.com|turbolearn\.ai|mindgrasp\.ai|studyx\.ai|gizmo\.ai|brainscape\.com|remnote\.com|raena\.ai|studyable\.app|penseum\.com|monic\.ai|studyable\.ai|thea\.study|studdy\.ai|jotbot\.ai/.test(lower)) add('ai study guide', url);
+      else if (/chatgpt\.com|claude\.ai|gemini\.google\.com|aistudio\.google\.com|learnabout\.google\.com|perplexity\.ai|khanmigo\.ai|cursor\.com|windsurf\.com|replit\.com\/agent|github\.com\/features\/copilot|bolt\.new|v0\.dev|lovable\.dev/.test(lower)) add('ai tutor', url);
+      else if (/notebooklm\.google\.com|illuminate\.google\.com|quizlet\.com|coconote\.app|notion\.(?:so|com)|knowt\.com|studyfetch\.com|turbolearn\.ai|mindgrasp\.ai|studyx\.ai|gizmo\.ai|brainscape\.com|remnote\.com|raena\.ai|studyable\.app|penseum\.com|monic\.ai|studyable\.ai|thea\.study|studdy\.ai|jotbot\.ai|studyblaze\.io|quizard\.ai/.test(lower)) add('ai study guide', url);
       else if (/otter\.ai|granola\.ai|fireflies\.ai|fathom\.video|read\.ai|recall\.ai|tldv\.io|supernormal\.com|plaud\.ai|limitless\.ai|tactiq\.io|meetgeek\.ai|circleback\.ai|notta\.ai|jamie\.ai|sembly\.ai|wisprflow\.ai|mem\.ai|glean\.co|notion\.com\/product\/ai-meeting-notes/.test(lower)) add('ai notes/transcript', url);
       else if (/napkin\.ai|mapify\.so|miro\.com|whimsical\.com/.test(lower)) add('concept map', url);
       else if (/youtube\.com|youtu\.be|vimeo\.com|panopto\.|kaltura\.|\/kaltura\/|mediasite\.|echo360\./.test(lower)) add('lecture/video', url);
@@ -479,8 +479,11 @@
     if (/\b(test cases?|unit tests?|pytest|npm test|xcodebuild|junit|coverage)\b/.test(source)) add('run tests');
     if (/\b(pdf|slides?|screenshot|screen recording|demo video|presentation)\b/.test(source)) add('upload artifact');
     if (/\b(partner|team|group|peer review|collab(?:oration)?)\b/.test(source)) add('coordinate team');
-    if (/\b(ai tutor|ai study|study mode|guided learning|notebooklm|chatgpt|claude|gemini|perplexity|quizlet|knowt|studyfetch|turbolearn|mindgrasp|gizmo|raena|thea|studdy|jotbot|anki|flashcards?|spaced repetition)\b/.test(source)) {
+    if (/\b(ai tutor|ai study|study mode|guided learning|notebooklm|chatgpt|claude|gemini|perplexity|quizlet|knowt|studyfetch|turbolearn|mindgrasp|gizmo|raena|thea|studdy|jotbot|studyblaze|quizard|anki|flashcards?|spaced repetition)\b/.test(source)) {
       add('verify AI study output against source');
+    }
+    if (/\b(ai[- ]?generated code|prompt[- ]?to[- ]?code|vibe cod(?:e|ing)|copilot|cursor|windsurf|replit agent|bolt\.new|v0\.dev|lovable\.dev)\b/.test(source)) {
+      add('review generated code before submit');
     }
     if (/\b(record(?:ing)?|transcript|transcribe|meeting notes?|lecture capture|audio notes?|voice notes?|notetaker|note[- ]?taker|otter|granola|fireflies|fathom|read\.ai|recall\.ai|tldv|supernormal|limitless|plaud|tactiq|meetgeek|circleback|notta|jamie|sembly|wispr|glean)\b/.test(source)) {
       add('confirm recording/transcript policy');

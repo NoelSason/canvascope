@@ -603,6 +603,29 @@ test('SmartPlanner inferAssignmentResourceLinks recognizes emerging AI study and
   ]);
 });
 
+test('SmartPlanner recognizes current AI study and prompt-to-code workspaces', () => {
+  const planner = loadSmartPlanner();
+  const links = planner.__test.inferAssignmentResourceLinks({
+    description: 'Warm up in Google Learn About https://learnabout.google.com/topic/graphs, generate practice from https://studyblaze.io/set/demo, compare Quizard cards https://quizard.ai/deck/demo, and inspect the prototype at https://bolt.new/~/cs61b-demo.'
+  });
+
+  assert.deepEqual(JSON.parse(JSON.stringify(links)), [
+    { label: 'ai tutor', url: 'https://learnabout.google.com/topic/graphs' },
+    { label: 'ai study guide', url: 'https://studyblaze.io/set/demo' },
+    { label: 'ai study guide', url: 'https://quizard.ai/deck/demo' },
+    { label: 'ai tutor', url: 'https://bolt.new/~/cs61b-demo' }
+  ]);
+});
+
+test('SmartPlanner submission checklist flags prompt-to-code review before submitting', () => {
+  const planner = loadSmartPlanner();
+  const checklist = planner.__test.inferSubmissionChecklist({
+    description: 'Use Cursor and Bolt.new to draft AI-generated code, then submit the repo.'
+  });
+
+  assert.ok(checklist.includes('review generated code before submit'));
+});
+
 test('SmartPlanner integrity heuristics detect submit-ready homework requests', () => {
   const planner = loadSmartPlanner();
   const item = {
