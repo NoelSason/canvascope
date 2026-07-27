@@ -538,6 +538,30 @@ test('SmartPlanner inferAssignmentResourceLinks recognizes newer study-guide and
   ]);
 });
 
+test('SmartPlanner recognizes emerging study coach and lecture capture domains', () => {
+  const planner = loadSmartPlanner();
+  const links = planner.__test.inferAssignmentResourceLinks({
+    description: 'Make a quiz plan in https://thea.study/session/demo, compare Studdy hints at https://studdy.ai/chat/demo, draft with JotBot https://jotbot.ai/doc/demo, and verify class notes from Glean https://glean.co/app/lecture-demo.'
+  });
+
+  assert.deepEqual(JSON.parse(JSON.stringify(links)), [
+    { label: 'ai study guide', url: 'https://thea.study/session/demo' },
+    { label: 'ai study guide', url: 'https://studdy.ai/chat/demo' },
+    { label: 'ai study guide', url: 'https://jotbot.ai/doc/demo' },
+    { label: 'ai notes/transcript', url: 'https://glean.co/app/lecture-demo' }
+  ]);
+});
+
+test('SmartPlanner submission checklist covers current AI study and transcript tools', () => {
+  const planner = loadSmartPlanner();
+  const checklist = planner.__test.inferSubmissionChecklist({
+    description: 'Use Turbolearn, Thea, and Studdy to make flashcards, then compare Sembly, Circleback, and Glean lecture notes.'
+  });
+
+  assert.ok(checklist.includes('verify AI study output against source'));
+  assert.ok(checklist.includes('confirm recording/transcript policy'));
+});
+
 test('SmartPlanner inferAssignmentResourceLinks recognizes emerging AI study and coding-assistant domains', () => {
   const planner = loadSmartPlanner();
   const links = planner.__test.inferAssignmentResourceLinks({
