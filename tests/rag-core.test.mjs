@@ -172,6 +172,17 @@ test('RAGCore source audit guidance separates evidence strength for grounded stu
   assert.match(compiled.prompt, /weakly supported assumptions/);
 });
 
+test('RAGCore grounded artifact guidance adds verification boundaries to study guides', async () => {
+  mockTabUrl = 'https://google.com';
+  assert.equal(RAGCore.hasGroundedStudyArtifactIntent('make a study guide based on the lecture PDF'), true);
+  assert.equal(RAGCore.hasGroundedStudyArtifactIntent('explain recursion from memory'), false);
+
+  const compiled = await RAGCore.compileUnifiedPrompt('make a study guide based on the lecture PDF');
+  assert.match(compiled.prompt, /source-grounded study artifact/);
+  assert.match(compiled.prompt, /Needs verification/);
+  assert.match(compiled.prompt, /do not invent readings, deadlines, or instructor requirements/);
+});
+
 test('RAGCore audio overview guidance formats listenable study scripts', async () => {
   mockTabUrl = 'https://google.com';
   assert.equal(RAGCore.hasAudioOverviewIntent('make an audio overview to review this lecture'), true);

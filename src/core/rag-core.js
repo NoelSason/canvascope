@@ -196,6 +196,14 @@ class RAGCore {
     return rubricAsk && coursework;
   }
 
+  static hasGroundedStudyArtifactIntent(question) {
+    const q = String(question || '').toLowerCase();
+    if (!q) return false;
+    const artifactAsk = /\b(study guide|review sheet|cheat sheet|outline|summary|summarize|summarise|notes?|flashcards?|quiz|practice questions?|exam prep|midterm prep|final prep)\b/.test(q);
+    const groundingAsk = /\b(source[- ]?backed|ground(?:ed|ing)|cite|citation|evidence|from (?:the )?(?:source|sources|slides?|notes?|pdf|lecture|reading|canvas)|based on (?:the )?(?:source|sources|slides?|notes?|pdf|lecture|reading|canvas))\b/.test(q);
+    return artifactAsk && groundingAsk;
+  }
+
   static activeRecallGuidance(question) {
     if (!this.hasActiveRecallIntent(question)) return '';
     return ' Because the student is asking for active recall, format the answer as 5-8 quick retrieval prompts with answers hidden or immediately below each prompt, include one cloze-style card when possible, cite source-specific cards inline, and end with a short Lectra-ready review loop (what to ink, what to quiz tomorrow).';
@@ -239,6 +247,11 @@ class RAGCore {
   static rubricChecklistGuidance(question) {
     if (!this.hasRubricChecklistIntent(question)) return '';
     return ' Because the student is asking about rubric/assignment readiness, turn the sourced instructions into a submit-ready checklist: required deliverables, grading criteria, hidden constraints, evidence to verify in the draft/code, and one high-impact fix before submission. Keep unverifiable items clearly labeled as "not found in sources" rather than guessing.';
+  }
+
+  static groundedStudyArtifactGuidance(question) {
+    if (!this.hasGroundedStudyArtifactIntent(question)) return '';
+    return ' Because the student is asking for a source-grounded study artifact, separate source-backed facts from inference: include compact citations/anchors for each major point, add a "Needs verification" line for missing or ambiguous source details, and do not invent readings, deadlines, or instructor requirements.';
   }
 
   static isCourseMaterialChunk(chunk) {
@@ -853,7 +866,8 @@ class RAGCore {
     const sourceAuditGuidance = this.sourceAuditGuidance(promptText);
     const audioOverviewGuidance = this.audioOverviewGuidance(promptText);
     const rubricChecklistGuidance = this.rubricChecklistGuidance(promptText);
-    compiledPrompt += `=== QUESTION ===\nAnswer the student's request. Use the sections above as authoritative context for their personal specifics (tasks/deadlines, document pages) — prefer those over the general active-page text, and match tasks by topic even if the course code differs from the page. For conceptual or "explain/teach me" questions, answer fully from your general knowledge even when the sections don't cover the topic, and tie the explanation to the student's profile and course materials where relevant. Do not refuse a concept question for lack of a matching section.${lectraHandoff}${activeRecallGuidance}${studyPlanGuidance}${interleavingGuidance}${teachBackGuidance}${sourceAuditGuidance}${audioOverviewGuidance}${rubricChecklistGuidance} Request: ${promptText}`;
+    const groundedStudyArtifactGuidance = this.groundedStudyArtifactGuidance(promptText);
+    compiledPrompt += `=== QUESTION ===\nAnswer the student's request. Use the sections above as authoritative context for their personal specifics (tasks/deadlines, document pages) — prefer those over the general active-page text, and match tasks by topic even if the course code differs from the page. For conceptual or "explain/teach me" questions, answer fully from your general knowledge even when the sections don't cover the topic, and tie the explanation to the student's profile and course materials where relevant. Do not refuse a concept question for lack of a matching section.${lectraHandoff}${activeRecallGuidance}${studyPlanGuidance}${interleavingGuidance}${teachBackGuidance}${sourceAuditGuidance}${audioOverviewGuidance}${rubricChecklistGuidance}${groundedStudyArtifactGuidance} Request: ${promptText}`;
 
     return compiledPrompt;
   }
@@ -1086,7 +1100,8 @@ class RAGCore {
     const sourceAuditGuidance = this.sourceAuditGuidance(question);
     const audioOverviewGuidance = this.audioOverviewGuidance(question);
     const rubricChecklistGuidance = this.rubricChecklistGuidance(question);
-    prompt += `=== QUESTION ===\nAnswer the student's question. Ground claims in the numbered sources when they cover it, citing inline like [1] or [2]. When the sources only partially cover the topic (or are merely related, e.g. labs on the concept), fill the gaps from your general knowledge — clearly grounded teaching is better than refusing — and connect the explanation back to the course materials where helpful. For material-summary questions such as "what did we study this week", use source titles, folders, module names, dates, and week labels to summarize what the available materials indicate, even when body text is sparse.${drillGuidance}${complexityGuidance}${activeRecallGuidance}${conceptMapGuidance}${examCramGuidance}${studyPlanGuidance}${interleavingGuidance}${teachBackGuidance}${sourceAuditGuidance}${audioOverviewGuidance}${rubricChecklistGuidance} Only attach [n] citations to claims actually drawn from the sources; never fabricate a citation. For facts specific to this course (due dates, grading, instructions), rely strictly on the sources and say so if they're missing. Be concise (2-5 sentences or a short list). Question: ${question}`;
+    const groundedStudyArtifactGuidance = this.groundedStudyArtifactGuidance(question);
+    prompt += `=== QUESTION ===\nAnswer the student's question. Ground claims in the numbered sources when they cover it, citing inline like [1] or [2]. When the sources only partially cover the topic (or are merely related, e.g. labs on the concept), fill the gaps from your general knowledge — clearly grounded teaching is better than refusing — and connect the explanation back to the course materials where helpful. For material-summary questions such as "what did we study this week", use source titles, folders, module names, dates, and week labels to summarize what the available materials indicate, even when body text is sparse.${drillGuidance}${complexityGuidance}${activeRecallGuidance}${conceptMapGuidance}${examCramGuidance}${studyPlanGuidance}${interleavingGuidance}${teachBackGuidance}${sourceAuditGuidance}${audioOverviewGuidance}${rubricChecklistGuidance}${groundedStudyArtifactGuidance} Only attach [n] citations to claims actually drawn from the sources; never fabricate a citation. For facts specific to this course (due dates, grading, instructions), rely strictly on the sources and say so if they're missing. Be concise (2-5 sentences or a short list). Question: ${question}`;
 
     return { prompt, sources };
   }
@@ -1180,7 +1195,8 @@ class RAGCore {
     const sourceAuditGuidance = this.sourceAuditGuidance(question);
     const audioOverviewGuidance = this.audioOverviewGuidance(question);
     const rubricChecklistGuidance = this.rubricChecklistGuidance(question);
-    prompt += `=== QUESTION ===\nAnswer the student's question. Use the active course scope first${effectiveCourseName ? ` (${effectiveCourseName})` : ''}; do not pull supporting links or materials from other courses unless the student explicitly asks for them. For material-summary questions such as "what am I learning this week?", explain the actual topics in plain language rather than summarizing source numbers. Prefer parsed PDF/OCR content over title-only metadata; when only titles/folders are available, say "based on the indexed file list" and avoid inventing slide details.${drillGuidance}${complexityGuidance}${activeRecallGuidance}${conceptMapGuidance}${examCramGuidance}${studyPlanGuidance}${interleavingGuidance}${teachBackGuidance}${sourceAuditGuidance}${audioOverviewGuidance}${rubricChecklistGuidance} Do not include a bibliography or source list in the answer. Use citations sparingly only when a specific claim needs verification; never fabricate a citation. For facts specific to this course (due dates, grading, instructions) rely strictly on the sources and say so plainly if they are missing. Be concise: 3-5 bullets or 2-5 sentences. Question: ${question}`;
+    const groundedStudyArtifactGuidance = this.groundedStudyArtifactGuidance(question);
+    prompt += `=== QUESTION ===\nAnswer the student's question. Use the active course scope first${effectiveCourseName ? ` (${effectiveCourseName})` : ''}; do not pull supporting links or materials from other courses unless the student explicitly asks for them. For material-summary questions such as "what am I learning this week?", explain the actual topics in plain language rather than summarizing source numbers. Prefer parsed PDF/OCR content over title-only metadata; when only titles/folders are available, say "based on the indexed file list" and avoid inventing slide details.${drillGuidance}${complexityGuidance}${activeRecallGuidance}${conceptMapGuidance}${examCramGuidance}${studyPlanGuidance}${interleavingGuidance}${teachBackGuidance}${sourceAuditGuidance}${audioOverviewGuidance}${rubricChecklistGuidance}${groundedStudyArtifactGuidance} Do not include a bibliography or source list in the answer. Use citations sparingly only when a specific claim needs verification; never fabricate a citation. For facts specific to this course (due dates, grading, instructions) rely strictly on the sources and say so plainly if they are missing. Be concise: 3-5 bullets or 2-5 sentences. Question: ${question}`;
 
     return {
       prompt,
