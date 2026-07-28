@@ -1990,6 +1990,9 @@
     if (/\b(study group|peer|partner|team|group project|collab(?:oration)?|pair programming|classmate|cohort)\b/.test(source)) {
       add('schedule peer check-in');
     }
+    if (/\b(pair programming|driver|navigator|roles?|rotate roles?|role rotation|swap roles?|handoff|handoffs?)\b/.test(source)) {
+      add('rotate driver/navigator roles');
+    }
     if (/\b(body doubl(?:e|ing)|cowork(?:ing)?|co-work(?:ing)?|focusmate|discord study|study room|silent study|accountability)\b/.test(source)) {
       add('use accountability block');
     }

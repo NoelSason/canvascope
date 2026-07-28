@@ -1830,6 +1830,34 @@ test('SmartPlanner buildPlannerPrompt includes transcript study guide guidance',
   assert.match(prompt, /transcript study guide: anchor notes to timestamps, split into topic chapters, verify AI summary against transcript/);
 });
 
+test('SmartPlanner peer accountability hints prompt pair-programming role rotation', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferPeerStudyAccountabilityHints({
+    title: 'Pair programming checkpoint',
+    description: 'Work with a partner, swap driver and navigator roles, then hand off progress at standup.'
+  });
+
+  assert.deepEqual(Array.from(hints), [
+    'schedule peer check-in',
+    'rotate driver/navigator roles',
+    'share progress update'
+  ]);
+});
+
+test('SmartPlanner buildPlannerPrompt includes pair-programming role rotation guidance', () => {
+  const planner = loadSmartPlanner();
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'CS pair lab',
+      courseName: 'CS 61B',
+      ts: new Date('2026-07-11T12:00:00-07:00').getTime(),
+      description: 'Pair programming lab: rotate driver/navigator roles and share progress before the checkpoint.'
+    }
+  ], new Date('2026-07-10T10:00:00-07:00'));
+
+  assert.match(prompt, /peer accountability: schedule peer check-in, rotate driver\/navigator roles, share progress update/);
+});
+
 test('SmartPlanner inferPlannerRiskFlags surfaces high-value assignments from Canvas points', () => {
   const planner = loadSmartPlanner();
   const now = new Date('2026-07-10T10:00:00-07:00').getTime();
@@ -3100,7 +3128,7 @@ test('SmartPlanner buildPlannerPrompt includes peer accountability hints', () =>
     }
   ], now);
 
-  assert.match(prompt, /peer accountability: schedule peer check-in, use accountability block, share progress update/);
+  assert.match(prompt, /peer accountability: schedule peer check-in, rotate driver\/navigator roles, use accountability block/);
 });
 
 test('SmartPlanner inferBlockedDependencyHints detects access and asset blockers', () => {
