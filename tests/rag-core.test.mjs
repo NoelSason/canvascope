@@ -573,3 +573,33 @@ test('RAGCore prompts add rubric readiness checklists for assignment submissions
     mockTabUrl = prevTabUrl;
   }
 });
+
+test('RAGCore prompts add CS debug-understanding coaching for implementation questions', async () => {
+  assert.equal(RAGCore.hasCsDebugUnderstandingIntent('debug my understanding of recursion in this Python code'), true);
+  assert.equal(RAGCore.hasCsDebugUnderstandingIntent('what edge cases would break my graph algorithm?'), true);
+  assert.equal(RAGCore.hasCsDebugUnderstandingIntent('summarize the lecture notes'), false);
+
+  const prevIndexed = mockStorage.indexedContent;
+  const prevTabUrl = mockTabUrl;
+  mockTabUrl = 'https://google.com';
+  mockStorage.indexedContent = [
+    {
+      title: 'Recursive tree traversal notes',
+      courseName: 'CS 61B',
+      type: 'file',
+      content: 'Traversal implementations must handle empty trees, leaf nodes, and recursive ordering.'
+    }
+  ];
+
+  try {
+    const compiled = await RAGCore.compileUnifiedPrompt('debug my understanding of recursion in this Python code');
+    assert.match(compiled.prompt, /implementation coach/i);
+    assert.match(compiled.prompt, /likely misconception/i);
+    assert.match(compiled.prompt, /minimal counterexample or failing test case/i);
+    assert.match(compiled.prompt, /edge case that would break naive code/i);
+    assert.match(compiled.prompt, /self-check question/i);
+  } finally {
+    mockStorage.indexedContent = prevIndexed;
+    mockTabUrl = prevTabUrl;
+  }
+});
