@@ -1012,6 +1012,16 @@ test('SmartPlanner buildPlannerPrompt includes NotebookLM study-plan hints', () 
   assert.match(prompt, /NotebookLM study plan: create source-grounded study plan, bundle textbook and lecture notes, adapt plan to learner profile/);
 });
 
+test('SmartPlanner inferNotebookLmStudyPlanHints detects briefing guide workflows', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferNotebookLmStudyPlanHints({
+    title: 'NotebookLM source guide',
+    description: 'Create a study guide and FAQ from uploaded lecture transcripts before turning it into a quiz.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['create source-grounded study plan', 'bundle textbook and lecture notes', 'generate briefing guide and FAQ']);
+});
+
 test('SmartPlanner inferDueDateAmbiguityHints detects tentative and timezone-sensitive deadlines', () => {
   const planner = loadSmartPlanner();
   const hints = planner.__test.inferDueDateAmbiguityHints({

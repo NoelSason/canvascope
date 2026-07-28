@@ -2440,6 +2440,9 @@
     if (/\b(weak spots?|strengths?|goals?|target grade|personalized|personalised|study history|learning profile)\b/.test(source)) {
       add('adapt plan to learner profile');
     }
+    if (/\b(briefing doc|briefing document|study guide|source guide|faq|frequently asked questions|summary guide|notebook guide)\b/.test(source)) {
+      add('generate briefing guide and FAQ');
+    }
     if (/\b(audio overview|audio recap|podcast|flashcards?|quiz|practice set|mind map|timeline)\b/.test(source)) {
       add('pick output format before generating');
     }
