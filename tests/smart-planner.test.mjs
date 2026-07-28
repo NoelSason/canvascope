@@ -1960,6 +1960,11 @@ test('SmartPlanner inferFocusSprintHints detects deep-work setup cues', () => {
     title: 'Large capstone project checkpoint',
     description: 'Outline next steps, time-box a focus sprint, and make progress on the starter implementation.'
   })), ['start focus sprint', 'protect attention', 'define done for block']);
+
+  assert.deepEqual(Array.from(planner.__test.inferFocusSprintHints({
+    title: 'Phone-free focus sprint',
+    description: 'Silence Discord and phone notifications before starting the study block.'
+  })), ['protect attention', 'silence notifications']);
 });
 
 test('SmartPlanner buildPlannerPrompt includes focus sprint hints', () => {

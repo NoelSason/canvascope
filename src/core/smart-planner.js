@@ -892,6 +892,9 @@
     if (/\b(distraction|focus|deep work|pomodoro|time[- ]?box|timebox|study block|sprint|flow)\b/.test(source)) {
       add('protect attention');
     }
+    if (/\b(notifications?|dms?|messages?|slack|discord|phone|social media|instagram|tiktok|youtube)\b/.test(source)) {
+      add('silence notifications');
+    }
     if (/\b(checkpoint|milestone|draft|outline|starter|not started|progress|next steps?|todo|to[- ]?do)\b/.test(source)) {
       add('define done for block');
     }
