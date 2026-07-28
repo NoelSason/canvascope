@@ -2257,7 +2257,7 @@
     const hints = [];
     const add = (label) => { if (!hints.includes(label)) hints.push(label); };
 
-    if (/\b(ai|quizlet|coconote|notebooklm|study mode|chatgpt|claude|gemini|llm|assistant|question bank|practice questions?|flashcards?|self[- ]?quiz)\b/.test(source)) {
+    if (/\b(ai|quizlet|coconote|notebooklm|study mode|chatgpt|claude|gemini|llm|assistant|question bank|practice questions?|flashcards?|self[- ]?quiz|adaptive quiz(?:zes)?|adaptive practice|personalized quiz(?:zes)?|personalized practice)\b/.test(source)) {
       add('generate practice set');
     }
     if (/\b(lecture|slides?|transcript|recording|caption(?:s)?|notes?|notebook|reading|chapter|study guide)\b/.test(source)) {
@@ -2269,11 +2269,14 @@
     if (/\b(citations?|sources?|ground(?:ed|ing)|evidence|page\s*\d+|slide\s*\d+|timestamp(?:ed)?|hallucinat(?:e|ion)|fact[- ]?check|verify)\b/.test(source)) {
       add('verify against source notes');
     }
-    if (/\b(wrong answers?|mistakes?|missed questions?|weak spots?|confidence|spaced repetition|retry|review queue)\b/.test(source)) {
+    if (/\b(wrong answers?|mistakes?|missed questions?|weak spots?|confidence|spaced repetition|retry|review queue|adaptive quiz(?:zes)?|adaptive practice|personalized quiz(?:zes)?|personalized practice)\b/.test(source)) {
       add('schedule weak-question retry');
     }
     if (/\b(application|applied|scenario|case study|transfer|debug(?:ging)?|trace|predict output|practice problems?|problem set|coding|programming|implementation|lab|autograder|gradescope)\b/.test(source)) {
       add('prefer application questions');
+    }
+    if (/\b(calibrat(?:e|ion)|difficulty|easier|harder|mastery|memory strength|retention|forgetting curve)\b/.test(source)) {
+      add('calibrate difficulty after each attempt');
     }
 
     return hints.slice(0, 3);

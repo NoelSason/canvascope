@@ -1012,6 +1012,20 @@ test('SmartPlanner inferAiQuizGenerationHints steers coding practice toward appl
   assert.deepEqual(Array.from(hints), ['generate practice set', 'prefer application questions']);
 });
 
+test('SmartPlanner inferAiQuizGenerationHints detects adaptive practice loops', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferAiQuizGenerationHints({
+    title: 'Adaptive quiz review',
+    description: 'Run a personalized quiz, retry weak questions, and calibrate difficulty from memory strength.'
+  });
+
+  assert.deepEqual(Array.from(hints), [
+    'generate practice set',
+    'schedule weak-question retry',
+    'calibrate difficulty after each attempt'
+  ]);
+});
+
 test('SmartPlanner buildPlannerPrompt includes AI quiz source verification hints', () => {
   const planner = loadSmartPlanner();
   const now = new Date('2026-07-10T10:00:00-07:00');
