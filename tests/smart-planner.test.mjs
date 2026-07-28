@@ -204,6 +204,23 @@ test('SmartPlanner inferEstimatedWorkMinutes prefers explicit workload and other
   }, now), 270);
 });
 
+test('SmartPlanner adds exam readiness checkpoints for weak-topic review', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00').getTime();
+  const item = {
+    title: 'CS midterm practice quiz',
+    description: 'Review lecture notes, missed questions, and low confidence recursion topics.',
+    ts: new Date('2026-07-11T09:00:00-07:00').getTime()
+  };
+
+  assert.deepEqual(JSON.parse(JSON.stringify(planner.__test.inferExamReadinessCheckpointHints(item, now))), [
+    'run closed-book diagnostic',
+    'promote misses to weak-topic queue',
+    'simulate timed set before final review'
+  ]);
+  assert.match(planner.__test.buildAssignmentBriefMarkdown(item), /Readiness check: run closed-book diagnostic, promote misses to weak-topic queue/);
+});
+
 test('SmartPlanner formatPlannerDueLabel includes an explicit timezone', () => {
   const planner = loadSmartPlanner();
   const label = planner.__test.formatPlannerDueLabel(new Date('2026-07-10T18:00:00-07:00').getTime());
