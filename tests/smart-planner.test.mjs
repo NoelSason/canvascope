@@ -4003,3 +4003,28 @@ test('SmartPlanner brief and study pack surface CS workflow labels', () => {
   assert.deepEqual(Array.from(pack.cards[0].workflowLabels), ['coding', 'debug/test', 'autograder', 'write-up']);
   assert.match(pack.markdown, /Workflow: coding, debug\/test, autograder, write-up/);
 });
+
+test('SmartPlanner inferPostLectureCleanupHints detects post-lecture cleanup workflows', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferPostLectureCleanupHints({
+    title: 'Post-lecture AI notes cleanup',
+    description: 'Clean up the lecture transcript into an outline, extract action items, and list confusing points before office hours.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['clean messy notes into outline', 'extract follow-up tasks', 'separate confusion list']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes post-lecture cleanup hints', () => {
+  const planner = loadSmartPlanner();
+  const now = new Date('2026-07-10T10:00:00-07:00');
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'Recorded lecture cleanup',
+      courseName: 'CS 188',
+      ts: new Date('2026-07-11T18:00:00-07:00').getTime(),
+      description: 'Use the AI notetaker summary to clean up class notes, extract follow-up todos, and separate unclear questions.'
+    }
+  ], now);
+
+  assert.match(prompt, /post-lecture cleanup: clean messy notes into outline, extract follow-up tasks, separate confusion list/);
+});
