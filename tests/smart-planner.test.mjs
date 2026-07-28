@@ -453,14 +453,37 @@ test('SmartPlanner inferAssignmentResourceLinks recognizes classroom launch URLs
 test('SmartPlanner inferAssignmentResourceLinks recognizes hosted coding notebooks and IDE starters', () => {
   const planner = loadSmartPlanner();
   const links = planner.__test.inferAssignmentResourceLinks({
-    description: 'Use the Colab starter https://colab.research.google.com/drive/abc123 and debug in https://replit.com/@course/lab-template before checking the spec in https://github.dev/example/course.'
+    description: 'Use the Colab starter https://colab.research.google.com/drive/abc123, compare the Kaggle notebook https://www.kaggle.com/code/course/lab2, debug in https://deepnote.com/project/cs-lab, and inspect the spec in https://github.dev/example/course.'
   });
 
   assert.deepEqual(JSON.parse(JSON.stringify(links)), [
     { label: 'starter/material', url: 'https://colab.research.google.com/drive/abc123' },
-    { label: 'starter/material', url: 'https://replit.com/@course/lab-template' },
+    { label: 'starter/material', url: 'https://www.kaggle.com/code/course/lab2' },
+    { label: 'starter/material', url: 'https://deepnote.com/project/cs-lab' },
     { label: 'starter/material', url: 'https://github.dev/example/course' }
   ]);
+});
+
+test('SmartPlanner inferAssignmentResourceLinks recognizes hosted data-analysis notebooks', () => {
+  const planner = loadSmartPlanner();
+  const links = planner.__test.inferAssignmentResourceLinks({
+    description: 'Analyze the dataset in DataCamp DataLab https://www.datacamp.com/datalab/w/demo and compare the Julius worksheet https://julius.ai/chat/demo before exporting the notebook.'
+  });
+
+  assert.deepEqual(JSON.parse(JSON.stringify(links)), [
+    { label: 'starter/material', url: 'https://www.datacamp.com/datalab/w/demo' },
+    { label: 'starter/material', url: 'https://julius.ai/chat/demo' }
+  ]);
+});
+
+test('SmartPlanner submission checklist adds execution checks for hosted notebook workspaces', () => {
+  const planner = loadSmartPlanner();
+  const checklist = planner.__test.inferSubmissionChecklist({
+    title: 'Data analysis lab',
+    description: 'Finish the Kaggle Code notebook, rerun the Deepnote analysis, and export the Julius worksheet before submitting.'
+  });
+
+  assert.ok(checklist.includes('run notebook top-to-bottom'));
 });
 
 test('SmartPlanner inferAssignmentResourceLinks recognizes AI tutor workspaces', () => {

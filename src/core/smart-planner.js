@@ -459,7 +459,7 @@
       else if (/napkin\.ai|mapify\.so|miro\.com|whimsical\.com/.test(lower)) add('concept map', url);
       else if (/youtube\.com|youtu\.be|vimeo\.com|panopto\.|kaltura\.|\/kaltura\/|mediasite\.|echo360\./.test(lower)) add('lecture/video', url);
       else if (/classroom\.google\.com/.test(lower)) add('classroom', url);
-      else if (/\.zip(?:$|[?#])|starter|template|scaffold|dataset|data[-_]?set|drive\.google\.com|docs\.google\.com|colab\.research\.google\.com|jupyter\.org|replit\.com|github\.dev|codespaces\.new|stackblitz\.com|codesandbox\.io/.test(lower)) add('starter/material', url);
+      else if (/\.zip(?:$|[?#])|starter|template|scaffold|dataset|data[-_]?set|drive\.google\.com|docs\.google\.com|colab\.research\.google\.com|jupyter\.org|kaggle\.com\/code|deepnote\.com|datacamp\.com\/datalab|julius\.ai|replit\.com|github\.dev|codespaces\.new|stackblitz\.com|codesandbox\.io/.test(lower)) add('starter/material', url);
     }
 
     return links.slice(0, 4);
@@ -475,7 +475,7 @@
 
     if (/\b(github|git\b|commit|push|repo(?:sitory)?|branch)\b/.test(source)) add('push repo');
     if (/\b(pull request|pr\b|merge request|reviewer approval|review comments?)\b/.test(source)) add('open pull request');
-    if (/\b(jupyter|notebook|\.ipynb\b|colab|r markdown|rmarkdown|observable notebook)\b/.test(source)) add('run notebook top-to-bottom');
+    if (/\b(jupyter|notebook|\.ipynb\b|colab|kaggle notebook|kaggle code|deepnote|datalab|julius|r markdown|rmarkdown|observable notebook)\b/.test(source)) add('run notebook top-to-bottom');
     if (/\b(gradescope|autograder|auto[- ]?grader|submitty|codegrade)\b/.test(source)) add('submit autograder');
     if (/\b(readme|write[- ]?up|report|reflection|design doc|implementation notes?)\b/.test(source)) add('attach write-up');
     if (/\b(test cases?|unit tests?|pytest|npm test|xcodebuild|junit|coverage)\b/.test(source)) add('run tests');
