@@ -1279,11 +1279,17 @@
     const hints = [];
     const add = (label) => { if (!hints.includes(label)) hints.push(label); };
 
-    if (/\b(ai note[- ]?tak(?:er|ing)|auto[- ]?notes?|smart notes?|summary|summari[sz]e|transcript|transcription|caption(?:s)?|notebooklm|chatgpt|claude|gemini|llm|assistant)\b/.test(source)) {
+    if (/\b(ai note[- ]?tak(?:er|ing)|auto[- ]?notes?|smart notes?|summary|summari[sz]e|transcript|transcription|caption(?:s)?|notebooklm|coconote|chatgpt|claude|gemini|llm|assistant)\b/.test(source)) {
       add('verify summary against source');
     }
     if (/\b(lecture|class recording|slides?|reading|chapter|paper|article|notes?|study guide|summary|transcript)\b/.test(source)) {
       add('convert summary to recall prompts');
+    }
+    if (/\b(organize|outline|structure|cluster|group|tag|sort|clean up)\s+(?:my\s+|class\s+|lecture\s+)?notes?\b|\bnotes?\s+(?:organizer|organization|outline|cleanup|clean[- ]?up)\b/.test(source)) {
+      add('separate AI organization from own notes');
+    }
+    if (/\b(active practice|practice mode|practice questions?|quiz(?:zes)?|self[- ]?test|retrieval practice)\b/.test(source)) {
+      add('turn notes into practice tasks');
     }
     if (/\b(confus(?:ed|ing|ion)|unclear|muddiest point|open questions?|question list|don'?t understand|weak spots?|gaps?)\b/.test(source)) {
       add('tag unanswered questions');

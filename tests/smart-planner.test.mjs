@@ -380,6 +380,19 @@ test('SmartPlanner inferSubmissionChecklist adds AI source verification for stud
   assert.ok(checklist.includes('verify AI study output against source'));
 });
 
+test('SmartPlanner inferAiNoteQualityAuditHints keeps AI-organized notes tied to active practice', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferAiNoteQualityAuditHints({
+    description: 'Use Coconote to organize notes from lecture, then build active practice quizzes from the outline.'
+  });
+
+  assert.deepEqual(JSON.parse(JSON.stringify(hints)), [
+    'verify summary against source',
+    'convert summary to recall prompts',
+    'separate AI organization from own notes'
+  ]);
+});
+
 test('SmartPlanner inferSubmissionChecklist flags lecture transcript policy checks', () => {
   const planner = loadSmartPlanner();
   const checklist = planner.__test.inferSubmissionChecklist({
