@@ -2925,6 +2925,30 @@ test('SmartPlanner buildPlannerPrompt includes CS workflow hints', () => {
   assert.match(prompt, /CS workflow: read spec first, set up starter code, implement core path, run tests before submit/);
 });
 
+test('SmartPlanner inferAgenticCodingCheckpointHints guards coding-agent workflows', () => {
+  const planner = loadSmartPlanner();
+  const hints = planner.__test.inferAgenticCodingCheckpointHints({
+    title: 'Cursor agent project checkpoint',
+    description: 'Use Claude Code or GitHub Copilot to create a generated patch, inspect the diff, then run npm test before the PR.'
+  });
+
+  assert.deepEqual(Array.from(hints), ['checkpoint before agent edits', 'constrain files and tests', 'inspect agent diff', 'run verification loop']);
+});
+
+test('SmartPlanner buildPlannerPrompt includes agentic coding checkpoints', () => {
+  const planner = loadSmartPlanner();
+  const prompt = planner.__test.buildPlannerPrompt([
+    {
+      title: 'Agentic coding lab',
+      courseName: 'CS 169',
+      ts: new Date('2026-07-11T12:00:00-07:00').getTime(),
+      description: 'Use a Cursor agent on the starter repo, constrain files, inspect the generated diff, and run pytest before committing.'
+    }
+  ], new Date('2026-07-10T10:00:00-07:00'));
+
+  assert.match(prompt, /agentic coding checkpoint: checkpoint before agent edits, constrain files and tests, inspect agent diff, run verification loop/);
+});
+
 test('SmartPlanner inferAssignmentSpecExtractionHints extracts CS assignment key facts', () => {
   const planner = loadSmartPlanner();
   const hints = planner.__test.inferAssignmentSpecExtractionHints({
