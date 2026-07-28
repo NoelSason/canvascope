@@ -427,6 +427,18 @@ test('SmartPlanner inferAssignmentResourceLinks surfaces starter, submission, an
   ]);
 });
 
+test('SmartPlanner inferAssignmentResourceLinks recognizes course chat/help communities', () => {
+  const planner = loadSmartPlanner();
+  const links = planner.__test.inferAssignmentResourceLinks({
+    description: 'Ask implementation questions in https://discord.gg/cs61b-help or the section Slack at https://cs61b.slack.com/archives/C123 before office hours.'
+  });
+
+  assert.deepEqual(JSON.parse(JSON.stringify(links)), [
+    { label: 'discussion/help', url: 'https://discord.gg/cs61b-help' },
+    { label: 'discussion/help', url: 'https://cs61b.slack.com/archives/C123' }
+  ]);
+});
+
 test('SmartPlanner inferAssignmentResourceLinks recognizes GitHub Classroom assignment launch URLs', () => {
   const planner = loadSmartPlanner();
   const links = planner.__test.inferAssignmentResourceLinks({

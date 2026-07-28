@@ -452,7 +452,7 @@
       else if (/github\.com|gitlab\.com|bitbucket\.org/.test(lower)) add('repo', url);
       else if (/gradescope\.com|submitty|codegrade|autograder/.test(lower)) add('autograder', url);
       else if (/canvas\.instructure\.com|instructure\.com\/courses\//.test(lower)) add('canvas', url);
-      else if (/edstem\.org|piazza\.com|campuswire\.com/.test(lower)) add('discussion/help', url);
+      else if (/edstem\.org|piazza\.com|campuswire\.com|discord\.gg|discord\.com\/invite|slack\.com|teams\.microsoft\.com|zulipchat\.com|matrix\.to/.test(lower)) add('discussion/help', url);
       else if (/chatgpt\.com|claude\.ai|gemini\.google\.com|aistudio\.google\.com|learnabout\.google\.com|perplexity\.ai|khanmigo\.ai|cursor\.com|windsurf\.com|replit\.com\/agent|github\.com\/features\/copilot|bolt\.new|v0\.dev|lovable\.dev/.test(lower)) add('ai tutor', url);
       else if (/notebooklm\.google\.com|illuminate\.google\.com|quizlet\.com|coconote\.app|notion\.(?:so|com)|knowt\.com|studyfetch\.com|turbolearn\.ai|mindgrasp\.ai|studyx\.ai|gizmo\.ai|brainscape\.com|remnote\.com|raena\.ai|studyable\.app|penseum\.com|monic\.ai|studyable\.ai|thea\.study|studdy\.ai|jotbot\.ai|studyblaze\.io|quizard\.ai/.test(lower)) add('ai study guide', url);
       else if (/otter\.ai|granola\.ai|fireflies\.ai|fathom\.video|read\.ai|recall\.ai|tldv\.io|supernormal\.com|plaud\.ai|limitless\.ai|tactiq\.io|meetgeek\.ai|circleback\.ai|notta\.ai|jamie\.ai|sembly\.ai|wisprflow\.ai|mem\.ai|glean\.co|notion\.com\/product\/ai-meeting-notes/.test(lower)) add('ai notes/transcript', url);
