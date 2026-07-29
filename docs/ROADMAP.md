@@ -1,7 +1,12 @@
 # Canvascope - Development Roadmap
 
-## Current State (v10.1.0)
+## Current State (v11.0.0)
 
+- **Course Brain**: whole-course cited answers over the compiled course corpus (prompt-cache-friendly byte-stable corpus route)
+- **Exam Builder**: practice exams with separated answer keys and cited sources, from the sidepanel action or `/exam`
+- **Daily study briefing** (scheduled + on-demand)
+- Every feature is free — no tiers, metering, or paid gates anywhere in the product
+- Cmd/Ctrl + K overlay mascot (animated, draggable, typing-reactive)
 - Custom skin themes (Berkeley bCourses, UCLA BruinLearn, UCSD, MIT, etc.)
 - Hybrid local search (Fuse + lexical fusion)
 - Course-scoped queries + abbreviation/course-code expansion
@@ -9,6 +14,7 @@
 - Due planner + keyboard overlay
 - Optional Google sign-in with persistent Supabase sessions and no RISC event-driven forced sign-out
 - Lectra PDF handoff (`Send to Lectra`)
+- Lectra Receiver priority handshake so Canvascope hides Lectra-only UI when the standalone Receiver owns the page
 - DropBridge v3 PDF transport for iPad pickup, realtime wake receipts, and browser download return flow
 - Canvas `courseCatalog` + `courseSnapshots` sync for Lectra Course Brain
 - Character Profile suggestions from due dates, grades, recent searches, and recent supported LMS pages
@@ -38,6 +44,7 @@
 ### Phase 2.5: Lectra Bridge (v2.2)
 - Canvas PDF detection pipeline
 - Floating and popup send actions
+- Stand-down behavior for duplicate Lectra UI when the standalone Lectra Receiver is active
 - PDF validation + DropBridge v2 upload flow (25 MB)
 - Realtime wake subscription + 60s fallback polling
 - Namespaced Course Brain sync rows: `canvascope_course_catalog_v1` and `canvascope_course_snapshot_v1`
@@ -61,6 +68,13 @@
 - Supabase `character_profile` sync table deployed with RLS for account-linked summaries and settings
 - Removed unused historical MedMatch Supabase tables from the Canvascope/Lectra database contract
 
+### Phase 2.9: Course Brain + Exam Builder (v11.0.0)
+- Course Brain corpus route wired in the sidepanel Ask path (byte-stable corpus + system prompt for shared prompt caching)
+- Exam Builder v1 (`src/core/exam-builder.js`, sidepanel action, `/exam` slash command) with per-course saved exams
+- Subscription tiers explored and removed before launch: no Stripe checkout, entitlements, metering, or paid gating ships — every feature is free
+- Assignment clipboard signal reverted to v10.2.0 behavior (gesture-only Paste assignment button; no ambient clipboard capture, storage, or sync) — revisit later only with a consent-first design
+- Hygiene: `google-token-refresh` edge function vendored back into the repo; `risc-receiver` repo dir removed (server-side function retirement verified complete); stray root mascot SVGs removed
+
 ### Phase 2.8: Ask / RAG Grounding
 - Current-date grounding is included in compiled prompts so both local and cloud AI routes answer relative-date questions against the real day
 - Broad material-summary questions surface recent/course-scoped Canvas files even when only title/path/week/date metadata has been indexed
@@ -76,8 +90,9 @@
 - [x] Add a full profile controls view for inspect, unpause, clear/delete, and sync status
 - [x] Restore Settings access to the manual Student Profile fields that feed personalization context
 - [ ] Add manual extension QA for install permission warnings, paste-button focus behavior, and resume-page opening
-- [ ] Reconcile store listing screenshots/copy after the required `history` and `clipboardRead` permissions ship
+- [ ] Reconcile store listing screenshots/copy after the required `history` and `clipboardRead` permissions ship (new screenshots for Course Brain + Exam Builder)
 - [ ] Keep GitHub, Google Workspace, and mail/calendar sources out of the shipped product until connector-specific consent, deletion, and review plans exist
+- [ ] Clipboard engagement signal: revisit only with a consent-first, labels-only, local-only design (see governance gates in `characterProfile/AGENT_WORKFLOW.md`)
 
 ### Phase 3: Content Extraction
 - [x] PDF text extraction and indexing

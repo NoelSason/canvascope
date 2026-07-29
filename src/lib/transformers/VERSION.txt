@@ -1,0 +1,4 @@
+@huggingface/transformers 3.8.1 (dist/transformers.min.js, ESM)
+onnxruntime-web 1.22.0-dev.20250409-89f8206ba4 (jsep build — the only ORT runtime shipped in transformers.js >=3.3; includes the plain WASM CPU execution provider used here. WebGPU is never enabled.)
+Model: Xenova/bge-small-en-v1.5 (onnx/model_quantized.onnx, dtype q8 -> _quantized suffix per src/utils/dtypes.js)
+Vendored 2026-07-22. Never fetched at runtime; all assets load via chrome.runtime.getURL.

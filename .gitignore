@@ -35,3 +35,10 @@ characterProfile/
 CLAUDE.md
 AGENTS.md
 .github/copilot-instructions.md
+
+# Embeddings eval/fine-tune personal data — never commit
+scripts/eval/data/
+scripts/eval/reports/
+scripts/finetune/data/
+scripts/finetune/runs/
+.gstack/

@@ -1,7 +1,10 @@
+// NOTE: this file mirrors the deployed function exactly. It does NOT record
+// DropBridge receipts -- an earlier local-only edit added that, but it was
+// never deployed, and the live function returns `metadata` on each upload
+// instead. Re-adding receipts here is a deliberate change, not a merge.
 import { corsHeaders, json } from "../_shared/cors.ts";
 import { admin, requireUuid } from "../_shared/device-auth.ts";
 import { HttpError, requireAuthUser } from "../_shared/auth-user.ts";
-import { recordDropBridgeReceipt } from "../_shared/dropbridge-receipts.ts";
 
 type PendingV2Payload = {
   deviceId?: string;
@@ -11,6 +14,10 @@ type PendingV2Payload = {
 
 const STALE_CLAIM_WINDOW_MS = 10 * 60 * 1000;
 const STALE_DEVICE_WINDOW_MS = 12 * 60 * 1000;
+// Each claim mints a signed URL and costs a full re-download of the object.
+// Without a cap a stuck upload re-downloaded every poll cycle until its 24h
+// expiry -- up to 720 pulls of the same file.
+const MAX_DOWNLOAD_ATTEMPTS = 5;
 
 Deno.serve(async (request) => {
   if (request.method === "OPTIONS") {
@@ -188,17 +195,18 @@ Deno.serve(async (request) => {
 
     const ids = queuedRows.map((row) => row.id);
 
-    const { data: claimedRows, error: claimError } = await admin
-      .from("uploads")
-      .update({
-        status: "downloading",
-        claimed_at: new Date().toISOString(),
-      })
-      .in("id", ids)
-      .eq("user_id", user.id)
-      .eq("device_id", deviceId)
-      .eq("status", "queued")
-      .select("id, file_name, object_path, mime_type, size_bytes, created_at, expires_at");
+    // Claims and increments attempts in one statement, and retires any row that
+    // has already spent its retry budget to 'failed' instead of handing out yet
+    // another signed URL.
+    const { data: claimedRows, error: claimError } = await admin.rpc(
+      "claim_dropbridge_uploads",
+      {
+        p_user_id: user.id,
+        p_device_id: deviceId,
+        p_ids: ids,
+        p_max_attempts: MAX_DOWNLOAD_ATTEMPTS,
+      },
+    );
 
     if (claimError) {
       throw new Error(`Unable to claim uploads: ${claimError.message}`);
@@ -211,17 +219,6 @@ Deno.serve(async (request) => {
     const uploads = [];
 
     for (const row of claimedRows) {
-      await recordDropBridgeReceipt({
-        uploadId: row.id,
-        userId: user.id,
-        deviceId,
-        stage: "claimed",
-        detail: {
-          method: "fallback_list",
-          clientKind: requestedClientKind,
-        },
-      });
-
       const { data: signedData, error: signedError } = await admin.storage
         .from("drops")
         .createSignedUrl(row.object_path, 60 * 5);
@@ -236,17 +233,6 @@ Deno.serve(async (request) => {
         continue;
       }
 
-      await recordDropBridgeReceipt({
-        uploadId: row.id,
-        userId: user.id,
-        deviceId,
-        stage: "signed_url_issued",
-        detail: {
-          method: "fallback_list",
-          ttlSeconds: 60 * 5,
-        },
-      });
-
       uploads.push({
         id: row.id,
         uploadId: row.id,
@@ -255,6 +241,7 @@ Deno.serve(async (request) => {
         sizeBytes: row.size_bytes,
         createdAt: row.created_at,
         expiresAt: row.expires_at,
+        metadata: row.metadata ?? {},
         downloadUrl: signedData.signedUrl,
       });
     }

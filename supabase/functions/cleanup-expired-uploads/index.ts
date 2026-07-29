@@ -4,6 +4,9 @@ import { isServiceRoleRequest } from "../_shared/auth-user.ts";
 
 const BATCH_LIMIT = 500;
 const TERMINAL_RETENTION_MS = 24 * 60 * 60 * 1000;
+// 'failed' is terminal too -- rows retired by the claim retry cap still hold a
+// stored object, so they have to be swept like any other terminal row.
+const TERMINAL_STATUSES = ["downloaded", "canceled", "failed"];
 
 Deno.serve(async (request) => {
   if (request.method === "OPTIONS") {
@@ -65,7 +68,7 @@ Deno.serve(async (request) => {
     const { data: staleTerminalRows, error: staleListError } = await admin
       .from("uploads")
       .select("id, object_path")
-      .in("status", ["downloaded", "canceled"])
+      .in("status", TERMINAL_STATUSES)
       .lte("created_at", terminalCutoffIso)
       .order("created_at", { ascending: true })
       .limit(BATCH_LIMIT);

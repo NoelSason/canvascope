@@ -6,25 +6,31 @@
  */
 class LocalEmbeddingsController {
   constructor() {
-    this.pipelineInstance = null;
     this.loading = false;
     this.initialized = false;
+    this.ready = false;
   }
 
   /**
-   * Initializes the side panel embedding controller.
-   * Remote module loading is intentionally disabled by the MV3 extension CSP,
-   * so the controller uses the bundled deterministic fallback.
+   * Warms the shared offscreen embedding host (fire-and-forget) so the first
+   * real semantic query doesn't pay the model load. The hash fallback below
+   * needs no initialization and keeps working regardless of the warmup
+   * outcome.
    */
   async initPipeline() {
     if (this.initialized || this.loading) return;
     this.loading = true;
     try {
-      this.pipelineInstance = null;
       this.initialized = true;
-      console.log('[Canvascope Embeddings] Using bundled semantic fallback embeddings.');
+      const scope = (typeof self !== 'undefined') ? self : globalThis;
+      const client = scope.CanvascopeEmbedClient;
+      if (client && scope.CanvascopeEmbeddingsConfig?.EMBEDDINGS_ENABLED === true) {
+        client.warmup().then((ok) => {
+          this.ready = ok === true;
+        }).catch(() => {});
+      }
     } catch (e) {
-      console.warn('[Canvascope Embeddings] Failed to initialize semantic fallback:', e);
+      console.warn('[Canvascope Embeddings] Failed to initialize embeddings:', e);
     } finally {
       this.loading = false;
     }
@@ -32,26 +38,28 @@ class LocalEmbeddingsController {
 
   /**
    * Generates a 384-dimensional float array embedding for the given text.
+   * Routes through the on-device bge host when available; any failure falls
+   * back to the deterministic hash projection (same interface, same dims).
    * @param {string} text - Input text
    * @returns {Promise<Array<number>>} 384-dimensional float array
    */
   async getEmbedding(text) {
     if (!text) return new Array(384).fill(0);
 
-    // 1. Use a bundled pipeline only if one is explicitly assigned later.
-    if (this.initialized && this.pipelineInstance) {
+    const scope = (typeof self !== 'undefined') ? self : globalThis;
+    const client = scope.CanvascopeEmbedClient;
+    if (client) {
       try {
-        const output = await this.pipelineInstance(text, { pooling: 'mean', normalize: true });
-        const vector = Array.from(output.data);
-        if (vector.length === 384) {
-          return vector;
+        const vector = await client.embedQuery(text);
+        if (vector && vector.length === 384) {
+          return Array.from(vector);
         }
       } catch (err) {
-        console.warn('[Canvascope Embeddings] Pipeline execution failed, falling back:', err);
+        console.warn('[Canvascope Embeddings] Host embedding failed, falling back:', err);
       }
     }
 
-    // 2. Fallback to 24-dimension vocabulary projection hashed into 384 dimensions
+    // Fallback: 24-dimension vocabulary projection hashed into 384 dimensions
     return this.generateFallbackEmbedding(text);
   }
 

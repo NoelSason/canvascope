@@ -42,3 +42,28 @@ test('LocalEmbeddingsController hashSign is deterministic', () => {
   assert.ok(sign1 === 1 || sign1 === -1, 'Sign must be +1 or -1');
   assert.ok(sign3 === 1 || sign3 === -1, 'Sign must be +1 or -1');
 });
+
+test('getEmbedding falls back to the hash projection when no embed client exists', async () => {
+  delete globalThis.CanvascopeEmbedClient;
+  const controller = new LocalEmbeddingsController();
+  const viaGetEmbedding = await controller.getEmbedding('biology midterm exam');
+  const direct = controller.generateFallbackEmbedding('biology midterm exam');
+  assert.deepEqual(viaGetEmbedding, direct, 'without a host client, getEmbedding IS the hash fallback');
+});
+
+test('getEmbedding routes through the embed client and null-falls-back to hash', async () => {
+  const controller = new LocalEmbeddingsController();
+  const hostVector = new Float32Array(384).fill(0.05);
+
+  globalThis.CanvascopeEmbedClient = { embedQuery: async () => hostVector };
+  const routed = await controller.getEmbedding('biology midterm exam');
+  assert.equal(routed.length, 384);
+  assert.ok(Math.abs(routed[0] - 0.05) < 1e-6, 'host vector is returned when the client succeeds');
+
+  globalThis.CanvascopeEmbedClient = { embedQuery: async () => null };
+  const fallback = await controller.getEmbedding('biology midterm exam');
+  assert.deepEqual(fallback, controller.generateFallbackEmbedding('biology midterm exam'),
+    'a null from the client falls back to the hash projection byte-identically');
+
+  delete globalThis.CanvascopeEmbedClient;
+});

@@ -793,6 +793,8 @@
       position: relative;
     }
 
+
+
     /* ---------- SEARCH BAR ---------- */
     .slash-search-bar {
       position: relative;

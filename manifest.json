@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Canvascope",
-  "version": "10.2.0",
+  "version": "11.0.0",
   "minimum_chrome_version": "116",
   "default_locale": "en",
   "description": "Turn Canvas into an AI study hub: cited course answers, instant PDF search, deadline insights, and smarter planning for every class.",
@@ -122,7 +122,6 @@
         "*://*.gradescope.com/*"
       ],
       "js": [
-        "src/lib/pdf.min.js",
         "src/content/attach-from-lectra.js",
         "src/content/gradescope.js"
       ],

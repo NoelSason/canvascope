@@ -117,6 +117,8 @@ async function createHarness() {
   context.Date.now = () => FIXED_NOW;
 
   vm.createContext(context);
+  // popup.html loads query-normalizer.js before popup.js; mirror that order.
+  vm.runInContext(fs.readFileSync(path.join(__dirname, 'src/core/query-normalizer.js'), 'utf8'), context);
   vm.runInContext(fs.readFileSync(path.join(__dirname, 'src/popup/popup.js'), 'utf8'), context);
 
   vm.runInContext(`

@@ -246,3 +246,72 @@ test('RAGCore.compileUnifiedPrompt gives local AI date grounding and sparse file
     mockTabUrl = prevTabUrl;
   }
 });
+
+// The Canvas scan strips `pages` and `content` off every rescanned item, so the
+// only durable copy of PDF body text is courseMaterialChunks. buildCorpus
+// re-attaches it on read — which is what puts page text in front of the
+// embedding index, since computeWantedEntries turns each page into its own
+// vector. Without course-materials.js loaded, buildCorpus must no-op cleanly
+// (that is the case for every context that doesn't load it).
+test('RAGCore.buildCorpus hydrates PDF page text from courseMaterialChunks', async () => {
+  const prevIndexed = mockStorage.indexedContent;
+  const scannedItem = {
+    title: 'Lecture 3.pdf',
+    courseName: 'Math 1A',
+    courseId: '1550636',
+    type: 'pdf',
+    url: 'https://bcourses.berkeley.edu/courses/1550636/files/93606933'
+    // note: no `pages`, no `content` — exactly what a fresh scan leaves behind
+  };
+  mockStorage.indexedContent = [scannedItem];
+  mockStorage.courseMaterialChunks = [
+    {
+      chunkId: 'course-material:abcd1234:p1:0',
+      documentId: 'course-material:abcd1234',
+      canvasFileId: '93606933',
+      courseId: '1550636',
+      title: 'Lecture 3.pdf',
+      url: 'https://bcourses.berkeley.edu/files/93606933/download',
+      pageStart: 1, pageEnd: 1, chunkIndex: 0,
+      text: 'The chain rule states that the derivative of a composite function...'
+    },
+    {
+      chunkId: 'course-material:abcd1234:p2:0',
+      documentId: 'course-material:abcd1234',
+      canvasFileId: '93606933',
+      courseId: '1550636',
+      title: 'Lecture 3.pdf',
+      url: 'https://bcourses.berkeley.edu/files/93606933/download',
+      pageStart: 2, pageEnd: 2, chunkIndex: 1,
+      text: 'Worked example: differentiate sin(x^2).'
+    }
+  ];
+  mockStorage.courseMaterialDocuments = [];
+
+  try {
+    // Without CanvascopeCourseMaterials present this is a silent no-op.
+    const bare = await RAGCore.buildCorpus();
+    const bareItem = bare.find(i => i.title === 'Lecture 3.pdf');
+    assert.equal(bareItem.pages, null, 'no hydration when course-materials.js is absent');
+
+    const cmPath = path.resolve(__dirname, '..', 'src', 'core', 'course-materials.js');
+    new Function(fs.readFileSync(cmPath, 'utf8'))();
+    assert.ok(globalThis.CanvascopeCourseMaterials, 'course-materials installed on globalThis');
+
+    const corpus = await RAGCore.buildCorpus();
+    const hydrated = corpus.find(i => i.title === 'Lecture 3.pdf');
+
+    assert.deepEqual(hydrated.pages.map(p => p.pageNum), [1, 2]);
+    assert.match(hydrated.pages[0].text, /chain rule/);
+    assert.match(hydrated.content, /sin\(x\^2\)/);
+    // The five itemKey inputs must survive hydration untouched.
+    for (const field of ['title', 'url', 'type', 'courseId', 'courseName']) {
+      assert.equal(hydrated[field], scannedItem[field]);
+    }
+  } finally {
+    mockStorage.indexedContent = prevIndexed;
+    delete mockStorage.courseMaterialChunks;
+    delete mockStorage.courseMaterialDocuments;
+    delete globalThis.CanvascopeCourseMaterials;
+  }
+});

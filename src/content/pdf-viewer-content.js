@@ -1,7 +1,9 @@
 (() => {
     const initKey = '__canvascopePdfViewerOverlayInitialized';
-    const DEBUG = true;
+    const DEBUG = false;
     const VIEWER_CHANGE_DEBOUNCE_MS = 40;
+    const LECTRA_RECEIVER_ACTIVE_ATTR = 'data-lectra-receiver-active';
+    const LECTRA_RECEIVER_ACTIVE_EVENT = 'lectra-receiver:active';
 
     function debug(message, details = undefined) {
         if (!DEBUG) return;
@@ -59,6 +61,16 @@
 
     function isSendToLectraEnabled() {
         return Boolean(viewerExtensionSettings.enableSendToLectra);
+    }
+
+    function isLectraReceiverActive() {
+        return document.documentElement?.getAttribute(LECTRA_RECEIVER_ACTIVE_ATTR) === 'true';
+    }
+
+    function standDownForLectraReceiver() {
+        overlayContext = null;
+        removeSendButton();
+        debug('Standing down because Lectra Receiver is active');
     }
 
     function decodePossiblyEncodedUrl(value) {
@@ -604,7 +616,16 @@
             return;
         }
 
+        if (isLectraReceiverActive()) {
+            standDownForLectraReceiver();
+            return;
+        }
+
         chrome.runtime.sendMessage({ action: 'resolvePdfViewerOverlayContext' }, (response) => {
+            if (isLectraReceiverActive()) {
+                standDownForLectraReceiver();
+                return;
+            }
             if (requestId !== latestOverlayRequestId) {
                 debug('Ignoring stale overlay response', {
                     requestId,
@@ -819,5 +840,13 @@
         debug('Received debug ping', payload);
         sendResponse(payload);
         return true;
+    });
+
+    window.addEventListener(LECTRA_RECEIVER_ACTIVE_EVENT, (event) => {
+        if (event?.detail?.active === false) {
+            handleViewerContextChange('lectra_receiver_inactive', { force: true });
+            return;
+        }
+        standDownForLectraReceiver();
     });
 })();

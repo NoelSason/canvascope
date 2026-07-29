@@ -24,6 +24,13 @@ importScripts('../core/syllabus-memory.js');
 // helpers) and background-cs-extras (CanvascopeAgentSync), so load last.
 importScripts('../core/semantic-matcher.js');
 importScripts('../core/course-materials.js');
+// On-device embeddings: frozen config, shared query normalizer, persisted
+// int8 vector index, and the offscreen-host client. Loaded before rag-core
+// so its bge-first retrieval paths see the globals.
+importScripts('../core/embeddings-config.js');
+importScripts('../core/query-normalizer.js');
+importScripts('../core/embedding-index.js');
+importScripts('../core/embed-client.js');
 importScripts('../core/rag-core.js');
 importScripts('../core/optional-capabilities.js');
 importScripts('../core/character-profile.js');
@@ -31,3 +38,6 @@ importScripts('../core/agent-integrity.js');
 importScripts('../core/agent-memory.js');
 importScripts('../core/agent-tools.js');
 importScripts('../core/agent-loop.js');
+// Alarm-debounced background builder for the persisted embedding index.
+// Loaded last: needs RAGCore + CanvascopeEmbeddingIndex + CanvascopeEmbedClient.
+importScripts('embedding-index-sync.js');

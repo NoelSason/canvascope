@@ -116,3 +116,82 @@ test('DropBridge v3 migration adds receipts and hot-path indexes', () => {
   assert.match(migrationSource, /idx_devices_user_kind_last_seen/);
   assert.match(migrationSource, /wake_emitted/);
 });
+
+test('DropBridge stop parks the shared offscreen receiver instead of closing the document', () => {
+  const stopLoop = sourceBetween(
+    backgroundSource,
+    'function stopDropBridgeV2Loop()',
+    'async function startDropBridgeV2Loop',
+  );
+  assert.match(stopLoop, /softDisconnectDropBridgeV2Receiver\('loop-stop'\)/);
+  assert.doesNotMatch(stopLoop, /closeDropBridgeV2OffscreenReceiver/);
+});
+
+test('DropBridge start re-arms the receiver latch after ensuring the shared document', () => {
+  const startLoop = sourceBetween(
+    backgroundSource,
+    'async function startDropBridgeV2Loop',
+    'async function bootstrapDropBridgeV2FromWorkerStart',
+  );
+  const ensureIdx = startLoop.indexOf('ensureDropBridgeV2OffscreenReceiver(reason)');
+  const connectIdx = startLoop.indexOf('sendDropBridgeReceiverConnect(reason)');
+  assert.notEqual(ensureIdx, -1, 'start loop still ensures the offscreen document');
+  assert.notEqual(connectIdx, -1, 'start loop sends the receiver connect message');
+  assert.ok(connectIdx > ensureIdx, 'connect message is sent after the ensure');
+});
+
+test('Shared offscreen close decision consults both residents', () => {
+  const maybeClose = sourceBetween(
+    backgroundSource,
+    'async function maybeCloseSharedOffscreenDocument',
+    'async function sendDropBridgeReceiverConnect',
+  );
+  assert.match(maybeClose, /isDropBridgeV2ReceiverWanted\(\)/);
+  assert.match(maybeClose, /queryEmbeddingsHostStatus/);
+  assert.match(maybeClose, /closeDropBridgeV2OffscreenReceiver\(reason\)/);
+});
+
+test('Offscreen receiver latch gates reconnect scheduling and connect attempts', () => {
+  const reconnect = sourceBetween(offscreenSource, 'function scheduleReconnect', 'async function ensureSupabaseClient');
+  assert.match(reconnect, /if \(!receiverEnabled\) return;/);
+  assert.match(offscreenSource, /dropbridgeReceiverConnect/);
+  assert.match(offscreenSource, /dropbridgeReceiverDisconnect/);
+  assert.match(offscreenSource, /receiver-disabled/);
+  // The embeddings host owns target:'cs-embeddings' traffic; the receiver
+  // listener must let it fall through.
+  assert.match(offscreenSource, /message\.target === 'cs-embeddings'\) return false/);
+});
+
+test('Palette rows for notes and to-dos are identifiable and actionable', () => {
+  const popupSource = readFileSync(new URL('../src/popup/popup.js', import.meta.url), 'utf8');
+  // Notes carry no courseName and to-dos may carry an empty one; without a
+  // fallback subtitle they render as a bare title with no hint of what they
+  // are (they read as phantom rows).
+  assert.match(popupSource, /item\.courseName \|\| item\.moduleName/);
+  // Their synthetic '#cs-note-'/'#cs-todo-' urls fail isValidLmsUrl, so
+  // openResult must handle them before that gate or selecting one is a
+  // silent no-op.
+  const openResult = sourceBetween(popupSource, 'function openResult(item, event)', 'if (item.url && isValidLmsUrl(item.url))');
+  assert.match(openResult, /__isNote \|\| item\.__isCustomTodo/);
+  assert.match(openResult, /action: 'notes'/);
+});
+
+test('Custom to-dos are excluded from palette search entirely', () => {
+  const popupSource = readFileSync(new URL('../src/popup/popup.js', import.meta.url), 'utf8');
+  const applyFilters = sourceBetween(popupSource, 'function applyFilters()', 'function handleFilterChange');
+  // filteredContent is the single corpus behind the Fuse index, the instant
+  // overlay preview, and the full search — filtering here covers all three.
+  assert.match(applyFilters, /item\.__isCustomTodo\) return false/);
+});
+
+test('Palette default Enter target skips personal to-dos and notes', () => {
+  const popupSource = readFileSync(new URL('../src/popup/popup.js', import.meta.url), 'utf8');
+  const display = sourceBetween(popupSource, 'function displayResults(results)', 'function buildSubmissionBadge');
+  // The default-highlighted row (what Enter opens) must be the first REAL
+  // content row: a to-do titled "Homework" exact-matches "hw" and would
+  // otherwise own the top slot over every real homework file.
+  assert.match(display, /defaultHighlightIndex/);
+  assert.match(display, /!r\.item\?\.__isNote && !r\.item\?\.__isCustomTodo/);
+  assert.match(display, /index === defaultHighlightIndex/);
+  assert.doesNotMatch(display, /inOverlay && index === 0/);
+});

@@ -244,6 +244,48 @@ test('deadlines outside the 7-day window are not surfaced', () => {
   assert.equal(CP._deriveSuggestions(far, { now }).length, 0, 'far deadline excluded');
 });
 
+test('searchAffinitySummaries surfaces the highest-affinity query at a 2-click floor', () => {
+  const now = Date.UTC(2026, 5, 30, 12, 0, 0);
+  assert.deepEqual(CP._searchAffinitySummaries(null, now), []);
+  assert.deepEqual(CP._searchAffinitySummaries({ queryAffinity: { 'thermo hw': { r1: 1 } } }, now), [], 'below the 2-click floor');
+
+  const out = CP._searchAffinitySummaries({
+    queryAffinity: {
+      'thermo hw': { r1: 1, r2: 1 },
+      'chem lab': { r1: 3 }
+    }
+  }, now);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].kind, 'search_affinity');
+  assert.match(out[0].text, /chem lab/);
+  assert.ok(out[0].text.length <= 160);
+  CP._assertNoRawContent({ enabled: true, paused: false, dismissed: [], summaries: out, updatedAt: null });
+});
+
+test('disengagementSummaries is a plain dismissal count, empty when none', () => {
+  const now = Date.UTC(2026, 5, 30, 12, 0, 0);
+  assert.deepEqual(CP._disengagementSummaries([], now), []);
+  assert.deepEqual(CP._disengagementSummaries(null, now), []);
+  const out = CP._disengagementSummaries(['id1', 'id2', 'id3'], now);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].kind, 'disengagement');
+  assert.equal(out[0].text, '3 tasks dismissed from Up Next');
+  CP._assertNoRawContent({ enabled: true, paused: false, dismissed: [], summaries: out, updatedAt: null });
+});
+
+test('getSuggestions end-to-end: search affinity + disengagement sync as content-light summaries', async () => {
+  installChrome({
+    searchHabits: { queryAffinity: { 'chem lab': { r1: 3 } } },
+    dismissedTasks: ['id1', 'id2']
+  });
+  await CP.getSuggestions();
+  const stored = mockStorage[CP.STORAGE_KEY];
+  const kinds = stored.summaries.map((s) => s.kind);
+  assert.ok(kinds.includes('search_affinity'), 'search affinity synced');
+  assert.ok(kinds.includes('disengagement'), 'disengagement synced');
+  CP._assertNoRawContent(stored);
+});
+
 test('side panel exposes top-level Character Profile controls', () => {
   assert.match(sidepanelHtml, /id="character-profile-controls"/);
   assert.match(sidepanelHtml, /id="cpf-enabled"[^>]*type="checkbox"/);

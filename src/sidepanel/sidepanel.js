@@ -27,7 +27,8 @@ document.addEventListener('DOMContentLoaded', () => {
   const viewTabs = document.querySelectorAll('.view-tab');
   const views = { chat: document.getElementById('view-chat') };
   const DEFAULT_EXTENSION_SETTINGS = Object.freeze({
-    enableSendToLectra: false
+    enableSendToLectra: false,
+    enablePolyaConnect: true
   });
   let extensionSettings = { ...DEFAULT_EXTENSION_SETTINGS };
   let activeView = 'chat';
@@ -480,6 +481,8 @@ Style: concise (2-4 sentences or a short list). Use bold text, inline code backt
       // 'brain'/'plan' are now folded into the unified Ask (chat) surface.
       if (action === 'quiz') {
         askQuiz();
+      } else if (action === 'exam') {
+        buildExam();
       } else if (action === 'briefing') {
         if (sidepanelIntent.run) runDailyBriefingInPanel();
         else renderStoredBriefing();
@@ -570,16 +573,25 @@ Style: concise (2-4 sentences or a short list). Use bold text, inline code backt
     });
   });
 
+  // 4.1 "Build practice exam" (Pro) — action-only chip; the generic
+  // suggestButtons handler above ignores it (no data-prompt), so wire it here.
+  const examBtn = document.getElementById('btn-suggest-exam');
+  if (examBtn) {
+    examBtn.addEventListener('click', () => { void buildExam(); });
+  }
+
   // 4.2 Setup "Send PDF to Lectra" button — sends the PDF detected on the
   // active tab to Lectra via the background service worker (same backend the
   // in-page /ls slash command uses).
   const lectraBtn = document.getElementById('btn-lectra-send');
+  const polyaBtn = document.getElementById('btn-polya-study');
   function normalizeExtensionSettings(rawSettings) {
     const source = rawSettings && typeof rawSettings === 'object' ? rawSettings : {};
     return {
       ...DEFAULT_EXTENSION_SETTINGS,
       ...source,
-      enableSendToLectra: Boolean(source.enableSendToLectra)
+      enableSendToLectra: Boolean(source.enableSendToLectra),
+      enablePolyaConnect: source.enablePolyaConnect !== false
     };
   }
 
@@ -592,16 +604,23 @@ Style: concise (2-4 sentences or a short list). Use bold text, inline code backt
     lectraBtn.hidden = !isLectraEnabled();
   }
 
-  if (lectraBtn) {
+  function updatePolyaButtonVisibility() {
+    if (!polyaBtn) return;
+    polyaBtn.hidden = extensionSettings.enablePolyaConnect === false;
+  }
+
+  if (lectraBtn || polyaBtn) {
     chrome.storage.local.get(['settings']).then((data) => {
       extensionSettings = normalizeExtensionSettings(data.settings);
       updateLectraButtonVisibility();
+      updatePolyaButtonVisibility();
     }).catch(() => {
       extensionSettings = { ...DEFAULT_EXTENSION_SETTINGS };
       updateLectraButtonVisibility();
+      updatePolyaButtonVisibility();
     });
 
-    lectraBtn.addEventListener('click', async () => {
+    if (lectraBtn) lectraBtn.addEventListener('click', async () => {
       if (!isLectraEnabled()) return;
       lectraBtn.disabled = true;
       const bubble = addSystemBubble('**Sending the PDF on this page to Lectra...**');
@@ -635,6 +654,63 @@ Style: concise (2-4 sentences or a short list). Use bold text, inline code backt
         content.innerHTML = parseSimpleMarkdown('**Couldn\'t send to Lectra**: ' + (e.message || e));
       } finally {
         lectraBtn.disabled = false;
+        scrollViewport();
+      }
+    });
+
+    // 4.3 "Study in Polya" — brings the active tab's Canvas course into Polya
+    // via the background worker (same signed-in account, nothing to paste).
+    if (polyaBtn) polyaBtn.addEventListener('click', async () => {
+      if (extensionSettings.enablePolyaConnect === false) return;
+      polyaBtn.disabled = true;
+      const bubble = addSystemBubble('**Bringing this course into Polya...** This can take a few minutes for a large course.');
+      try {
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        let baseUrl = null;
+        let canvasCourseId = null;
+        try {
+          const tabUrl = new URL(tab?.url || '');
+          const courseMatch = tabUrl.pathname.match(/\/courses\/(\d+)/);
+          if (courseMatch) {
+            baseUrl = tabUrl.origin;
+            canvasCourseId = courseMatch[1];
+          }
+        } catch {
+          // not a parseable tab URL
+        }
+
+        const content = bubble.querySelector('.bubble-content');
+        if (!baseUrl || !canvasCourseId) {
+          content.innerHTML = parseSimpleMarkdown('**Open a Canvas course first** — go to the course on Canvas, then press Study in Polya.');
+          return;
+        }
+
+        const res = await new Promise((resolve) => {
+          chrome.runtime.sendMessage({
+            action: 'polyaImportCourse',
+            baseUrl,
+            canvasCourseId
+          }, (response) => resolve(response || { success: false, message: 'No response from background script.' }));
+        });
+
+        if (res.success) {
+          const summary = res.sent > 0
+            ? `${res.sent} item${res.sent === 1 ? '' : 's'} sent${res.unchanged ? `, ${res.unchanged} already up to date` : ''}.`
+            : 'Everything was already up to date.';
+          content.innerHTML = parseSimpleMarkdown(`**Course sent to Polya** — ${summary} [Open it in Polya](${res.openUrl}) to start studying.`);
+        } else {
+          const hint = res.code === 'not_signed_in'
+            ? ' Sign in via the Canvascope popup with the same Google account you use for Polya.'
+            : res.code === 'feature_disabled'
+              ? ' Turn Study in Polya back on in settings.'
+              : '';
+          content.innerHTML = parseSimpleMarkdown(`**Couldn't send this course to Polya**: ${res.message || 'Unknown error.'}${hint}`);
+        }
+      } catch (e) {
+        const content = bubble.querySelector('.bubble-content');
+        content.innerHTML = parseSimpleMarkdown('**Couldn\'t send this course to Polya**: ' + (e.message || e));
+      } finally {
+        polyaBtn.disabled = false;
         scrollViewport();
       }
     });
@@ -1010,7 +1086,6 @@ Style: concise (2-4 sentences or a short list). Use bold text, inline code backt
         if (content) content.innerHTML = parseSimpleMarkdown(`I hit a problem doing that: ${message || 'please try again.'}`);
         resolve({ status: 'error' });
       }
-
       let port;
       try { port = chrome.runtime.connect({ name: 'agentRun' }); }
       catch (e) { fail(e.message); return; }
@@ -1159,6 +1234,113 @@ Style: concise (2-4 sentences or a short list). Use bold text, inline code backt
     return submitPrompt(`Create a 4-question practice quiz on the most important concepts in ${scopeLabel}. For each question give the answer on the next line in bold. Base every question on the sources.`);
   }
 
+  let examBusy = false;
+
+  /**
+   * Build a full practice exam (multiple-choice + short-answer) with an answer
+   * key from everything indexed in the current Ask scope. Pro-only: entitled →
+   * streams via the same corpus route Course Brain uses; not entitled → the
+   * shared Pro upsell card. Shows the last saved exam for the scope on entry
+   * (unless regenerating).
+   * @param {{regenerate?:boolean}} [opts]
+   */
+  async function buildExam({ regenerate = false } = {}) {
+    if (examBusy) return;
+    if (typeof window.CanvascopeExamBuilder === 'undefined') return;
+    examBusy = true;
+    switchView('chat');
+
+    const scope = askCourseScope; // '' = every course
+    const scopeLabel = scope || 'your courses';
+
+    appendBubble('student', '', regenerate
+      ? `Build a fresh practice exam for ${scopeLabel}.`
+      : `Build a practice exam for ${scopeLabel}.`);
+    const aiBubble = appendBubble('assistant', '', '');
+    const bubbleContent = aiBubble.querySelector('.bubble-content');
+
+    try {
+      // Prefer the last saved exam for this scope so re-opening is instant.
+      if (!regenerate) {
+        const last = await window.CanvascopeExamBuilder.loadLastExam(scope);
+        if (last && last.markdown) {
+          renderExamResult(aiBubble, bubbleContent, last.markdown, [], { saved: true, generatedAt: last.generatedAt });
+          return;
+        }
+      }
+
+      // Make sure the AI route is warmed (corpus forces the cloud claude-proxy).
+      await ensureSessionForSubmit();
+
+      const loader = document.createElement('div');
+      loader.className = 'stream-loader';
+      loader.innerHTML = `<div class="stream-dot"></div><div class="stream-dot"></div><div class="stream-dot"></div>`;
+      bubbleContent.appendChild(loader);
+      scrollViewport();
+
+      const { markdown, sources } = await window.CanvascopeExamBuilder.build(
+        { courseName: scope, questionCount: 10 },
+        {
+          onDelta: (_delta, full) => {
+            if (bubbleContent.querySelector('.stream-loader')) bubbleContent.innerHTML = '';
+            bubbleContent.innerHTML = parseSimpleMarkdown(full);
+            scrollViewport();
+          }
+        }
+      );
+
+      if (markdown && markdown.trim()) {
+        renderExamResult(aiBubble, bubbleContent, markdown, sources || [], { saved: false });
+      } else {
+        bubbleContent.innerHTML = parseSimpleMarkdown('*No exam was generated. Try again.*');
+      }
+    } catch (err) {
+      console.error('[Canvascope Exam] Build failed:', err);
+      if (bubbleContent.querySelector('.stream-loader')) bubbleContent.innerHTML = '';
+      bubbleContent.innerHTML = parseSimpleMarkdown(`I couldn't build the exam: ${err.message || String(err)}`);
+    } finally {
+      examBusy = false;
+      refreshSendState();
+    }
+  }
+
+  /**
+   * Render a finished/saved exam into its bubble: decorated markdown, source
+   * chips (fresh builds only), an optional "saved" meta line, and a regenerate
+   * affordance.
+   */
+  function renderExamResult(aiBubble, bubbleContent, markdown, sources, meta = {}) {
+    const html = parseSimpleMarkdown(markdown);
+    bubbleContent.innerHTML = (Array.isArray(sources) && sources.length)
+      ? decorateCitations(html, sources)
+      : html;
+
+    if (meta.saved) {
+      const when = meta.generatedAt
+        ? new Date(meta.generatedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+        : '';
+      const note = document.createElement('div');
+      note.className = 'cs-indexing-status';
+      note.textContent = when ? `Saved exam · ${when}` : 'Saved exam';
+      bubbleContent.appendChild(note);
+    }
+
+    if (Array.isArray(sources) && sources.length) {
+      renderSourceChips(aiBubble, sources, bubbleContent, { mode: 'rail', maxSources: 4 });
+    }
+
+    const actions = document.createElement('div');
+    actions.className = 'exam-actions';
+    const regen = document.createElement('button');
+    regen.type = 'button';
+    regen.className = 'exam-regenerate';
+    regen.textContent = meta.saved ? 'Build a fresh exam' : 'Regenerate';
+    regen.addEventListener('click', () => { void buildExam({ regenerate: true }); });
+    actions.appendChild(regen);
+    bubbleContent.appendChild(actions);
+    scrollViewport();
+  }
+
   /**
    * The single Ask flow: tab-aware + whole-corpus retrieval, profile-
    * personalized, with clickable [n] citations. Replaces the old split
@@ -1213,10 +1395,33 @@ Style: concise (2-4 sentences or a short list). Use bold text, inline code backt
       console.warn('[Canvascope Ask] Unified retrieval failed, falling back to raw prompt:', e);
     }
 
-    // 3. Stream the answer (AIRouter normalizes chunks to deltas).
+    // 2b. Whole-course route: when the course scope compiles to a non-empty
+    //     corpus, hand the model the byte-stable full-course corpus
+    //     (prompt-cached) and cite against its own numbered sources.
+    //     BYTE-STABILITY: the corpus string is passed verbatim — all
+    //     personalization/date grounding rides in `system` only, never here.
+    let corpus = null;
+    try {
+      const compiledCorpus = await RAGCore.compileCourseCorpus(askCourseScope);
+      if (compiledCorpus && compiledCorpus.corpus
+          && Array.isArray(compiledCorpus.sources) && compiledCorpus.sources.length) {
+        corpus = compiledCorpus.corpus;
+        sources = compiledCorpus.sources;
+        fullPrompt = prompt; // question only; the corpus carries every source
+        presentation = { decorateCitations: true, sourceDisplay: 'rail' };
+        indexingStatus = null;
+      }
+    } catch (e) {
+      console.warn('[Canvascope Ask] Corpus compile failed, using chunk path:', e);
+    }
+
+    // 3. Stream the answer (AIRouter normalizes chunks to deltas). Passing a
+    //    corpus forces the claude-proxy route that holds the whole course.
+    const streamOptions = { system: systemWithProfile() };
+    if (corpus) streamOptions.corpus = corpus;
     let fullResponse = '';
     try {
-      for await (const delta of AIRouter.stream(fullPrompt, { system: systemWithProfile() })) {
+      for await (const delta of AIRouter.stream(fullPrompt, streamOptions)) {
         if (bubbleContent.querySelector('.stream-loader')) bubbleContent.innerHTML = '';
         fullResponse += delta;
         const visible = presentation.decorateCitations === false && window.CanvascopeAnswerRender?.stripCitationMarkers

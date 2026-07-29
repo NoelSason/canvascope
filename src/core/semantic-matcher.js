@@ -130,3 +130,8 @@ class SemanticMatcher {
     return sortedIds.map(id => itemMap.get(id));
   }
 }
+
+// Same reason as rag-core.js: expose the class as a real global property so
+// property-based lookups (globalScope.SemanticMatcher) resolve.
+if (typeof self !== 'undefined') self.SemanticMatcher = SemanticMatcher;
+else if (typeof globalThis !== 'undefined') globalThis.SemanticMatcher = SemanticMatcher;

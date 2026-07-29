@@ -1,6 +1,6 @@
 # Chrome Web Store Listing — Canvascope
 
-> Last Updated: 2026-05-27
+> Last Updated: 2026-07-11
 
 ## Store Listing
 
@@ -8,12 +8,19 @@
 Canvascope
 
 **Short Description**
-Instantly search Canvas and Brightspace content, manage tasks, and hand off academic PDFs to Lectra.
+Turn Canvas into an AI study hub: instant search, cited course answers, practice exams, planning, and Lectra PDF handoff.
 
 **Detailed Description**
 Canvascope is a privacy-first, local-first academic companion for Canvas and Brightspace LMS platforms. 
 
 With Canvascope, you can instantly index and search your entire course catalog, syllabus text, assignments, and modules directly from a floating keyboard overlay (Cmd/Ctrl + K). It features a local-first due date planner to keep track of assignments, and injects beautiful custom theme skins (including sleek, high-contrast dark modes) directly into bCourses, BruinLearn, and standard LMS portals to ease eye strain. 
+
+Ask anything about your courses. On-device answers never leave your computer, and the full study kit is included:
+- Whole-course answers with cited sources — ask about anything in the course, and see exactly where each answer came from
+- Practice exams with answer keys, built from your own course materials
+- A morning study briefing that tells you what to work on today
+
+Canvascope is free. Every feature — search, planning, grade tools, themes, and every AI answer — is included for everyone.
 
 For students using Lectra on iPad, Canvascope acts as a bridge: with a single click, you can send course PDFs securely to your iPad for Apple Pencil annotation, and receive the annotated documents back automatically via browser downloads.
 
@@ -21,7 +28,8 @@ How to use it:
 1. Load Canvascope and open your school's LMS tab (Canvas or Brightspace).
 2. Tap the extension icon to run the initial fast local scan.
 3. Use Cmd/Ctrl + K on any Canvas page to search or check your planner.
-4. (Optional) Sign in with Google to send PDFs directly to Lectra on your iPad.
+4. Ask questions from the side panel — or type `/exam` to build a practice exam.
+5. (Optional) Sign in with Google to send PDFs directly to Lectra on your iPad.
 
 Privacy & Security:
 All indexing and search matching is local-first, meaning your academic data starts on your device in local storage. Cloud sync is limited to signed-in account features such as Lectra handoff, Course Brain sync, tool/preferences sync, and Character Profile summaries. No third-party ad networks or analytics trackers are used.
@@ -45,11 +53,16 @@ English
 | Screenshot 1 (Search Overlay) | 1280×800 | ⬜ Not created | |
 | Screenshot 2 (Planner Interface) | 1280×800 | ⬜ Not created | |
 | Screenshot 3 (Custom Skin Styling) | 1280×800 | ⬜ Not created | |
+| Screenshot 4 (Cited course answers) | 1280×800 | ⬜ Not created | |
+| Screenshot 5 (Exam Builder) | 1280×800 | ⬜ Not created | |
 
 ### Screenshot Notes
 - **Screenshot 1**: Show the Canvascope search overlay active on a Berkeley bCourses assignment list page, displaying abbreviation expansion results.
 - **Screenshot 2**: Show the floating due planner interface with tasks, checkmarks, and color-coded priority states.
 - **Screenshot 3**: Show the custom dark theme skin active on a standard Canvas dashboard, illustrating high-contrast, premium styling.
+- **Screenshot 4**: Show a side-panel Course Brain answer with visible source citations for a whole-course question.
+- **Screenshot 5**: Show a generated practice exam with the separated answer key and source chips.
+- **Reconcile (still open)**: refresh all screenshots + copy for the `history` and `clipboardRead` permission disclosures before the v11 submission.
 
 ---
 
@@ -148,6 +161,7 @@ support@canvascope.com
 
 | Version | Date | Changes | Status |
 |---------|------|---------|--------|
+| 11.0.0 | 2026-07-11 | Major Release: whole-course answers with cited sources, practice Exam Builder with answer keys, and a morning study briefing — all free, with no subscription or usage limits. Added the Cmd/K overlay mascot and Lectra Receiver stand-down handshake. | Draft (pending screenshots) |
 | 8.0.0 | 2026-05-27 | Major Release: Integrated local academic companion AI powered by offline Gemini Nano (and secure cloud fallback). Features local hybrid RAG search blending exact lexical matching and semantic concept projection via Reciprocal Rank Fusion (RRF). Added native page-by-page PDF parsing, automatic file caches, dynamic contextual Recommendations, and persistent index-level search over closed documents. | Draft (Ready) |
 | 7.0.0 | 2026-05-23 | Introduced customizable dark and high-contrast skin themes for Berkeley bCourses, UCLA BruinLearn, and UCSD Canvas. Reorganized project test structures for streamlined releases. Resolved Node ESM parsing warnings. | Published |
 | 6.0.0 | 2026-05-22 | Refined search relevance, RRF hybrid retrieval rankings, and task planner overlay hotkey states. | Published |

@@ -2805,6 +2805,21 @@ body.in-overlay .results-container {
 .import-lectra-status { font-size: 12px; color: var(--text-muted, #9aa3b2); flex: 1; }
 .import-lectra-status.error { color: #ef6b6b; }
 .import-lectra-status.success { color: #4cc38a; }
+.import-lectra-status.success { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.import-lectra-status .ilt-open-lectra { padding: 4px 10px; font-size: 12px; flex-shrink: 0; }
+
+/* Accent dot on the "More" button when a course can be sent to Lectra. */
+#cs-overflow-btn.has-lectra-action { position: relative; }
+#cs-overflow-btn.has-lectra-action::after {
+  content: '';
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent, #8b7ff5);
+}
 
 /* ============================================
    CMD+K INLINE ASK PANEL

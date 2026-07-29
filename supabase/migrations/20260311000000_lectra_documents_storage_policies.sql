@@ -5,8 +5,15 @@ on conflict (id) do update
 set public = excluded.public,
     file_size_limit = excluded.file_size_limit;
 
--- Enable RLS on storage.objects (if not already enabled)
-alter table storage.objects enable row level security;
+-- Enable RLS on storage.objects (if not already enabled).
+-- Hosted Supabase enables it by default and the local migration role does not
+-- own storage.objects, so tolerate insufficient privilege instead of failing.
+do $$
+begin
+  alter table storage.objects enable row level security;
+exception
+  when insufficient_privilege then null;
+end $$;
 
 -- Storage Policies for lectra_documents bucket
 

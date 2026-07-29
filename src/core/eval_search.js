@@ -34,67 +34,16 @@ const FUSE_OPTIONS = {
 
 const Fuse = require('../lib/fuse.min.js');
 
-// Helper functions (extracted & adapted from popup.js for isolated testing)
-const ABBREV_MAP = {
-    hw: 'homework',
-    proj: 'project',
-    assn: 'assignment',
-    assign: 'assignment',
-    disc: 'discussion',
-    lec: 'lecture',
-    lab: 'laboratory',
-    mt: 'midterm',
-    ch: 'chapter',
-    chap: 'chapter',
-    wk: 'week',
-    pset: 'problem set',
-    ps: 'problem set'
-};
+// Shared query-normalization helpers (src/core/query-normalizer.js). This
+// used to be a stale duplicated fork (missing phys/bio/biol/chem from
+// ABBREV_MAP) — now loaded from the single source of truth so this eval
+// harness stays in sync with popup.js.
+const path = require('path');
+new Function(fs.readFileSync(path.join(__dirname, 'query-normalizer.js'), 'utf8'))();
+const { normalizeText, expandAbbreviations, numberVariants } = globalThis.CanvascopeQueryNormalizer;
 
-const COMPACT_TOKEN_RE = /^([a-z]+)(\d{1,3})$/i;
 const STOP_TOKENS = new Set(['a', 'an', 'the', 'in', 'on', 'of', 'to', 'for', 'and', 'or', 'is']);
 const MAX_RESULTS = 20;
-
-function normalizeText(str) {
-    return (str || '')
-        .toLowerCase()
-        .replace(/[^a-z0-9\s]/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim();
-}
-
-function expandAbbreviations(text) {
-    const tokens = normalizeText(text).split(' ');
-    const expanded = [];
-    for (const token of tokens) {
-        const compactMatch = token.match(COMPACT_TOKEN_RE);
-        if (compactMatch) {
-            const [, letters, digits] = compactMatch;
-            const expandedWord = ABBREV_MAP[letters] || letters;
-            expanded.push(expandedWord, digits.replace(/^0+/, '') || '0');
-        } else {
-            expanded.push(ABBREV_MAP[token] || token);
-        }
-    }
-    return expanded.join(' ');
-}
-
-function numberVariants(text) {
-    const tokens = text.split(' ');
-    const variants = [text];
-    let hasVariant = false;
-    const altTokens = tokens.map(t => {
-        if (/^\d{1,3}$/.test(t)) {
-            hasVariant = true;
-            const unpadded = t.replace(/^0+/, '') || '0';
-            const padded = unpadded.padStart(2, '0');
-            return unpadded === t ? padded : unpadded;
-        }
-        return t;
-    });
-    if (hasVariant) variants.push(altTokens.join(' '));
-    return variants.join(' ');
-}
 
 function buildSearchFields(item) {
     const normalized = expandAbbreviations(item.title || '');

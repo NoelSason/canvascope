@@ -5,9 +5,11 @@
  * may want to work on, using Canvascope-owned signals that already live on the
  * device plus narrowly scoped browser affordances disclosed in the manifest:
  *   - search history          (chrome.storage.local `searchHistory`)
+ *   - search click affinity   (chrome.storage.local `searchHabits`)
  *   - current grades          (chrome.storage.local `canvasGradesByCourse`)
  *   - upcoming work + to-dos  (RAGCore.getUpcomingItems over the local corpus)
  *   - recent LMS pages        (chrome.history, LMS/course hosts only)
+ *   - dismissed Up Next tasks (chrome.storage.local `dismissedTasks`)
  *
  * Phase-1 guardrails (see characterProfile/ROADMAP.md + AGENT_WORKFLOW.md):
  *   - Local-first. Only source-attributed summaries sync when signed in.
@@ -81,6 +83,46 @@
       .replace(/[^a-z\s]/g, ' ')
       .replace(/\s+/g, ' ')
       .trim();
+  }
+
+  /**
+   * Content-light "which search topic does the student keep clicking back
+   * into" signal, derived from searchHabits.queryAffinity (query -> {
+   * resultKey: clickCount }). Informational only — not an actionable card.
+   */
+  function searchAffinitySummaries(searchHabits, now) {
+    const affinity = searchHabits && searchHabits.queryAffinity;
+    if (!affinity || typeof affinity !== 'object') return [];
+    let best = null;
+    for (const [query, clicksByKey] of Object.entries(affinity)) {
+      if (!clicksByKey || typeof clicksByKey !== 'object') continue;
+      const total = Object.values(clicksByKey).reduce((sum, n) => sum + (Number(n) || 0), 0);
+      if (total >= 2 && (!best || total > best.total)) best = { query, total };
+    }
+    if (!best) return [];
+    return [{
+      kind: 'search_affinity',
+      text: `Frequently returns to search results for "${best.query}"`.slice(0, SUMMARY_TEXT_CAP),
+      sources: ['Canvascope search click activity'],
+      ts: now
+    }];
+  }
+
+  /**
+   * Content-light count of to-dos/assignments dismissed from Up Next — a
+   * disengagement signal for future profile tuning. dismissedTasks stores
+   * ids only (no timestamps), so this is a total count, not a time-windowed
+   * figure.
+   */
+  function disengagementSummaries(dismissedTasks, now) {
+    const n = Array.isArray(dismissedTasks) ? dismissedTasks.length : 0;
+    if (!n) return [];
+    return [{
+      kind: 'disengagement',
+      text: `${n} task${n === 1 ? '' : 's'} dismissed from Up Next`.slice(0, SUMMARY_TEXT_CAP),
+      sources: ['Canvascope Up Next dismissals'],
+      ts: now
+    }];
   }
 
   /**
@@ -361,15 +403,23 @@
      * here is persisted into the profile blob.
      */
     async gatherSignals() {
-      const signals = { searches: [], upcoming: [], grades: [], recentPages: [], studentProfile: null };
+      const signals = {
+        searches: [], upcoming: [], grades: [], recentPages: [], studentProfile: null,
+        searchHabits: null, dismissedTasks: []
+      };
       try {
-        const db = await chrome.storage.local.get(['searchHistory', 'canvasGradesByCourse', 'studentProfile']);
+        const db = await chrome.storage.local.get([
+          'searchHistory', 'canvasGradesByCourse', 'studentProfile',
+          'searchHabits', 'dismissedTasks'
+        ]);
         signals.searches = Array.isArray(db.searchHistory) ? db.searchHistory : [];
         const gradeMap = db.canvasGradesByCourse || {};
         signals.grades = Object.values(gradeMap).map((g) => ({
           course: g.name, percent: g.current, letter: g.letter
         }));
         signals.studentProfile = db.studentProfile || null;
+        signals.searchHabits = db.searchHabits || null;
+        signals.dismissedTasks = Array.isArray(db.dismissedTasks) ? db.dismissedTasks : [];
       } catch (_) { /* storage read is best-effort */ }
       try {
         if (typeof RAGCore !== 'undefined') {
@@ -407,7 +457,9 @@
       [
         ...summariesFromSuggestions(suggestions, ts),
         ...lmsVisitSummaries(signals.recentPages, ts),
-        ...studentProfileSummaries(signals.studentProfile, ts)
+        ...studentProfileSummaries(signals.studentProfile, ts),
+        ...searchAffinitySummaries(signals.searchHabits, ts),
+        ...disengagementSummaries(signals.dismissedTasks, ts)
       ]
         .forEach((s) => { if (s.text && !seenText.has(s.text)) { seenText.add(s.text); merged.push(s); } });
 
@@ -441,6 +493,8 @@
     _summariesFromSuggestions: summariesFromSuggestions,
     _lmsVisitSummaries: lmsVisitSummaries,
     _studentProfileSummaries: studentProfileSummaries,
+    _searchAffinitySummaries: searchAffinitySummaries,
+    _disengagementSummaries: disengagementSummaries,
     _hashSuggestion: hashSuggestion,
     _relativeDue: relativeDue,
     _baseQueryOf: baseQueryOf,

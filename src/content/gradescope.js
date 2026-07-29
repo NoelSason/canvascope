@@ -14,6 +14,8 @@
 
   const BTN_FLAG = 'data-canvascope-lectra-btn';
   const HOST_FLAG = 'data-canvascope-lectra-host';
+  const LECTRA_RECEIVER_ACTIVE_ATTR = 'data-lectra-receiver-active';
+  const LECTRA_RECEIVER_ACTIVE_EVENT = 'lectra-receiver:active';
   const DEFAULT_EXTENSION_SETTINGS = Object.freeze({
     enableSendToLectra: false
   });
@@ -34,6 +36,10 @@
 
   function isLectraEnabled() {
     return Boolean(extensionSettings.enableSendToLectra);
+  }
+
+  function isLectraReceiverActive() {
+    return document.documentElement?.getAttribute(LECTRA_RECEIVER_ACTIVE_ATTR) === 'true';
   }
 
   function removeButtons() {
@@ -152,7 +158,7 @@
   }
 
   function injectButtons() {
-    if (!isLectraEnabled()) {
+    if (!isLectraEnabled() || isLectraReceiverActive()) {
       removeButtons();
       return;
     }
@@ -217,4 +223,12 @@
       }
     });
   } catch (_) { /* ignore */ }
+
+  window.addEventListener(LECTRA_RECEIVER_ACTIVE_EVENT, (event) => {
+    if (event?.detail?.active === false) {
+      schedule();
+      return;
+    }
+    removeButtons();
+  });
 })();

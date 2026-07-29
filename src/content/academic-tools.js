@@ -1087,8 +1087,24 @@
         if (looksLikePdf) {
           // 1a. PDF syllabus: parse in the background (DocumentParser is injected into
           // the tab there; it is not available in this content-script world).
+          // Send the same title/course hints the auto-index path sends, so a file
+          // parsed here and a file parsed by maybeAutoIndexPdf resolve to one
+          // documentId instead of two. resolveCourseNameHint lives in content.js,
+          // which shares this isolated world and loads first; guard anyway.
+          const courseNameHint = (typeof resolveCourseNameHint === 'function')
+            ? resolveCourseNameHint()
+            : null;
+          const fileIdMatch = String(pdfUrl || '').match(/\/files\/(\d+)/);
+          const titleHint = (fileIdMatch && typeof fileTitleHintForId === 'function')
+            ? fileTitleHintForId(fileIdMatch[1])
+            : null;
           const parseResp = await new Promise((resolve) => {
-            chrome.runtime.sendMessage({ action: 'parsePdfText', pdfUrl }, (r) => resolve(r || { success: false }));
+            chrome.runtime.sendMessage({
+              action: 'parsePdfText',
+              pdfUrl,
+              titleHint: titleHint || null,
+              courseName: courseNameHint || null
+            }, (r) => resolve(r || { success: false }));
           });
           if (!parseResp.success || !Array.isArray(parseResp.pages) || parseResp.pages.length === 0) {
             throw new Error('Could not parse any text from the PDF syllabus.' + (parseResp.error ? ` (${parseResp.error})` : ''));

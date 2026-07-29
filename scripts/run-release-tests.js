@@ -10,13 +10,33 @@ const steps = [
     args: [
       '--experimental-transform-types',
       '--test',
-      'tests/backend-search-habits.test.mjs',
-      'tests/legacy-regressions.test.mjs',
-      'tests/skin-themes.test.mjs',
+      // Keep this list alphabetical and byte-identical to package.json's
+      // `test:node`. The two drifted apart once already (four files ran only
+      // in test:node, two only here, and grade-target in neither), which meant
+      // the release gate silently covered less than local runs.
       'tests/academic-tools-gpa.test.mjs',
-      'tests/local-ai.test.mjs',
+      'tests/backend-search-habits.test.mjs',
+      'tests/background-tools-sync.test.mjs',
+      'tests/character-profile.test.mjs',
+      'tests/course-material-hydrate.test.mjs',
+      'tests/course-materials.test.mjs',
+      'tests/document-parser.test.mjs',
       'tests/dropbridge-v2.test.mjs',
-      'tests/risc-removal.test.mjs'
+      'tests/embedding-index.test.mjs',
+      'tests/embeddings-config.test.mjs',
+      'tests/embeddings-host.test.mjs',
+      'tests/exam-builder.test.mjs',
+      'tests/grade-target.test.mjs',
+      'tests/legacy-regressions.test.mjs',
+      'tests/local-ai.test.mjs',
+      'tests/local-embeddings.test.mjs',
+      'tests/optional-capabilities.test.mjs',
+      'tests/palette-page-hits.test.mjs',
+      'tests/query-normalizer.test.mjs',
+      'tests/rag-core.test.mjs',
+      'tests/risc-removal.test.mjs',
+      'tests/semantic-matcher.test.mjs',
+      'tests/skin-themes.test.mjs'
     ]
   },
   {

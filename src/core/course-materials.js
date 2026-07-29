@@ -13,6 +13,20 @@
   const CHUNK_OVERLAP_CHARS = 140;
   const MAX_LOCAL_SEARCH_CHUNKS = 12;
 
+  // Corpus hydration defaults (see hydrateItems). Index-bound callers must use
+  // these values verbatim: they decide the passage text the embedding index
+  // hashes, so a caller that narrows them re-embeds every page vector.
+  // Must stay >= INDEX_MAX_PAGE_VECTORS_PER_ITEM, or the index is capped here
+  // instead of by its own budget and pages vanish before it can see them.
+  const HYDRATE_MAX_PAGES_PER_ITEM = 150;
+  const HYDRATE_PAGE_MAX_CHARS = 2000;
+  const HYDRATE_CONTENT_MAX_CHARS = 12000;
+  const HYDRATE_MIN_OVERLAP_CHARS = 40;
+  // Field on a hydrated item listing which fields hydration added. Never an
+  // itemKey input, and buildCorpus's field mapping drops it, so it stays local
+  // to whoever holds the hydrated array.
+  const HYDRATION_MARKER = '__csHydratedFields';
+
   const MONTHS = Object.freeze({
     jan: 0, january: 0,
     feb: 1, february: 1,
@@ -424,6 +438,220 @@
     };
   }
 
+  // ------------------------------------------------------------- hydration
+  //
+  // A full Canvas scan rewrites indexedContent wholesale and drops every item
+  // whose course was just rescanned, so the page text DocumentParser writes
+  // into indexedContent[].pages survives only until the next scan (measured on
+  // a real profile: 68 cached PDFs, exactly one item still holding pages).
+  // courseMaterialChunks is the durable copy, so corpus builders re-attach it
+  // on read rather than trying to keep indexedContent authoritative.
+
+  // Join key for matching a chunk back to a corpus item. Clears BOTH search and
+  // hash: Canvas serves the same file as `/files/<id>/download`, the same with
+  // `?download_frd=1`, and `?preview=<id>`. Deliberately NOT cleanUrl() — that
+  // one clears only the hash and feeds documentId identity in normalizeDocument,
+  // so widening it would orphan every stored document and chunk.
+  function joinUrlKey(rawUrl) {
+    const text = String(rawUrl || '').trim();
+    if (!text) return '';
+    try {
+      const parsed = new URL(text, typeof location !== 'undefined' ? location.href : undefined);
+      parsed.hash = '';
+      parsed.search = '';
+      parsed.hostname = parsed.hostname.toLowerCase();
+      return parsed.toString().replace(/\/+$/, '');
+    } catch {
+      return text.split('?')[0].split('#')[0].replace(/\/+$/, '');
+    }
+  }
+
+  // splitTextIntoChunks slices a contiguous page with CHUNK_OVERLAP_CHARS of
+  // overlap and trims each piece, so joining chunks naively repeats up to 140
+  // characters at every seam. Splice on the longest genuine overlap instead.
+  function joinPageChunks(texts) {
+    let out = String(texts[0] || '');
+    for (let i = 1; i < texts.length; i += 1) {
+      const next = String(texts[i] || '');
+      if (!next) continue;
+      if (!out) { out = next; continue; }
+      let cut = 0;
+      const maxProbe = Math.min(CHUNK_OVERLAP_CHARS + 40, next.length, out.length);
+      for (let k = maxProbe; k >= HYDRATE_MIN_OVERLAP_CHARS; k -= 1) {
+        if (out.endsWith(next.slice(0, k))) { cut = k; break; }
+      }
+      out += cut ? next.slice(cut) : ('\n' + next);
+    }
+    return out;
+  }
+
+  /**
+   * Re-attach durable course-material page text to corpus items.
+   *
+   * Pure: no chrome, no await, no mutation of the inputs. Returns new shallow
+   * clones in the SAME ORDER and length as `items`, adding only `pages` and —
+   * when the item has no body of its own — `content`.
+   *
+   * INVARIANT: never writes title / url / type / courseId / courseName. Those
+   * five are exactly the inputs to the embedding index's itemKey, so touching
+   * one re-keys every vector for that item and desynchronizes the palette's
+   * lookup from what the background embedded.
+   */
+  function hydrateItems(items, sources = {}, options = {}) {
+    const list = asArray(items);
+    const chunks = asArray(sources.chunks);
+    const documents = asArray(sources.documents);
+    const maxPagesPerItem = Number.isFinite(options.maxPagesPerItem)
+      ? options.maxPagesPerItem : HYDRATE_MAX_PAGES_PER_ITEM;
+    const maxPageChars = Number.isFinite(options.maxPageChars)
+      ? options.maxPageChars : HYDRATE_PAGE_MAX_CHARS;
+    const maxContentChars = Number.isFinite(options.maxContentChars)
+      ? options.maxContentChars : HYDRATE_CONTENT_MAX_CHARS;
+
+    const stats = {
+      chunksSeen: 0, documentsMatched: 0, documentsUnmatched: 0,
+      itemsHydrated: 0, pagesAttached: 0, pagesTruncated: 0, pagesDroppedOverCap: 0
+    };
+    const out = list.slice();
+    if (!list.length || !chunks.length) return { items: out, stats };
+
+    // Phase A — group chunks by document, then by page.
+    const byDoc = new Map();
+    for (const chunk of chunks) {
+      if (!chunk || typeof chunk !== 'object') continue;
+      const docId = String(chunk.documentId || '');
+      if (!docId) continue;
+      // pageStart only: pageEnd is equal on every row today, and honouring just
+      // the start is the documented contract if that ever stops being true.
+      const page = Number(chunk.pageStart);
+      if (!Number.isFinite(page) || page <= 0) continue;
+      if (!String(chunk.text || '').trim()) continue;
+      stats.chunksSeen += 1;
+      let entry = byDoc.get(docId);
+      if (!entry) { entry = { pages: new Map(), sample: chunk }; byDoc.set(docId, entry); }
+      const bucket = entry.pages.get(page);
+      if (bucket) bucket.push(chunk); else entry.pages.set(page, [chunk]);
+    }
+    if (byDoc.size === 0) return { items: out, stats };
+
+    // Phase B — index the corpus once, by file id and by normalized url.
+    const byFileId = new Map();
+    const byJoinUrl = new Map();
+    const push = (map, key, idx) => {
+      if (!key) return;
+      const arr = map.get(key);
+      if (arr) arr.push(idx); else map.set(key, [idx]);
+    };
+    for (let i = 0; i < list.length; i += 1) {
+      const item = list[i];
+      if (!item || typeof item !== 'object' || !item.url) continue;
+      push(byFileId, extractCanvasFileId(item.url), i);
+      push(byJoinUrl, joinUrlKey(item.url), i);
+    }
+
+    const docMeta = new Map();
+    for (const doc of documents) {
+      if (doc && doc.documentId) docMeta.set(String(doc.documentId), doc);
+    }
+
+    // Phase C — resolve documents to items. Sorted so that when two documents
+    // compete for one item the winner is stable across runs.
+    const claimed = new Map();
+    for (const docId of Array.from(byDoc.keys()).sort()) {
+      const { pages, sample } = byDoc.get(docId);
+      const doc = docMeta.get(docId) || {};
+      const fileId = normalizeText(sample.canvasFileId)
+        || normalizeText(doc.canvasFileId)
+        || extractCanvasFileId(sample.url)
+        || extractCanvasFileId(sample.sourceUrl)
+        || extractCanvasFileId(doc.downloadUrl)
+        || extractCanvasFileId(doc.url);
+
+      let targets = fileId ? byFileId.get(fileId) : null;
+      if (!targets || !targets.length) {
+        for (const candidate of [sample.url, sample.sourceUrl, doc.downloadUrl, doc.url]) {
+          const key = joinUrlKey(candidate);
+          if (key && byJoinUrl.has(key)) { targets = byJoinUrl.get(key); break; }
+        }
+      }
+      // Never synthesize a corpus item for an unmatched document: the palette
+      // rebuilds its corpus from indexedContent alone, so it could never
+      // reproduce the synthetic itemKey and the vectors would be unreachable.
+      // The cure for an unmatched document is a rescan.
+      if (!targets || !targets.length) { stats.documentsUnmatched += 1; continue; }
+      stats.documentsMatched += 1;
+
+      const nums = Array.from(pages.keys()).sort((a, b) => a - b);
+      const pageText = new Map();
+      for (const num of nums) {
+        const bucket = pages.get(num).slice().sort((a, b) =>
+          ((Number(a.chunkIndex) || 0) - (Number(b.chunkIndex) || 0))
+          || String(a.chunkId || '').localeCompare(String(b.chunkId || '')));
+        let text = joinPageChunks(bucket.map(c => String(c.text || '')));
+        if (text.length > maxPageChars) {
+          text = text.slice(0, maxPageChars);
+          stats.pagesTruncated += 1;
+        }
+        pageText.set(num, text);
+      }
+      const kept = nums.slice(0, maxPagesPerItem);
+      stats.pagesDroppedOverCap += nums.length - kept.length;
+
+      for (const idx of targets) {
+        // One canvasFileId can carry two documentIds (the same file reached via
+        // /courses/<c>/files/<f> and via /files/<f>/download). First writer wins.
+        if (claimed.has(idx)) continue;
+        const existing = out[idx];
+        // A fresher persistPdfToIndex write beats the stored chunks.
+        const hasOwnPages = Array.isArray(existing.pages) && existing.pages.some(
+          p => p && Number(p.pageNum) > 0 && String(p.text || '').trim());
+        if (hasOwnPages) continue;
+        claimed.set(idx, docId);
+        const next = { ...existing, pages: kept.map(num => ({ pageNum: num, text: pageText.get(num) })) };
+        const added = ['pages'];
+        // Only fill an EMPTY body: keeping an existing content byte-identical
+        // keeps that item's passage hash stable (no surprise re-embed) and
+        // protects Canvas assignment descriptions.
+        if (maxContentChars > 0 && !String(existing.content || '').trim()) {
+          next.content = kept.map(num => pageText.get(num)).join('\n').slice(0, maxContentChars);
+          added.push('content');
+        }
+        // Records exactly which fields hydration owns, so dehydrateItems can
+        // strip them before anything writes these items back to storage. This
+        // is load-bearing: a caller using a narrowed maxPageChars (the popup)
+        // must never persist its truncated pages, or the next background sync
+        // would embed those instead of the full-width text.
+        next[HYDRATION_MARKER] = added;
+        out[idx] = next;
+        stats.itemsHydrated += 1;
+        stats.pagesAttached += kept.length;
+      }
+    }
+
+    return { items: out, stats };
+  }
+
+  /**
+   * Inverse of hydrateItems: strip the fields hydration added, so a hydrated
+   * array can be safely persisted back to indexedContent.
+   *
+   * MUST be called before any write of a hydrated corpus. Hydrated page text is
+   * a read-time projection whose width depends on the caller's maxPageChars —
+   * persisting it would both bloat storage and let a narrow projection shadow
+   * the full-width text on the next embedding sync (hydrateItems skips items
+   * that already have pages).
+   */
+  function dehydrateItems(items) {
+    return asArray(items).map((item) => {
+      const added = item && item[HYDRATION_MARKER];
+      if (!Array.isArray(added)) return item;
+      const next = { ...item };
+      for (const field of added) delete next[field];
+      delete next[HYDRATION_MARKER];
+      return next;
+    });
+  }
+
   class CourseMaterials {
     static keys = Object.freeze({
       documents: DOCUMENTS_KEY,
@@ -450,6 +678,14 @@
 
     static buildChunksForDocument(document, pages) {
       return buildChunksForDocument(document, pages);
+    }
+
+    static hydrateItems(items, sources, options) {
+      return hydrateItems(items, sources, options);
+    }
+
+    static dehydrateItems(items) {
+      return dehydrateItems(items);
     }
 
     static async getSettings() {

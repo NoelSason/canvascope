@@ -156,6 +156,28 @@ body,
   margin-left: 4px;
 }
 
+/* Practice-exam regenerate affordance under a finished/saved exam. */
+.exam-actions {
+  margin-top: 12px;
+}
+.exam-regenerate {
+  border: 1px solid var(--cs-border-hi);
+  border-radius: 8px;
+  padding: 6px 12px;
+  background: transparent;
+  color: var(--cs-text-2);
+  font-family: var(--cs-f-sans);
+  font-size: var(--cs-t-sm);
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.12s var(--cs-ease), color 0.12s var(--cs-ease), border-color 0.12s var(--cs-ease);
+}
+.exam-regenerate:hover {
+  background: var(--cs-bg-2);
+  color: var(--cs-text);
+  border-color: var(--cs-border-hot);
+}
+
 
 /* ── Context banner (attached doc) ── */
 .context-banner {

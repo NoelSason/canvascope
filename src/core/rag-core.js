@@ -2,6 +2,15 @@
  * Canvascope RAG (Retrieval-Augmented Generation) Core
  * Scrapes page content and retrieves relevant local schedule/task context.
  */
+// Config global is absent in some contexts (e.g. node tests without the
+// config script loaded); the `??` legacy literal at each read site always
+// carries the fallback so behavior there stays byte-identical.
+// Unique name on purpose: top-level const in a classic script is a global
+// lexical binding, and sidepanel.html loads this file alongside
+// document-parser.js — a shared name would be a duplicate-declaration
+// SyntaxError that kills whichever script loads second.
+const RAG_CFG = (typeof self !== 'undefined' ? self : globalThis).CanvascopeEmbeddingsConfig || null;
+
 class RAGCore {
   static tokenize(text) {
     return String(text || '').toLowerCase()
@@ -396,8 +405,29 @@ class RAGCore {
    * @returns {Promise<Array>} Normalized corpus items
    */
   static async buildCorpus() {
-    const db = await chrome.storage.local.get(['indexedContent', 'customTodos', 'dashboardNotes', 'syllabusMemory']);
-    const indexedContent = Array.isArray(db.indexedContent) ? db.indexedContent : [];
+    const db = await chrome.storage.local.get([
+      'indexedContent', 'customTodos', 'dashboardNotes', 'syllabusMemory',
+      'courseMaterialChunks', 'courseMaterialDocuments'
+    ]);
+    let indexedContent = Array.isArray(db.indexedContent) ? db.indexedContent : [];
+
+    // Re-attach PDF page text that the last Canvas scan wiped off these items.
+    // This is what puts body text in front of the embedding index: the `pages`
+    // mapping below feeds computeWantedEntries, which turns each page into its
+    // own vector. MUST use hydrateItems' default caps — they define the passage
+    // text the index hashes, so narrowing them here would re-embed every page
+    // vector on the next sync.
+    const CM = (typeof self !== 'undefined' ? self : globalThis).CanvascopeCourseMaterials;
+    if (CM && typeof CM.hydrateItems === 'function') {
+      try {
+        indexedContent = CM.hydrateItems(indexedContent, {
+          chunks: Array.isArray(db.courseMaterialChunks) ? db.courseMaterialChunks : [],
+          documents: Array.isArray(db.courseMaterialDocuments) ? db.courseMaterialDocuments : []
+        }).items;
+      } catch (e) {
+        console.warn('[Canvascope RAG] course-material hydration skipped:', e);
+      }
+    }
     const customTodos = Array.isArray(db.customTodos) ? db.customTodos : [];
     const dashboardNotes = Array.isArray(db.dashboardNotes) ? db.dashboardNotes : [];
     const syllabusMemory = (db.syllabusMemory && typeof db.syllabusMemory === 'object') ? db.syllabusMemory : {};
@@ -494,6 +524,7 @@ class RAGCore {
     return searchCorpus;
   }
 
+  // NOTE: superseded by retrieveBrainChunks for the live Ask path (compileUnifiedPrompt); intentionally left hash-only in the embeddings upgrade.
   /**
    * Tokenizes user queries and queries local database storage using frequency word scoring.
    * Falls back to surfacing the user's upcoming/pending tasks when the query is clearly
@@ -551,7 +582,7 @@ class RAGCore {
           });
 
           semanticMatches = scoredSemantic
-            .filter(x => x.similarity > 0.15) // Keep conceptually relevant items
+            .filter(x => x.similarity > (RAG_CFG?.THRESHOLDS?.hash?.item ?? 0.15)) // Keep conceptually relevant items
             .sort((a, b) => b.similarity - a.similarity)
             .map(x => x.item);
         }
@@ -808,7 +839,59 @@ class RAGCore {
     const lexicallyRelevant = new Set(strongMatches);
 
     let semanticMatches = [];
-    if (typeof SemanticMatcher !== 'undefined' && lexicallyRelevant.size > 0) {
+    let semanticSpace = null; // 'bge' | 'hash' — spaces are never mixed within one list
+    const EIScope = (typeof self !== 'undefined' ? self : globalThis);
+    const EI = EIScope.CanvascopeEmbeddingIndex || null;
+    const EC = EIScope.CanvascopeEmbedClient || null;
+    if (EI && EC && RAG_CFG?.EMBEDDINGS_ENABLED === true && lexicallyRelevant.size > 0) {
+      try {
+        const index = await EI.load();
+        if (index) {
+          // Coverage probe: mid-first-sync or after quota eviction most
+          // chunks may lack vectors; zero coverage → whole-list hash
+          // fallback rather than a half-empty bge list. Chunks keep their
+          // lexical rank when their key has no vector — reorder-only means
+          // nothing disappears.
+          const covered = strongMatches.filter(chunk => index.byKey.has(EI.keyForChunk(chunk)));
+          if (covered.length > 0) {
+            const qn = EIScope.CanvascopeQueryNormalizer;
+            const embedText = qn?.normalizeForEmbedding
+              ? (qn.normalizeForEmbedding(question) || question)
+              : question;
+            const queryVector = await EC.embedQuery(embedText);
+            if (queryVector) {
+              semanticMatches = covered
+                .map(chunk => ({
+                  chunk,
+                  similarity: EI.cosineRow(index, index.byKey.get(EI.keyForChunk(chunk)), queryVector)
+                }))
+                .filter(x => x.similarity >= (RAG_CFG?.THRESHOLDS?.bge?.chunk ?? 0.40))
+                .sort((a, b) => b.similarity - a.similarity)
+                .map(x => x.chunk);
+              semanticSpace = 'bge';
+              if (RAG_CFG?.SEMANTIC_INJECTION_ENABLED) {
+                // Dormant until the eval sweep proves it: semantic-only
+                // chunks may enter, but only above the stricter inject
+                // threshold. Ships disabled.
+                const injected = chunks
+                  .filter(chunk => !lexicallyRelevant.has(chunk) && index.byKey.has(EI.keyForChunk(chunk)))
+                  .map(chunk => ({
+                    chunk,
+                    similarity: EI.cosineRow(index, index.byKey.get(EI.keyForChunk(chunk)), queryVector)
+                  }))
+                  .filter(x => x.similarity >= (RAG_CFG?.THRESHOLDS?.bge?.chunkInject ?? 0.62))
+                  .sort((a, b) => b.similarity - a.similarity)
+                  .map(x => x.chunk);
+                semanticMatches = semanticMatches.concat(injected);
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('[Canvascope RAG] bge chunk rerank unavailable, using hash fallback:', err);
+      }
+    }
+    if (semanticSpace !== 'bge' && typeof SemanticMatcher !== 'undefined' && lexicallyRelevant.size > 0) {
       const queryVector = SemanticMatcher.vectorize(question);
       const hasConcepts = Object.values(queryVector).some(val => val > 0);
       if (hasConcepts) {
@@ -820,7 +903,7 @@ class RAGCore {
               SemanticMatcher.vectorize(`${chunk.title} ${chunk.text}`)
             )
           }))
-          .filter(x => x.similarity > 0.15)
+          .filter(x => x.similarity > (RAG_CFG?.THRESHOLDS?.hash?.chunk ?? 0.15))
           .sort((a, b) => b.similarity - a.similarity)
           .map(x => x.chunk);
       }
@@ -1059,3 +1142,9 @@ class RAGCore {
     return { corpus: text, sources, truncated };
   }
 }
+
+// Classic-script `class` creates a lexical binding, NOT a globalThis property,
+// so `globalScope.RAGCore` was undefined for every module that looks it up by
+// property (the background embedding-index-sync add-on silently no-opped).
+if (typeof self !== 'undefined') self.RAGCore = RAGCore;
+else if (typeof globalThis !== 'undefined') globalThis.RAGCore = RAGCore;

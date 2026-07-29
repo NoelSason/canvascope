@@ -131,6 +131,8 @@ function createSearchHarness(indexedContent, fixedNow = FIXED_NOW) {
   context.self = context;
 
   vm.createContext(context);
+  // popup.html loads query-normalizer.js before popup.js; mirror that order.
+  vm.runInContext(fs.readFileSync(path.join(REPO_ROOT, 'src/core/query-normalizer.js'), 'utf8'), context);
   vm.runInContext(fs.readFileSync(path.join(REPO_ROOT, 'src/popup/popup.js'), 'utf8'), context);
 
   vm.runInContext(`

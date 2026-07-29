@@ -1407,12 +1407,14 @@ function dueUrgencyClass(item) {
   return 'upcoming';
 }
 
-function buildItemAriaLabel(item, { includeOpenedAt = false } = {}) {
+function buildItemAriaLabel(item, { includeOpenedAt = false, page = null } = {}) {
   const parts = [];
   const title = item?.title || 'Untitled';
   parts.push(title);
   if (item?.type) parts.push(formatTypeName(item.type));
   if (item?.courseName) parts.push(item.courseName);
+  // "page 7", not the visual "p.7" — screen readers read that as "p dot 7".
+  if (Number.isFinite(page) && page > 0) parts.push(`page ${page}`);
   if (item?.folderPath && (item.type === 'folder' || LEAF_FILE_TYPES.has(String(item.type || '').toLowerCase()))) {
     parts.push(item.folderPath);
   }
@@ -1730,59 +1732,24 @@ function applyDiversityRerank(scoredResults, limit = 15) {
 // SEARCH NORMALIZATION HELPERS
 // ============================================
 
-const ABBREV_MAP = {
-  hw: 'homework',
-  proj: 'project',
-  assn: 'assignment',
-  assign: 'assignment',
-  disc: 'discussion',
-  lec: 'lecture',
-  lab: 'laboratory',
-  mt: 'midterm',
-  ch: 'chapter',
-  chap: 'chapter',
-  wk: 'week',
-  phys: 'physics',
-  bio: 'biology',
-  biol: 'biology',
-  chem: 'chemistry',
-  pset: 'problem set',
-  ps: 'problem set'
-};
-
-// Regex to split compact tokens like hw4, proj2, quiz10
-const COMPACT_TOKEN_RE = /^([a-z]+)(\d{1,3})$/i;
+// Delegating wrappers around the shared query-normalizer module
+// (src/core/query-normalizer.js). Kept here so the 40+ existing call sites
+// in this file keep working unchanged.
+const ABBREV_MAP = CanvascopeQueryNormalizer.ABBREV_MAP;
+const COMPACT_TOKEN_RE = CanvascopeQueryNormalizer.COMPACT_TOKEN_RE;
 
 /**
  * Normalize text: lowercase, strip punctuation, collapse whitespace
  */
 function normalizeText(str) {
-  return (str || '')
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
+  return CanvascopeQueryNormalizer.normalizeText(str);
 }
 
 /**
  * Expand abbreviations and split compact forms (hw4 → homework 4)
  */
 function expandAbbreviations(text) {
-  const tokens = normalizeText(text).split(' ');
-  const expanded = [];
-
-  for (const token of tokens) {
-    const compactMatch = token.match(COMPACT_TOKEN_RE);
-    if (compactMatch) {
-      const [, letters, digits] = compactMatch;
-      const expandedWord = ABBREV_MAP[letters] || letters;
-      expanded.push(expandedWord, digits.replace(/^0+/, '') || '0');
-    } else {
-      expanded.push(ABBREV_MAP[token] || token);
-    }
-  }
-
-  return expanded.join(' ');
+  return CanvascopeQueryNormalizer.expandAbbreviations(text);
 }
 
 /**
@@ -1790,25 +1757,7 @@ function expandAbbreviations(text) {
  * "homework 4" → "homework 4 homework 04"
  */
 function numberVariants(text) {
-  const tokens = text.split(' ');
-  const variants = [text];
-  let hasVariant = false;
-
-  const altTokens = tokens.map(t => {
-    if (/^\d{1,3}$/.test(t)) {
-      hasVariant = true;
-      const unpadded = t.replace(/^0+/, '') || '0';
-      const padded = unpadded.padStart(2, '0');
-      return unpadded === t ? padded : unpadded;
-    }
-    return t;
-  });
-
-  if (hasVariant) {
-    variants.push(altTokens.join(' '));
-  }
-
-  return variants.join(' ');
+  return CanvascopeQueryNormalizer.numberVariants(text);
 }
 
 function getSearchDebounceMs() {
@@ -1875,6 +1824,226 @@ function scheduleSearchSideEffects(query, normalizedQuery) {
   }, SEARCH_SIDE_EFFECT_DEBOUNCE_MS);
 }
 
+function clearScheduledSemanticRefine() {
+  if (state.semanticRefineTimeout) {
+    clearTimeout(state.semanticRefineTimeout);
+    state.semanticRefineTimeout = null;
+  }
+}
+
+/**
+ * Debounced semantic refine for the Cmd+K palette: re-ranks the painted
+ * lexical results against the persisted bge vector index. Best-effort by
+ * design — any missing global, absent index (wrong modelId, first sync not
+ * done), or failed query embed silently leaves the lexical results exactly
+ * as they are. Re-renders only when the merged order actually differs and
+ * the user hasn't typed since (generation guard, checked after every await).
+ */
+function scheduleSemanticRefine(query, queryMeta, lexicalResults, searchCorpus) {
+  clearScheduledSemanticRefine();
+
+  const EI = globalThis.CanvascopeEmbeddingIndex;
+  const EC = globalThis.CanvascopeEmbedClient;
+  const CFG = globalThis.CanvascopeEmbeddingsConfig;
+  // This function has a dozen silent exits on the hot path, which is how a
+  // completely dead semantic pass once shipped alongside a green test suite and
+  // a healthy-looking index. Every exit now names itself under the debug flag.
+  const debug = (CFG?.PALETTE_SEMANTIC_DEBUG === true)
+    ? (stage, detail) => console.log(`[Canvascope Semantic] ${stage}`, detail ?? '')
+    : () => {};
+
+  if (!EI || !EC || CFG?.EMBEDDINGS_ENABLED !== true || !CFG?.PALETTE_SEMANTIC_ENABLED) {
+    debug('skipped: disabled or globals missing', {
+      hasIndex: !!EI, hasClient: !!EC,
+      enabled: CFG?.EMBEDDINGS_ENABLED, paletteEnabled: CFG?.PALETTE_SEMANTIC_ENABLED
+    });
+    return;
+  }
+  if (typeof SemanticMatcher === 'undefined') return debug('skipped: SemanticMatcher undefined');
+  const cleanQuery = String(query || '').trim();
+  if (cleanQuery.length < (CFG.PALETTE_MIN_QUERY_LEN ?? 3)) {
+    return debug('skipped: query too short', cleanQuery.length);
+  }
+  // Temporal queries are due-date ordered; a similarity re-rank would fight
+  // the chronological sort the user asked for.
+  if (queryMeta?.temporalKind) return debug('skipped: temporal query', queryMeta.temporalKind);
+
+  // No painted list to re-rank ⇒ recall mode (see the threshold split below).
+  const isRecall = !Array.isArray(lexicalResults) || lexicalResults.length === 0;
+
+  const expectedGeneration = state.searchGeneration;
+  const expectedPaint = state.searchPaintToken;
+  const stale = () => expectedGeneration !== state.searchGeneration
+    || expectedPaint !== state.searchPaintToken;
+  state.semanticRefineTimeout = setTimeout(async () => {
+    state.semanticRefineTimeout = null;
+    try {
+      if (stale()) return debug('aborted: stale before load');
+      debug('run', { query: cleanQuery, mode: isRecall ? 'recall' : 'rerank', corpus: searchCorpus.length });
+      const index = await EI.load();
+      if (!index) return debug('aborted: index missing (modelId/schema mismatch or unreadable)');
+      if (stale()) return debug('aborted: stale after load');
+      debug('index', { vectors: index.count, itemsWithPages: index.pagesByItem?.size ?? 0 });
+      // Spec: the query is normalized (abbreviation expansion — hw4 →
+      // "homework 4") before embedding; the host adds the bge prefix.
+      const normalizer = globalThis.CanvascopeQueryNormalizer;
+      const embedText = normalizer?.normalizeForEmbedding
+        ? (normalizer.normalizeForEmbedding(cleanQuery) || cleanQuery)
+        : cleanQuery;
+      const embedStart = Date.now();
+      const queryVector = await EC.embedQuery(embedText);
+      debug('embed', { text: embedText, ms: Date.now() - embedStart, ok: !!queryVector });
+      // A cold host can take seconds. That is fine — lexical results are already
+      // painted and the staleness guards decide whether a late vector may repaint.
+      if (!queryVector) return debug('aborted: embedQuery returned null (see [Canvascope Embed] warning)');
+      if (stale()) return debug('aborted: stale after embed');
+
+      // Two modes. Normally this RE-RANKS a painted lexical list, so the floor
+      // is just a noise gate and rank-fusion does the real work. When the
+      // lexical pass found nothing there is no list to fuse with, so the floor
+      // IS the relevance bar and every row is a claim made on similarity alone
+      // — hence a much stricter threshold and a much shorter list.
+      const threshold = isRecall
+        ? (CFG.THRESHOLDS?.bge?.recall ?? 0.48)
+        : (CFG.THRESHOLDS?.bge?.item ?? 0.40);
+      // NOT max(threshold, page): in recall mode that silently raised the page
+      // floor to the recall floor — overriding the deliberately-lower page bar in
+      // the one mode page vectors exist to serve. The page floor stands alone.
+      const pageThreshold = CFG.THRESHOLDS?.bge?.page ?? 0.45;
+      const pagesByItem = index.pagesByItem || null;
+      const scored = [];
+      // Tracked unconditionally so a run that clears nothing can still say WHY:
+      // a 0.54 near-miss, a key that was never in the index, and an item with no
+      // page vectors are three different bugs that otherwise log identically.
+      let keysMatched = 0;
+      let itemsWithPages = 0;
+      let bestRejected = null;
+      const noteRejected = (title, sim, page) => {
+        if (!bestRejected || sim > bestRejected.sim) bestRejected = { title, sim, page };
+      };
+      for (const item of searchCorpus) {
+        // Enter on a palette row calls openResult, which no-ops without a
+        // valid LMS url — semantically-strong but unopenable rows (module
+        // headers, notes) would be dead top hits. They keep whatever lexical
+        // rank they earned.
+        if (!item.url || !isValidLmsUrl(item.url)) continue;
+        const key = EI.itemKey(item);
+        const row = index.byKey.get(key);
+        if (row !== undefined) keysMatched++;
+        // -Infinity rather than `continue`: an item with no vector of its own can
+        // still be carried in by one of its page vectors, and that is the whole
+        // recall win of indexing PDF body text.
+        let similarity = row === undefined ? -Infinity : EI.cosineRow(index, row, queryVector);
+        let bestPage = null;
+        const pageRows = pagesByItem ? pagesByItem.get(key) : null;
+        if (pageRows && pageRows.length) {
+          itemsWithPages++;
+          let bestPageSim = -Infinity;
+          let bestPageNum = null;
+          for (const entry of pageRows) {
+            const pageSim = EI.cosineRow(index, entry.row, queryVector);
+            if (pageSim > bestPageSim) { bestPageSim = pageSim; bestPageNum = entry.page; }
+          }
+          // A page that clears its own floor labels the row, even if the item
+          // vector happens to score higher. Requiring it to BEAT the item was
+          // wrong: item passages carry up to 800 chars of the same body text, so
+          // the item vector routinely wins and the hint never rendered. The page
+          // number is provenance ("it's on p.30"), not a tie-break.
+          if (bestPageSim >= pageThreshold) {
+            similarity = Math.max(similarity, bestPageSim);
+            bestPage = bestPageNum;
+          } else {
+            noteRejected(item.title, bestPageSim, bestPageNum);
+          }
+        }
+        if (similarity >= threshold) scored.push({ item, similarity, bestPage });
+        else if (Number.isFinite(similarity)) noteRejected(item.title, similarity, bestPage);
+      }
+      scored.sort((a, b) => b.similarity - a.similarity);
+      debug('scored', {
+        candidates: scored.length,
+        threshold, pageThreshold, keysMatched, itemsWithPages,
+        corpus: searchCorpus.length,
+        top: scored.slice(0, 5).map(s => `${s.item.title}${s.bestPage ? ' p' + s.bestPage : ''}=${s.similarity.toFixed(4)}`)
+      });
+      if (scored.length === 0) {
+        // The config comment promises the top similarity is visible even when
+        // nothing clears the bar. Honour it: this is the line that distinguishes
+        // "floor too high" from "index never matched a key".
+        return debug('no candidates cleared the floor', {
+          threshold, pageThreshold, keysMatched, itemsWithPages,
+          closest: bestRejected
+            ? `${bestRejected.title}${bestRejected.page ? ' p' + bestRejected.page : ''}=${Number(bestRejected.sim).toFixed(4)}`
+            : '(nothing scored at all — no itemKey matched the index)'
+        });
+      }
+
+      const lexicalByKey = new Map(lexicalResults.map(r => [EI.itemKey(r.item), r]));
+      const semanticList = scored
+        .slice(0, isRecall ? (CFG.PALETTE_RECALL_TOP_N ?? 8) : (CFG.PALETTE_SEMANTIC_TOP_N ?? 30))
+        .map(({ item, similarity, bestPage }) => {
+          const lex = lexicalByKey.get(EI.itemKey(item));
+          // Shallow copy, never mutate: lexicalResults is the already-painted
+          // array AND the prevKeys baseline below. rrfMerge processes listB
+          // second and does itemMap.set(id, item), so for a duplicated id this
+          // annotated copy is the object that survives the merge — that is what
+          // carries bestPage into displayResults.
+          if (lex) return bestPage ? { ...lex, bestPage, semanticSim: similarity } : lex;
+          return { item, finalScore: 0, semanticSim: similarity, semantic: true, bestPage };
+        });
+
+      // itemKey extractor rather than rrfMerge's title|courseName default:
+      // distinct items sharing a title+course (assignment vs its PDF) must
+      // not collapse into one palette row.
+      let merged = SemanticMatcher.rrfMerge(
+        lexicalResults, semanticList, r => EI.itemKey(r.item), CFG.RRF_K ?? 60);
+
+      const pinned = lexicalResults[0]?.gradesShortcut ? lexicalResults[0] : null;
+      if (pinned) {
+        merged = [pinned, ...merged.filter(r => r.item?.url !== pinned.item.url)];
+      }
+      merged = merged.slice(0, MAX_RESULTS);
+
+      // Includes bestPage on purpose: the refine can change a row's LABEL without
+      // changing the order — which is the COMMON case for a page hit on an
+      // already-correct list — and a key-only comparison would return early and
+      // the page hint would never render.
+      const resultKey = (r) => EI.itemKey(r.item) + (r.bestPage ? '#p' + r.bestPage : '');
+      const nextKeys = merged.map(resultKey);
+      const prevKeys = lexicalResults.map(resultKey);
+      if (nextKeys.length === prevKeys.length && nextKeys.every((key, i) => key === prevKeys[i])) {
+        return debug('no repaint: order and labels unchanged');
+      }
+      if (stale()) return debug('aborted: stale before paint');
+      // Belt over the token guards: never repaint under someone mid-word.
+      // The tokens only advance when performSearch runs, but a keystroke can
+      // be sitting in the input debounce with no search fired yet.
+      const liveQuery = String(elements.searchInput?.value || '').trim();
+      if (liveQuery !== cleanQuery && liveQuery !== query) {
+        return debug('aborted: input changed since search', { liveQuery, cleanQuery });
+      }
+      // The user is arrow-key navigating the painted list; reordering under
+      // their highlight would make Enter open the wrong row.
+      if (state.overlayHighlightUserMoved) return debug('aborted: user is arrow-key navigating');
+
+      displayResults(merged);
+      updateOverlayFooter(merged.length, state.lastSearchTimeMs);
+      // displayResults wipes everything showNoResults injected, including the
+      // Ask affordance — put it back when a recall repaint replaces that card.
+      if (isRecall) {
+        injectAskRowIfQuestion(String(elements.searchInput?.value || ''));
+        injectCommandRowsIfMatch(String(elements.searchInput?.value || ''));
+      }
+      debug('painted', { rows: merged.length, withPageHint: merged.filter(r => r.bestPage).length });
+    } catch (error) {
+      // Lexical results are already painted; the refine never degrades them.
+      // But a swallowed throw here is indistinguishable from "nothing matched",
+      // which is precisely the ambiguity that hid this being broken.
+      debug('threw', error);
+    }
+  }, CFG.PALETTE_SEMANTIC_DEBOUNCE_MS ?? 150);
+}
+
 function buildBoundaryMatcher(token) {
   if (!token) return null;
   const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -1893,7 +2062,12 @@ function buildTokenMatcherMap(tokens) {
 
 function textIncludesQueryToken(searchableText, token, tokenMatchers = new Map()) {
   if (!searchableText || !token) return false;
-  if (token.length === 1 || /^\d+$/.test(token)) {
+  // 1-2 char tokens need a word boundary, not a substring test: "pH" otherwise
+  // matches *ph*otos and *Ph*ysics, and at that length a substring hit carries
+  // no signal. The cutoff stops at 2 deliberately — 3+ keeps substring matching
+  // so stem variants still land, and "key" must continue to find "Keys" (a
+  // pinned regression in test_search_regressions.js).
+  if (token.length <= 2 || /^\d+$/.test(token)) {
     return Boolean(tokenMatchers.get(token)?.test(searchableText));
   }
   return searchableText.includes(token);
@@ -1925,6 +2099,12 @@ function getItemBodySearchText(item) {
 }
 
 function shouldRunBodyContentRecall(queryMeta) {
+  // This pass shipped long before it could ever fire: it reads item.content,
+  // which the Canvas scan wipes off every rescanned item. Course-material
+  // hydration refills it, so the pass goes live — and that is a real ranking
+  // change (body matching is substring-based, and body hits are injected into
+  // the result set before the re-score loop), hence the kill switch.
+  if (globalThis.CanvascopeEmbeddingsConfig?.PALETTE_BODY_RECALL_ENABLED === false) return false;
   const tokens = queryMeta?.searchTokens || [];
   if (!tokens.length) return false;
   if (tokens.some(token => token.length >= BODY_RECALL_MIN_TOKEN_LENGTH)) return true;
@@ -3550,9 +3730,11 @@ const PDF_VIEWER_DEBUG = true;
 const POPUP_UI_STORAGE_KEY = 'popupUi';
 const DEFAULT_EXTENSION_SETTINGS = Object.freeze({
   enableSendToLectra: false,
+  enablePolyaConnect: true,
   autopilotAutoPrompt: true,
   enableAdaptiveLearning: true,
   notificationsEnabled: false,
+  mascotEnabled: true,
   courseMaterialSupabaseSync: false,
   selectedCourseFilters: [],
   customAlgorithm: DEFAULT_CUSTOM_ALGORITHM
@@ -3571,6 +3753,8 @@ let state = {
   fastPreviewIdleCallback: null,
   fastPreviewTimeout: null,
   searchGeneration: 0,
+  searchPaintToken: 0,
+  semanticRefineTimeout: null,
   searchSideEffectTimeout: null,
   isScanning: false,
   filters: {
@@ -3581,6 +3765,7 @@ let state = {
   courses: [],
   isOverlayMode: false,
   overlayHighlightIndex: 0,
+  overlayHighlightUserMoved: false,
   askMode: false,      // Cmd+K is showing a streamed RAG answer
   askBusy: false,      // an answer is currently streaming
   askRouteInited: false,
@@ -3622,9 +3807,11 @@ function normalizeExtensionSettings(rawSettings) {
     ...DEFAULT_EXTENSION_SETTINGS,
     ...source,
     enableSendToLectra: Boolean(source.enableSendToLectra),
+    enablePolyaConnect: source.enablePolyaConnect !== false,
     autopilotAutoPrompt: source.autopilotAutoPrompt !== false,
     enableAdaptiveLearning: source.enableAdaptiveLearning !== false,
     notificationsEnabled: source.notificationsEnabled === true,
+    mascotEnabled: source.mascotEnabled !== false,
     courseMaterialSupabaseSync: source.courseMaterialSupabaseSync === true,
     selectedCourseFilters,
     customAlgorithm: normalizeCustomAlgorithm(source.customAlgorithm)
@@ -3696,6 +3883,10 @@ function applyExtensionSettingsUi() {
 
   if (elements.enableNotificationsToggle) {
     elements.enableNotificationsToggle.checked = Boolean(state.extensionSettings.notificationsEnabled);
+  }
+
+  if (elements.enableMascotToggle) {
+    elements.enableMascotToggle.checked = state.extensionSettings.mascotEnabled !== false;
   }
 
   const customAlgorithm = getStoredCustomAlgorithm();
@@ -4901,6 +5092,22 @@ document.addEventListener('DOMContentLoaded', async () => {
   updateSearchFieldAffordances();
   elements.searchInput.focus();
 
+  // Deferred embeddings warmup: spin up the shared offscreen model host and
+  // prefetch the persisted vector index so the first semantic refine is warm.
+  // Off the boot path on purpose — the palette is lexical-first and fully
+  // usable if none of this ever completes.
+  setTimeout(async () => {
+    try {
+      if (globalThis.CanvascopeEmbeddingsConfig?.EMBEDDINGS_ENABLED !== true) return;
+      // Never load the model for an index that doesn't exist yet: warming it
+      // costs a 21MB WASM runtime + 34MB ONNX load in the shared offscreen
+      // document, and with no vectors to search there is nothing to gain.
+      const index = await globalThis.CanvascopeEmbeddingIndex?.load();
+      if (!index || index.count === 0) return;
+      if (window.LocalEmbeddings?.initPipeline) void window.LocalEmbeddings.initPipeline();
+    } catch (_) { /* best-effort */ }
+  }, 1000);
+
   // Request status from background
   getBackgroundStatus();
   if (isLectraFeatureEnabled()) {
@@ -5106,6 +5313,7 @@ function initializeElements() {
   elements.courseMaterialSupabaseSyncToggle = document.getElementById('enable-course-material-sync');
   elements.enableAdaptiveLearningToggle = document.getElementById('enable-adaptive-learning');
   elements.enableNotificationsToggle = document.getElementById('enable-notifications');
+  elements.enableMascotToggle = document.getElementById('enable-mascot');
   // Canvas Appearance (skin config migrated from the slash menu).
   elements.canvasThemeSelect = document.getElementById('canvas-theme-select');
   elements.canvasDensitySelect = document.getElementById('canvas-density-select');
@@ -5238,6 +5446,9 @@ function closePopupModal(stateKey, modalElement) {
 
 // ---- Import course to Lectra ------------------------------------------------
 
+// Lectra is a native app; this URL scheme opens it when installed.
+const LECTRA_APP_DEEP_LINK = 'com.canvascope.lectra://';
+
 const importLectra = {
   baseUrl: null,
   courseId: null,
@@ -5303,6 +5514,7 @@ async function refreshImportToLectraAvailability() {
     importLectra.baseUrl = null;
     importLectra.courseId = null;
     importLectra.courseName = '';
+    updateOverflowLectraCue(false);
     if (state.importLectraOpen && modal) {
       closePopupModal('importLectraOpen', modal);
     }
@@ -5312,6 +5524,7 @@ async function refreshImportToLectraAvailability() {
   const ctx = await detectActiveCourseFilesContext();
   if (!isLectraFeatureEnabled()) {
     overflowItem.hidden = true;
+    updateOverflowLectraCue(false);
     return;
   }
 
@@ -5326,6 +5539,17 @@ async function refreshImportToLectraAvailability() {
     importLectra.courseId = null;
     importLectra.courseName = '';
   }
+
+  updateOverflowLectraCue(Boolean(ctx));
+}
+
+// Accent dot on the "More" button so the course action is discoverable
+// without opening the menu.
+function updateOverflowLectraCue(available) {
+  const overflowBtn = document.getElementById('cs-overflow-btn');
+  if (!overflowBtn) return;
+  overflowBtn.classList.toggle('has-lectra-action', available);
+  overflowBtn.title = available ? 'More — send this course to Lectra' : 'More';
 }
 
 async function openImportLectraModal(trigger) {
@@ -5426,7 +5650,7 @@ async function runImportToLectra() {
       excludedFolderPaths
     });
     if (res?.success) {
-      if (statusEl) { statusEl.textContent = res.message || 'Imported to Lectra.'; statusEl.className = 'import-lectra-status success'; }
+      if (statusEl) { showLectraImportSuccess(statusEl, res.message); }
     } else {
       if (statusEl) { statusEl.textContent = res?.message || 'Import failed.'; statusEl.className = 'import-lectra-status error'; }
     }
@@ -5436,6 +5660,29 @@ async function runImportToLectra() {
     importLectra.busy = false;
     if (confirmBtn) { confirmBtn.disabled = false; confirmBtn.querySelector('.btn-text').textContent = 'Import to Lectra'; }
   }
+}
+
+function showLectraImportSuccess(statusEl, message) {
+  statusEl.textContent = '';
+  statusEl.className = 'import-lectra-status success';
+
+  const text = document.createElement('span');
+  text.textContent = message || 'Course sent to Lectra — it\'s in your library.';
+
+  const openBtn = document.createElement('button');
+  openBtn.type = 'button';
+  openBtn.className = 'action-btn secondary-btn ilt-open-lectra';
+  openBtn.textContent = 'Open Lectra';
+  openBtn.addEventListener('click', async () => {
+    try {
+      await chrome.tabs.create({ url: LECTRA_APP_DEEP_LINK });
+    } catch (e) {
+      text.textContent = 'Open the Lectra app on your iPad or Mac — your course is waiting in your library.';
+    }
+  });
+
+  statusEl.appendChild(text);
+  statusEl.appendChild(openBtn);
 }
 
 async function maybeShowWalkthrough() {
@@ -6437,6 +6684,7 @@ function syncSlashModeFromRawInput(rawValue) {
 
   clearScheduledSearch();
   clearScheduledSearchSideEffects();
+  clearScheduledSemanticRefine();
 
   const displayValue = incomingValue.startsWith('/') ? incomingValue.slice(1) : incomingValue;
   const nextRawValue = `/${displayValue}`;
@@ -6585,6 +6833,7 @@ function handleSearchInputKeydown(e) {
     }
 
     // Apply new highlight and scroll into view
+    state.overlayHighlightUserMoved = true;
     items[state.overlayHighlightIndex]?.classList.add('overlay-highlighted');
     items[state.overlayHighlightIndex]?.scrollIntoView({ block: 'nearest' });
   }
@@ -6907,6 +7156,23 @@ function setupEventListeners() {
         showSyncedStatus(enabled ? 'Notifications enabled' : 'Notifications turned off');
       } catch (error) {
         console.error('[Canvascope] Failed to update notifications setting:', error);
+        applyExtensionSettingsUi();
+      } finally {
+        toggle.disabled = false;
+      }
+    });
+  }
+
+  if (elements.enableMascotToggle) {
+    elements.enableMascotToggle.addEventListener('change', async (event) => {
+      const toggle = event.currentTarget;
+      const enabled = Boolean(toggle.checked);
+      toggle.disabled = true;
+
+      try {
+        await updateExtensionSettings({ mascotEnabled: enabled });
+      } catch (error) {
+        console.error('[Canvascope] Failed to update mascot setting:', error);
         applyExtensionSettingsUi();
       } finally {
         toggle.disabled = false;
@@ -7310,7 +7576,15 @@ async function mergeScannedContentIntoIndex(scannedContent) {
   const addedCount = Math.max(0, merged.length - state.indexedContent.length);
 
   state.indexedContent = merged;
-  await chrome.storage.local.set({ indexedContent: merged });
+  // Strip read-time course-material hydration before persisting. state.indexedContent
+  // carries page text projected at the popup's narrower maxPageChars; writing that
+  // back would bloat storage AND shadow the full-width text on the next embedding
+  // sync, since hydrateItems skips items that already have pages.
+  const CMdry = globalThis.CanvascopeCourseMaterials;
+  const persistable = (CMdry && typeof CMdry.dehydrateItems === 'function')
+    ? CMdry.dehydrateItems(merged)
+    : merged;
+  await chrome.storage.local.set({ indexedContent: persistable });
 
   initializeFuse();
   updateUI();
@@ -7736,6 +8010,11 @@ function initializeFuse() {
 
 function applyFilters() {
   state.filteredContent = state.indexedContent.filter(item => {
+    // To-dos are excluded from search: they are managed in the Up Next
+    // planner, they cannot be opened from a result row, and an exact title
+    // match ("Homework" for the query "hw") would outrank real course files.
+    if (item.__isCustomTodo) return false;
+
     if (!itemMatchesSelectedCourses(item)) return false;
 
     // Type filter - exact match
@@ -7962,8 +8241,17 @@ function scheduleFullSearch(query) {
   }, getSearchDebounceMs());
 }
 
+let mascotTypingTimeout;
 function handleSearchInput(event) {
   const rawValue = String(event.target.value || '');
+  
+  if (state.isOverlayMode && window.parent && window.parent.postMessage) {
+    window.parent.postMessage({ type: 'CANVASCOPE_MASCOT_TYPING', isTyping: true }, '*');
+    clearTimeout(mascotTypingTimeout);
+    mascotTypingTimeout = setTimeout(() => {
+      window.parent.postMessage({ type: 'CANVASCOPE_MASCOT_TYPING', isTyping: false }, '*');
+    }, 1500);
+  }
 
   // Typing while an answer is shown returns to the search list.
   if (state.askMode) exitAskMode();
@@ -7982,6 +8270,7 @@ function handleSearchInput(event) {
 
   clearScheduledSearch();
   clearScheduledSearchSideEffects();
+  clearScheduledSemanticRefine();
 
   if (query.length === 0) {
     setUiState(state.isScanning ? UI_STATE.SCAN_SYNCING : UI_STATE.READY);
@@ -8080,6 +8369,7 @@ function applyQuerySuggestion(query) {
   state.searchGeneration += 1;
   clearScheduledSearch();
   clearScheduledSearchSideEffects();
+  clearScheduledSemanticRefine();
   elements.searchInput.value = query;
   elements.searchInput.focus();
   if (elements.clearSearchBtn) elements.clearSearchBtn.classList.add('visible');
@@ -8096,6 +8386,12 @@ function hideQuerySuggestions() {
 
 function performSearch(query, options = {}) {
   if (options.generation && options.generation !== state.searchGeneration) return;
+
+  // Invalidates any in-flight semantic refine. searchGeneration alone is not
+  // enough: several repaint paths (history chips, example queries, filter
+  // changes) re-run performSearch without bumping the generation, and a
+  // stale refine must never repaint over their results.
+  state.searchPaintToken = (state.searchPaintToken || 0) + 1;
 
   // Grades shortcut (e.g. "chem grades" -> top result is the Chem course's grades page).
   const gradesShortcut = buildGradesShortcut(query);
@@ -8467,6 +8763,14 @@ function performSearch(query, options = {}) {
     }
     showNoResults(`No results for "${query}"`);
     updateOverlayFooter(0, searchTimeMs);
+    // A query with no lexical hit is EXACTLY the case PDF page vectors exist to
+    // serve — a word that appears only inside a document body, never in a title
+    // or path. Returning here without scheduling the refine made those queries
+    // the one thing the semantic index could never answer. The refine treats an
+    // empty baseline as recall rather than re-rank: stricter floor, fewer rows.
+    if (!options.skipSideEffects) {
+      scheduleSemanticRefine(query, queryMeta, [], searchCorpus);
+    }
     return;
   }
 
@@ -8578,6 +8882,7 @@ function performSearch(query, options = {}) {
   // the hot Cmd+K keystroke path never writes storage or sends messages.
   if (!options.skipSideEffects) {
     scheduleSearchSideEffects(query, queryMeta.rankingQuery);
+    scheduleSemanticRefine(query, queryMeta, results, searchCorpus);
   }
 }
 
@@ -9549,17 +9854,33 @@ function displayResults(results) {
   const globalClicks = adaptiveOn ? (state.searchHabits?.globalClicks || null) : null;
   const nowMs = Date.now();
 
+  // Personal to-dos and notes stay searchable, but they never take the
+  // default Enter target: a to-do titled "Homework" exact-matches "hw" and
+  // would otherwise outrank every real homework file for the one action the
+  // user most likely wants.
+  const defaultHighlightIndex = (() => {
+    if (!inOverlay || results.length === 0) return 0;
+    const firstContent = results.findIndex(r => !r.item?.__isNote && !r.item?.__isCustomTodo);
+    return firstContent === -1 ? 0 : firstContent;
+  })();
+  state.overlayHighlightIndex = defaultHighlightIndex;
+  state.overlayHighlightUserMoved = false;
+
   for (let index = 0; index < results.length; index++) {
     const result = results[index];
     const item = result.item;
+    // Set by the semantic refine only when a PDF page vector out-scored the
+    // item vector, so its presence IS the "matched on content, not on the
+    // title" signal.
+    const pageHint = Number.isFinite(result?.bestPage) && result.bestPage > 0 ? result.bestPage : null;
 
     const resultElement = document.createElement('div');
     resultElement.className = 'result-item';
     resultElement.tabIndex = 0;
     resultElement.setAttribute('role', 'button');
-    resultElement.setAttribute('aria-label', buildItemAriaLabel(item));
+    resultElement.setAttribute('aria-label', buildItemAriaLabel(item, { page: pageHint }));
 
-    if (inOverlay && index === 0) {
+    if (inOverlay && index === defaultHighlightIndex) {
       resultElement.classList.add('overlay-highlighted');
     }
 
@@ -9576,10 +9897,19 @@ function displayResults(results) {
       titleElement.textContent = item.title || 'Untitled';
       textCol.appendChild(titleElement);
 
-      if (item.courseName) {
+      // Notes carry no courseName and to-dos may carry an empty one; without
+      // a fallback they render as a bare title with no hint of what they are.
+      const baseSubtitle = item.courseName || item.moduleName || '';
+      // Appended here rather than as its own line: .overlay-result-context and
+      // .overlay-result-due are display:none in overlay mode, so a third row
+      // would render invisibly.
+      const overlaySubtitle = pageHint
+        ? (baseSubtitle ? `${baseSubtitle} · p.${pageHint}` : `p.${pageHint}`)
+        : baseSubtitle;
+      if (overlaySubtitle) {
         const courseEl = document.createElement('div');
         courseEl.className = 'overlay-result-course';
-        courseEl.textContent = item.courseName;
+        courseEl.textContent = overlaySubtitle;
         textCol.appendChild(courseEl);
       }
 
@@ -9759,6 +10089,25 @@ function updateOverlayFooter(count, timeMs) {
 }
 
 function openResult(item, event) {
+  // Notes and to-dos live in the extension, not on the LMS: they carry a
+  // synthetic '#cs-note-…'/'#cs-todo-…' url that isValidLmsUrl rejects, so
+  // without this branch selecting one did nothing at all. Notes have a
+  // browser to open; to-dos have no dedicated surface, so the overlay just
+  // gets out of the way (they are managed in the popup's Up Next planner).
+  if (item.__isNote || item.__isCustomTodo) {
+    const inOverlay = window.self !== window.top;
+    try {
+      if (inOverlay) {
+        window.parent.postMessage(item.__isNote
+          ? { type: 'CANVASCOPE_RUN_ACTION', action: 'notes', arg: '' }
+          : { type: 'CLOSE_OVERLAY' }, '*');
+        return;
+      }
+    } catch (_) { /* fall through to the in-popup surface */ }
+    clearSearch();
+    return;
+  }
+
   if (item.url && isValidLmsUrl(item.url)) {
     // Save to recently opened + update click feedback
     saveToRecents(item);
@@ -9919,10 +10268,34 @@ function isValidCanvasUrl(url) {
   return isValidLmsUrl(url);
 }
 
+// Anchor a PDF url to a page. #page=N is honored ONLY by Chrome's built-in PDF
+// viewer, i.e. the bare /files/<id>/download form. The /courses/<c>/files/<f>
+// form renders Canvas DocViewer, which ignores the fragment, and Canvas's own
+// API url carries download_frd=1 (Content-Disposition: attachment), which
+// downloads instead of rendering. Never write the result into item.url: item
+// objects are shared corpus state, and normalizePdfCandidateUrl strips hashes
+// anyway. Currently unwired — gated off until someone confirms on a live Canvas
+// which url form actually renders inline.
+function buildPageAnchoredUrl(url, page) {
+  const CFG = globalThis.CanvascopeEmbeddingsConfig;
+  if (!CFG?.PALETTE_PAGE_DEEPLINK_ENABLED) return url;
+  if (!Number.isFinite(page) || page <= 0) return url;
+  try {
+    const parsed = new URL(url);
+    if (!/\/files\/\d+\/download\/?$/.test(parsed.pathname)) return url;
+    if (parsed.searchParams.get('download_frd') === '1') return url;
+    parsed.hash = `page=${page}`;
+    return parsed.toString();
+  } catch {
+    return url;
+  }
+}
+
 function clearSearch() {
   state.searchGeneration += 1;
   clearScheduledSearch();
   clearScheduledSearchSideEffects();
+  clearScheduledSemanticRefine();
 
   if (state.slashMode.active) {
     exitSlashMode({ clearInput: true, focusInput: true });
@@ -9979,6 +10352,11 @@ function showNoResults(message) {
   elements.emptyState.classList.add('hidden');
   if (elements.homeSections) elements.homeSections.classList.add('hidden');
   if (elements.duePlanner) elements.duePlanner.classList.add('hidden');
+  // There is no list to navigate any more, so no highlight to protect. Only
+  // displayResults used to clear this, which meant one ArrowDown on an earlier
+  // result set latched it for the rest of the session and every later semantic
+  // recall silently refused to paint.
+  state.overlayHighlightUserMoved = false;
 
   if (state.isOverlayMode) {
     const noResultsElement = document.createElement('div');
@@ -10129,9 +10507,38 @@ async function loadContent() {
   try {
     const result = await chrome.storage.local.get([
       'indexedContent', 'starredCourseIds', 'dismissedTasks',
-      'customTodos', 'dashboardNotes', 'courseCatalog', 'courseSnapshots'
+      'customTodos', 'dashboardNotes', 'courseCatalog', 'courseSnapshots',
+      'courseMaterialChunks', 'courseMaterialDocuments'
     ]);
     let content = result.indexedContent || [];
+
+    // Re-attach PDF page text the Canvas scan wiped off these items. Runs BEFORE
+    // dedup: mergeIndexedContentFields does not carry `pages`, so a hydrated
+    // dedup-loser would silently drop them. Page hits are found via the index's
+    // own key map, not from here — this exists so a matched row can show its page
+    // text, and so the exact-token body recall pass has something to match.
+    // maxPageChars is narrowed to bound popup memory; that is safe ONLY because
+    // the popup never feeds EI.sync(). Index-bound hydration lives in
+    // RAGCore.buildCorpus and must keep the default caps.
+    //
+    // 400/4000 was far too tight: it left item.content holding the first 400
+    // chars of only the first ~10 pages — 1-2% of a lecture deck — so the
+    // exact-token body pass could never see a word on page 30 and was
+    // effectively decorative. 1200/12000 matches PDF_BODY_SEARCH_LIMIT, which
+    // was already the intended ceiling. Semantic page vectors remain the tool
+    // for deep pages; this just stops the lexical pass being a no-op.
+    const CM = globalThis.CanvascopeCourseMaterials;
+    if (CM && typeof CM.hydrateItems === 'function') {
+      try {
+        content = CM.hydrateItems(content, {
+          chunks: result.courseMaterialChunks || [],
+          documents: result.courseMaterialDocuments || []
+        }, { maxPageChars: 1200, maxContentChars: PDF_BODY_SEARCH_LIMIT }).items;
+      } catch (_) {
+        // Palette degrades to title-only matching; never worse than before.
+      }
+    }
+
     content = enrichContentWithCourseCodes(content, result.courseCatalog, result.courseSnapshots);
 
     // Deduplicate by normalizing URLs (strip module_item_id)

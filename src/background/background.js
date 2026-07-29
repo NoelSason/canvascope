@@ -188,12 +188,13 @@ const DROPBRIDGE_V2_FALLBACK_ALARM_MINUTES_LEGACY = 2;
 const DROPBRIDGE_V2_FALLBACK_ALARM_MIN_CHROME_MAJOR = 120;
 const DROPBRIDGE_V2_OFFSCREEN_DOCUMENT_PATH = 'src/offscreen/offscreen.html';
 const DROPBRIDGE_V2_OFFSCREEN_DOCUMENT_URL = chrome.runtime.getURL(DROPBRIDGE_V2_OFFSCREEN_DOCUMENT_PATH);
-const DROPBRIDGE_V2_OFFSCREEN_JUSTIFICATION = 'Keep a hidden worker-backed receiver alive for the optional Lectra to Canvascope file delivery flow so queued files can trigger a browser download without opening a visible tab.';
+const DROPBRIDGE_V2_OFFSCREEN_JUSTIFICATION = 'Hosts the shared hidden extension document used for the optional Lectra to Canvascope file delivery flow (a worker-backed realtime receiver that lets queued files trigger a browser download without opening a visible tab) and for running the local on-device text embedding model that powers private semantic search.';
 const DROPBRIDGE_V2_DIAGNOSTICS_STORAGE_KEY = 'dropBridgeV2Diagnostics';
 const DROPBRIDGE_V2_DIAGNOSTIC_EVENT_LIMIT = 25;
 const DROPBRIDGE_V2_DEBUG = false; // enable only for local debugging
 const DEFAULT_EXTENSION_SETTINGS = Object.freeze({
     enableSendToLectra: false,
+    enablePolyaConnect: true,
     selectedCourseFilters: []
 });
 const PDF_VIEWER_OVERLAY_CONTENT_SCRIPT_ID = 'canvascopePdfViewerOverlay';
@@ -216,6 +217,10 @@ let dropBridgeV2WarmupPromise = null;
 let dropBridgeV2LastWarmupAt = 0;
 let dropBridgeV2LastRestartAt = 0;
 let dropBridgeV2IntentionalOffscreenCloseUntil = 0;
+// Close-decision singleton for the SHARED offscreen document (DropBridge
+// receiver + embeddings host). Ensure paths await it so a close and a
+// recreate can never interleave.
+let csOffscreenClosePromise = null;
 let dropBridgeV2DiagnosticsState = null;
 let dropBridgeV2DiagnosticsWritePromise = Promise.resolve();
 let dropBridgeV2CachedAccessToken = null;
@@ -233,6 +238,7 @@ function normalizeExtensionSettings(rawSettings) {
         ...DEFAULT_EXTENSION_SETTINGS,
         ...source,
         enableSendToLectra: Boolean(source.enableSendToLectra),
+        enablePolyaConnect: source.enablePolyaConnect !== false,
         selectedCourseFilters: Array.isArray(source.selectedCourseFilters) ? source.selectedCourseFilters : []
     };
 }
@@ -245,6 +251,11 @@ async function getExtensionSettings() {
 async function isSendToLectraFeatureEnabled() {
     const settings = await getExtensionSettings();
     return Boolean(settings.enableSendToLectra);
+}
+
+async function isPolyaConnectFeatureEnabled() {
+    const settings = await getExtensionSettings();
+    return settings.enablePolyaConnect !== false;
 }
 
 function permissionsContains(permissions) {
@@ -989,7 +1000,7 @@ function shouldRestartDropBridgeReceiverFromStatus(status, reason = null) {
     }
 
     const normalizedReason = String(reason || '').toLowerCase();
-    if (normalizedReason === 'no-context') {
+    if (normalizedReason === 'no-context' || normalizedReason === 'receiver-disabled') {
         return false;
     }
 
@@ -1075,19 +1086,22 @@ async function triggerDropBridgeDownload(upload) {
     });
 
     if (!downloadUrl) {
-        dropBridgeDebug('download: missing downloadUrl -> queued', { uploadId });
+        // Deterministic: re-queueing hands back the same empty payload, so this
+        // would just burn the retry budget re-downloading nothing. Ack terminal
+        // instead -- 'canceled' is the terminal status the status endpoint takes.
+        dropBridgeDebug('download: missing downloadUrl -> canceled', { uploadId });
         void updateDropBridgeV2Diagnostics({
             lastDownloadAt: new Date().toISOString(),
             lastDownloadUploadId: uploadId,
-            lastDownloadStatus: 'queued',
+            lastDownloadStatus: 'canceled',
             lastDownloadReason: 'Missing downloadUrl'
         }, {
             type: 'download_finalized',
             uploadId,
-            status: 'queued',
+            status: 'canceled',
             reason: 'Missing downloadUrl'
         });
-        return { status: 'queued', reason: 'Missing downloadUrl' };
+        return { status: 'canceled', reason: 'Missing downloadUrl' };
     }
 
     return new Promise((resolve) => {
@@ -1224,7 +1238,9 @@ async function triggerDropBridgeDownload(upload) {
                     if (isDropBridgeUserCanceled(startError)) {
                         finalize({ status: 'canceled', reason: startError || 'USER_CANCELED' });
                     } else {
-                        finalize({ status: 'queued', reason: startError || 'DOWNLOAD_START_FAILED' });
+                        // chrome.downloads refused to start at all -- retrying the
+                        // same request re-fetches the object for the same refusal.
+                        finalize({ status: 'canceled', reason: startError || 'DOWNLOAD_START_FAILED' });
                     }
                     return;
                 }
@@ -1377,8 +1393,15 @@ async function hasDropBridgeV2OffscreenDocument() {
     return false;
 }
 
-async function ensureDropBridgeV2OffscreenReceiver(reason = 'startup') {
-    if (!DROPBRIDGE_V2_ENABLED) return false;
+// Shared ensure for the single offscreen document (DropBridge receiver +
+// embeddings host both live in it). Reachable from the embeddings side even
+// when the DropBridge feature is disabled; DropBridge callers go through the
+// wrapper below, which keeps the feature gate.
+async function ensureSharedOffscreenDocument(reason = 'startup') {
+    // Every ensure counts as "wanted", not just the two message handlers — the
+    // service worker's own embed calls go straight through here, and without
+    // this the close sweep could not tell they had happened.
+    markEmbeddingsHostWanted();
     if (!chrome.offscreen) {
         console.warn('[DropBridge v2] chrome.offscreen is unavailable; falling back to alarm-only receive mode.');
         void updateDropBridgeV2Diagnostics({
@@ -1398,6 +1421,9 @@ async function ensureDropBridgeV2OffscreenReceiver(reason = 'startup') {
     }
 
     dropBridgeV2EnsureOffscreenPromise = (async () => {
+        if (csOffscreenClosePromise) {
+            try { await csOffscreenClosePromise; } catch (_) { /* close outcome irrelevant to ensure */ }
+        }
         if (await hasDropBridgeV2OffscreenDocument()) {
             void updateDropBridgeV2Diagnostics({
                 receiverStatus: 'existing',
@@ -1472,6 +1498,11 @@ async function ensureDropBridgeV2OffscreenReceiver(reason = 'startup') {
     return dropBridgeV2EnsureOffscreenPromise;
 }
 
+async function ensureDropBridgeV2OffscreenReceiver(reason = 'startup') {
+    if (!DROPBRIDGE_V2_ENABLED) return false;
+    return ensureSharedOffscreenDocument(reason);
+}
+
 async function closeDropBridgeV2OffscreenReceiver(reason = 'stop') {
     if (!chrome.offscreen) {
         return false;
@@ -1493,6 +1524,164 @@ async function closeDropBridgeV2OffscreenReceiver(reason = 'stop') {
         reason
     });
     return true;
+}
+
+// ---------------------------------------------------------------------------
+// Shared offscreen document lifecycle (DropBridge receiver + embeddings host).
+//
+// Ownership is query-then-close: nothing about "who needs the doc" is
+// persisted. DropBridge-wanted is recomputed from durable storage-backed
+// state (feature flag + session), and the embeddings side is probed live —
+// the offscreen document outlives service-worker restarts and is its own
+// source of truth. This keeps every decision correct from a cold SW.
+// ---------------------------------------------------------------------------
+
+// Same durable inputs startDropBridgeV2Loop gates on. Errors → conservative
+// true (keep the doc; a later sweep can close it).
+async function isDropBridgeV2ReceiverWanted() {
+    if (!DROPBRIDGE_V2_ENABLED || !supabaseClient) return false;
+    if (!await isSendToLectraFeatureEnabled()) return false;
+    try {
+        const { data: { session } } = await supabaseClient.auth.getSession();
+        return Boolean(session?.user?.id);
+    } catch (_) {
+        return true;
+    }
+}
+
+// Probes the embeddings host inside the offscreen doc. null = no answer
+// (no doc, no listener, or timeout).
+function queryEmbeddingsHostStatus(timeoutMs = 2000) {
+    return new Promise((resolve) => {
+        let settled = false;
+        const finish = (value) => {
+            if (!settled) {
+                settled = true;
+                resolve(value);
+            }
+        };
+        const timer = setTimeout(() => finish(null), timeoutMs);
+        try {
+            chrome.runtime.sendMessage({ target: 'cs-embeddings', op: 'status' }, (response) => {
+                clearTimeout(timer);
+                if (chrome.runtime.lastError) {
+                    finish(null);
+                    return;
+                }
+                finish(response && typeof response === 'object' ? response : null);
+            });
+        } catch (_) {
+            clearTimeout(timer);
+            finish(null);
+        }
+    });
+}
+
+// Set whenever something asks for the embeddings host. See the grace window in
+// maybeCloseSharedOffscreenDocument.
+//
+// Persisted to storage.session, not just a module variable: MV3 kills the
+// service worker after ~30s idle, and the close sweep runs on the NEXT cold
+// start — where a module variable is back to 0 and the grace window is already
+// expired before it ever applied.
+let csEmbeddingsLastEnsureAt = 0;
+const CS_EMBEDDINGS_CLOSE_GRACE_MS = 60000;
+const CS_EMBEDDINGS_WANTED_KEY = 'csEmbeddingsHostWantedAt';
+
+function markEmbeddingsHostWanted() {
+    csEmbeddingsLastEnsureAt = Date.now();
+    try {
+        chrome.storage?.session?.set({ [CS_EMBEDDINGS_WANTED_KEY]: csEmbeddingsLastEnsureAt });
+    } catch (_) { /* session storage unavailable; in-memory value still applies */ }
+}
+
+async function readEmbeddingsHostWantedAt() {
+    try {
+        const stored = await chrome.storage?.session?.get(CS_EMBEDDINGS_WANTED_KEY);
+        const at = Number(stored?.[CS_EMBEDDINGS_WANTED_KEY] ?? 0);
+        return Math.max(csEmbeddingsLastEnsureAt, Number.isFinite(at) ? at : 0);
+    } catch (_) {
+        return csEmbeddingsLastEnsureAt;
+    }
+}
+
+// Close the shared doc iff neither resident needs it.
+//
+// A null status probe used to mean "unloaded → close", which was actively
+// harmful: with ORT_PROXY=false the host builds its WASM runtime and ONNX graph
+// on the offscreen document's MAIN thread, so a host busy cold-loading cannot
+// answer a 2s probe. And because Send-to-Lectra is off by default, every
+// service-worker cold start reaches here — so the doc was being closed out from
+// under the very load a palette query had just started.
+//
+// A null probe is now "unknown", and unknown does not justify closing while
+// someone has recently asked for the host. Past the grace window a genuinely
+// wedged doc becomes closable again, preserving the original intent.
+async function maybeCloseSharedOffscreenDocument(reason = 'idle') {
+    if (!chrome.offscreen) return false;
+    if (csOffscreenClosePromise) return csOffscreenClosePromise;
+    csOffscreenClosePromise = (async () => {
+        try {
+            if (!await hasDropBridgeV2OffscreenDocument()) return false;
+            if (await isDropBridgeV2ReceiverWanted()) return false;
+            const embedStatus = await queryEmbeddingsHostStatus(2000);
+            if (embedStatus?.state && embedStatus.state !== 'unloaded') return false;
+            // Reached when the host said 'unloaded' OR did not answer at all.
+            // Both are "not busy right now", and NEITHER means "nobody wants
+            // it": a doc created seconds ago reports 'unloaded' until it takes
+            // its first job, so gating this on a missing state closed brand-new
+            // documents on sight and the grace window never applied in the one
+            // situation it was written for.
+            const wantedAgoMs = Date.now() - (await readEmbeddingsHostWantedAt());
+            if (wantedAgoMs < CS_EMBEDDINGS_CLOSE_GRACE_MS) {
+                console.log(`[Canvascope Embeddings] Keeping shared doc: state=${embedStatus?.state || 'no-answer'} but host was wanted ${Math.round(wantedAgoMs / 1000)}s ago (${reason}).`);
+                return false;
+            }
+            return await closeDropBridgeV2OffscreenReceiver(reason);
+        } finally {
+            csOffscreenClosePromise = null;
+        }
+    })();
+    return csOffscreenClosePromise;
+}
+
+// Re-arms a parked receiver. Loss on a FRESH doc is harmless (the latch
+// defaults on and the doc self-connects); the message only matters for
+// previously-parked docs, where the listener is guaranteed installed.
+async function sendDropBridgeReceiverConnect(reason = 'startup') {
+    if (!chrome.offscreen) return;
+    if (!await hasDropBridgeV2OffscreenDocument()) return;
+    const send = () => new Promise((resolve) => {
+        try {
+            chrome.runtime.sendMessage({ action: 'dropbridgeReceiverConnect', reason }, (response) => {
+                void chrome.runtime.lastError;
+                resolve(Boolean(response?.success));
+            });
+        } catch (_) {
+            resolve(false);
+        }
+    });
+    if (await send()) return;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    await send();
+}
+
+// Parks the receiver (latch off) instead of tearing the shared doc down,
+// then closes the doc only if the embeddings host is also idle.
+async function softDisconnectDropBridgeV2Receiver(reason = 'loop-stop') {
+    if (!chrome.offscreen) return;
+    if (!await hasDropBridgeV2OffscreenDocument()) return;
+    await new Promise((resolve) => {
+        try {
+            chrome.runtime.sendMessage({ action: 'dropbridgeReceiverDisconnect', reason }, () => {
+                void chrome.runtime.lastError;
+                resolve();
+            });
+        } catch (_) {
+            resolve();
+        }
+    });
+    await maybeCloseSharedOffscreenDocument(reason);
 }
 
 async function ensureDropBridgeV2FallbackAlarm(reason = 'startup') {
@@ -1800,6 +1989,369 @@ async function requestDropBridgeV2Poll(reason = 'manual') {
     await pollDropBridgeV2Once(reason);
 }
 
+// =============================================================================
+// Polya import — "Study in Polya" (same-account, zero-pairing)
+//
+// The extension and Polya share this Supabase project and Google sign-in, so
+// the signed-in session IS the pairing. Flow: enumerate the course through the
+// student's Canvas session cookies -> hash content -> polya-import
+// extension_import_start (server diffs by hash) -> upload only needed items to
+// the polya_documents bucket (user-prefixed path, allowed by RLS) -> register
+// each -> kick the processing pump. Polya's connect page polls for the course
+// and drives the pump too, so the response returns as soon as registration is
+// done rather than holding the message channel through embedding.
+// =============================================================================
+const POLYA_APP_URL = 'https://askpolya.com';
+const POLYA_IMPORT_MAX_FILES = 150;
+const POLYA_IMPORT_MAX_FILE_BYTES = 30 * 1024 * 1024;
+const POLYA_IMPORT_MAX_PAGES = 150;
+
+async function polyaSha256Hex(bytes) {
+    const digest = await crypto.subtle.digest('SHA-256', bytes);
+    return Array.from(new Uint8Array(digest))
+        .map((byte) => byte.toString(16).padStart(2, '0'))
+        .join('');
+}
+
+async function polyaGetUserId() {
+    if (!supabaseClient) return null;
+    const { data: { session } } = await supabaseClient.auth.getSession();
+    return session?.user?.id || null;
+}
+
+async function polyaUploadToBucket(accessToken, path, bytes, contentType) {
+    const endpoint = `${supabaseUrl.replace(/\/+$/, '')}/storage/v1/object/polya_documents/${path}`;
+    const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+            Authorization: `Bearer ${accessToken}`,
+            apikey: supabaseKey,
+            'Content-Type': contentType,
+            'x-upsert': 'true'
+        },
+        body: bytes
+    });
+    if (!response.ok) {
+        throw new Error(`Polya upload failed (${response.status})`);
+    }
+}
+
+async function polyaCallImport(body) {
+    return callCanvascopeSupabaseFunction('polya-import', body);
+}
+
+// Enumerate one course via the student's Canvas session into manifest entries
+// with their bytes. Mirrors the endpoints Polya's own PAT importer uses,
+// including the Modules fallback for hidden Files/Pages tabs.
+async function polyaEnumerateCourse(baseUrl, courseId) {
+    const encoder = new TextEncoder();
+    const entries = [];
+    let courseMeta = { name: `Course ${courseId}`, code: null, termName: null };
+
+    try {
+        const resp = await fetchWithRetry(
+            `${baseUrl}/api/v1/courses/${courseId}?include[]=term&include[]=syllabus_body`,
+            { credentials: 'include' }
+        );
+        if (resp.ok) {
+            const detail = await resp.json();
+            courseMeta = {
+                name: detail.name || courseMeta.name,
+                code: detail.course_code || null,
+                termName: detail.term?.name || null
+            };
+            const syllabusHtml = String(detail.syllabus_body || '').trim();
+            if (syllabusHtml) {
+                entries.push({
+                    origin: 'canvas_syllabus',
+                    source_kind: 'html',
+                    canvas_id: 'syllabus',
+                    title: 'Course syllabus',
+                    module_name: null,
+                    canvas_url: `${baseUrl}/courses/${courseId}/assignments/syllabus`,
+                    canvas_updated_at: null,
+                    due_at: null,
+                    bytes: encoder.encode(syllabusHtml),
+                    contentType: 'text/html',
+                    ext: 'html'
+                });
+            }
+        }
+    } catch (error) {
+        console.warn('[Polya] course meta fetch failed:', parseErrorMessage(error));
+    }
+
+    const moduleNameByFileId = new Map();
+    const modulePages = new Map();
+    try {
+        const modules = await fetchAllPages(
+            `${baseUrl}/api/v1/courses/${courseId}/modules?per_page=50&include[]=items`
+        );
+        for (const module of modules) {
+            for (const item of module.items || []) {
+                if (item.type === 'File' && item.content_id != null) {
+                    moduleNameByFileId.set(String(item.content_id), module.name || null);
+                }
+                if (item.type === 'Page' && item.page_url) {
+                    modulePages.set(String(item.page_url), {
+                        title: item.title || item.page_url,
+                        moduleName: module.name || null,
+                        updatedAt: null
+                    });
+                }
+            }
+        }
+    } catch (error) {
+        console.warn('[Polya] modules fetch failed:', parseErrorMessage(error));
+    }
+
+    const pageSlugs = new Map();
+    try {
+        const pages = await fetchAllPages(`${baseUrl}/api/v1/courses/${courseId}/pages?per_page=100`);
+        for (const page of pages) {
+            if (!page.url || page.published === false) continue;
+            pageSlugs.set(String(page.url), {
+                title: page.title || page.url,
+                moduleName: null,
+                updatedAt: page.updated_at || null
+            });
+        }
+    } catch (error) {
+        console.warn('[Polya] pages fetch failed:', parseErrorMessage(error));
+    }
+    for (const [slug, meta] of modulePages) {
+        if (!pageSlugs.has(slug)) pageSlugs.set(slug, meta);
+    }
+
+    let pageCount = 0;
+    for (const [slug, meta] of pageSlugs) {
+        if (++pageCount > POLYA_IMPORT_MAX_PAGES) break;
+        try {
+            const resp = await fetchWithRetry(
+                `${baseUrl}/api/v1/courses/${courseId}/pages/${encodeURIComponent(slug)}`,
+                { credentials: 'include' }
+            );
+            if (!resp.ok) continue;
+            const detail = await resp.json();
+            const html = String(detail.body || '').trim();
+            if (!html) continue;
+            entries.push({
+                origin: 'canvas_page',
+                source_kind: 'html',
+                canvas_id: slug,
+                title: meta.title,
+                module_name: meta.moduleName || null,
+                canvas_url: `${baseUrl}/courses/${courseId}/pages/${slug}`,
+                canvas_updated_at: detail.updated_at || meta.updatedAt || null,
+                due_at: null,
+                bytes: encoder.encode(html),
+                contentType: 'text/html',
+                ext: 'html'
+            });
+        } catch (error) {
+            console.warn(`[Polya] page ${slug} fetch failed:`, parseErrorMessage(error));
+        }
+    }
+
+    try {
+        const assignments = await fetchAllPages(
+            `${baseUrl}/api/v1/courses/${courseId}/assignments?per_page=100`
+        );
+        for (const assignment of assignments) {
+            const html = String(assignment.description || '').trim();
+            if (!assignment.id || !html) continue;
+            entries.push({
+                origin: 'canvas_assignment',
+                source_kind: 'html',
+                canvas_id: String(assignment.id),
+                title: assignment.name || `Assignment ${assignment.id}`,
+                module_name: null,
+                canvas_url: assignment.html_url || null,
+                canvas_updated_at: assignment.updated_at || null,
+                due_at: assignment.due_at || null,
+                bytes: encoder.encode(html),
+                contentType: 'text/html',
+                ext: 'html'
+            });
+        }
+    } catch (error) {
+        console.warn('[Polya] assignments fetch failed:', parseErrorMessage(error));
+    }
+
+    // PDFs: flat Files index plus module-attached files. Bytes are downloaded
+    // up front — the manifest hash must be over the exact bytes uploaded.
+    const fileMetas = new Map();
+    try {
+        const files = await fetchAllPages(`${baseUrl}/api/v1/courses/${courseId}/files?per_page=100`);
+        for (const file of files) {
+            const name = String(file.display_name || file.filename || '');
+            const contentType = String(file['content-type'] || file.content_type || '').toLowerCase();
+            if (!(name.toLowerCase().endsWith('.pdf') || contentType.includes('pdf'))) continue;
+            fileMetas.set(String(file.id), {
+                title: name.replace(/\.pdf$/i, '').trim() || name,
+                updatedAt: file.updated_at || null,
+                size: typeof file.size === 'number' ? file.size : null
+            });
+        }
+    } catch (error) {
+        console.warn('[Polya] files fetch failed:', parseErrorMessage(error));
+    }
+    for (const fileId of moduleNameByFileId.keys()) {
+        if (fileMetas.has(fileId)) continue;
+        try {
+            const resp = await fetchWithRetry(
+                `${baseUrl}/api/v1/courses/${courseId}/files/${fileId}`,
+                { credentials: 'include' }
+            );
+            if (!resp.ok) continue;
+            const file = await resp.json();
+            const name = String(file.display_name || file.filename || '');
+            const contentType = String(file['content-type'] || file.content_type || '').toLowerCase();
+            if (!(name.toLowerCase().endsWith('.pdf') || contentType.includes('pdf'))) continue;
+            fileMetas.set(fileId, {
+                title: name.replace(/\.pdf$/i, '').trim() || name,
+                updatedAt: file.updated_at || null,
+                size: typeof file.size === 'number' ? file.size : null
+            });
+        } catch {
+            // module file metadata is best-effort
+        }
+    }
+
+    let fileCount = 0;
+    for (const [fileId, meta] of fileMetas) {
+        if (++fileCount > POLYA_IMPORT_MAX_FILES) break;
+        if (meta.size != null && meta.size > POLYA_IMPORT_MAX_FILE_BYTES) continue;
+        try {
+            const resp = await fetchWithRetry(
+                `${baseUrl}/files/${fileId}/download?download_frd=1`,
+                { credentials: 'include' }
+            );
+            if (!resp.ok) continue;
+            const bytes = new Uint8Array(await resp.arrayBuffer());
+            if (bytes.byteLength === 0 || bytes.byteLength > POLYA_IMPORT_MAX_FILE_BYTES) continue;
+            entries.push({
+                origin: 'canvas_file',
+                source_kind: 'pdf',
+                canvas_id: fileId,
+                title: meta.title,
+                module_name: moduleNameByFileId.get(fileId) || null,
+                canvas_url: `${baseUrl}/files/${fileId}/download?download_frd=1`,
+                canvas_updated_at: meta.updatedAt,
+                due_at: null,
+                size_bytes: bytes.byteLength,
+                bytes,
+                contentType: 'application/pdf',
+                ext: 'pdf'
+            });
+        } catch (error) {
+            console.warn(`[Polya] file ${fileId} download failed:`, parseErrorMessage(error));
+        }
+    }
+
+    return { courseMeta, entries };
+}
+
+// Best-effort pump: Polya's own connect/materials pages drive the same pump,
+// so this just gets processing moving while the worker stays alive.
+async function polyaPumpCourse(polyaCourseId) {
+    try {
+        for (let step = 0; step < 600; step++) {
+            const result = await polyaCallImport({ action: 'process', course_id: polyaCourseId });
+            if (result?.done) return;
+            if (result?.retry_after_ms) {
+                await new Promise((resolve) => setTimeout(resolve, Math.min(result.retry_after_ms, 5000)));
+            }
+        }
+    } catch (error) {
+        console.warn('[Polya] pump stopped:', parseErrorMessage(error));
+    }
+}
+
+async function polyaImportCourseFromMessage({ baseUrl, canvasCourseId }) {
+    if (!await isPolyaConnectFeatureEnabled()) {
+        return { success: false, code: 'feature_disabled', message: 'Study in Polya is turned off in settings.' };
+    }
+    if (!baseUrl || !canvasCourseId) {
+        return { success: false, code: 'no_course', message: 'Open a Canvas course first.' };
+    }
+    const accessToken = await getDropBridgeV2AccessToken();
+    const userId = await polyaGetUserId();
+    if (!accessToken || !userId) {
+        return {
+            success: false,
+            code: 'not_signed_in',
+            message: 'Sign in to Canvascope with the same Google account you use for Polya.'
+        };
+    }
+
+    console.log(`[Polya] Importing course ${canvasCourseId} from ${baseUrl}`);
+    const { courseMeta, entries } = await polyaEnumerateCourse(baseUrl, canvasCourseId);
+    if (entries.length === 0) {
+        return { success: false, code: 'nothing_found', message: 'No readable materials were found in this course.' };
+    }
+
+    const manifest = [];
+    for (const entry of entries) {
+        manifest.push({
+            origin: entry.origin,
+            source_kind: entry.source_kind,
+            canvas_id: entry.canvas_id,
+            title: entry.title,
+            module_name: entry.module_name || null,
+            canvas_url: entry.canvas_url || null,
+            size_bytes: entry.size_bytes ?? null,
+            canvas_updated_at: entry.canvas_updated_at || null,
+            due_at: entry.due_at || null,
+            content_sha256: await polyaSha256Hex(entry.bytes)
+        });
+    }
+
+    const started = await polyaCallImport({
+        action: 'extension_import_start',
+        canvas: {
+            base_url: baseUrl,
+            course_id: String(canvasCourseId),
+            name: courseMeta.name,
+            code: courseMeta.code,
+            term_name: courseMeta.termName
+        },
+        manifest
+    });
+    const polyaCourseId = started?.course_id;
+    if (!polyaCourseId) {
+        throw new Error('Polya did not accept the course.');
+    }
+
+    const neededKeys = new Set((started.needed || []).map((item) => `${item.origin}:${item.canvas_id}`));
+    let uploaded = 0;
+    for (let i = 0; i < entries.length; i++) {
+        const entry = entries[i];
+        if (!neededKeys.has(`${entry.origin}:${entry.canvas_id}`)) continue;
+        const storagePath = `${userId}/uploads/${crypto.randomUUID()}.${entry.ext}`;
+        await polyaUploadToBucket(accessToken, storagePath, entry.bytes, entry.contentType);
+        await polyaCallImport({
+            action: 'extension_register_source',
+            course_id: polyaCourseId,
+            source: { ...manifest[i], storage_path: storagePath }
+        });
+        uploaded++;
+    }
+
+    // Fire-and-forget: Polya's connect page joins the pump the moment the
+    // course appears, so don't hold the sidepanel's message channel open.
+    void polyaPumpCourse(polyaCourseId);
+
+    console.log(`[Polya] Course ${canvasCourseId}: ${uploaded} item(s) sent, ${started.unchanged || 0} already current.`);
+    return {
+        success: true,
+        courseId: polyaCourseId,
+        sent: uploaded,
+        unchanged: started.unchanged || 0,
+        openUrl: `${POLYA_APP_URL}/app/courses/${polyaCourseId}`
+    };
+}
+
 async function registerDropBridgeV2Device(reason = 'startup', accessToken = null) {
     if (!DROPBRIDGE_V2_ENABLED || !supabaseClient) return false;
     const token = accessToken || await getDropBridgeV2AccessToken();
@@ -2079,8 +2631,8 @@ function stopDropBridgeV2Loop() {
     clearDropBridgeV2HeartbeatAlarm('loop-stop').catch((error) => {
         console.warn('[DropBridge v2] Failed to clear heartbeat alarm:', parseErrorMessage(error));
     });
-    closeDropBridgeV2OffscreenReceiver('loop-stop').catch((error) => {
-        console.warn('[DropBridge v2] Failed to close offscreen receiver:', parseErrorMessage(error));
+    softDisconnectDropBridgeV2Receiver('loop-stop').catch((error) => {
+        console.warn('[DropBridge v2] Failed to soft-disconnect offscreen receiver:', parseErrorMessage(error));
     });
     dropBridgeV2ActiveUploads.clear();
     dropBridgeDebug('loop: stopped');
@@ -2124,6 +2676,10 @@ async function startDropBridgeV2Loop(reason = 'startup') {
             console.warn('[DropBridge v2] Startup heartbeat failure:', parseErrorMessage(error));
         });
         await ensureDropBridgeV2OffscreenReceiver(reason);
+        // Re-arm the receiver latch: a doc that was parked (soft-disconnected)
+        // while the embeddings host kept it alive needs the explicit connect;
+        // a fresh doc self-connects and treats this as a no-op.
+        await sendDropBridgeReceiverConnect(reason);
 
         await requestDropBridgeV2Poll(`${reason}-immediate`);
         dropBridgeDebug('loop: start finished', { reason });
@@ -7883,24 +8439,44 @@ async function handleParsePdfText(message, sender) {
     if (!tabId || !pdfUrl) {
         return { success: false, error: 'Missing tab id or PDF URL' };
     }
+    // Mirror handleAutoIndexPdf's title/course hints rather than the old hardcoded
+    // 'Syllabus'/'General'. documentId identity is [courseId, courseName,
+    // canvasFileId, url, title] (course-materials.js normalizeDocument), so the
+    // two parse paths must agree on those or the same file lands under two
+    // documentIds with two copies of its chunks.
+    const titleHint = (message && message.titleHint) || 'Syllabus';
+    const courseName = (message && message.courseName) || 'General';
+
     try {
+        // course-materials.js must be injected alongside the parser: persistPdfToIndex
+        // silently skips storeParsedPdf when CanvascopeCourseMaterials is absent, so
+        // without it this path writes text only to the doc_cache and to
+        // indexedContent[].pages — which the next full course scan deletes. Same file
+        // list as the two sibling injection sites.
         await chrome.scripting.executeScript({
             target: { tabId },
-            files: ['src/lib/pdf.min.js', 'src/core/document-parser.js']
+            files: ['src/core/course-materials.js', 'src/lib/pdf.min.js', 'src/core/document-parser.js']
         });
 
         const [{ result } = {}] = await chrome.scripting.executeScript({
             target: { tabId },
-            func: async (url) => {
+            func: async (url, title, course) => {
                 try {
                     if (typeof DocumentParser === 'undefined') return { ok: false, error: 'parser-missing' };
-                    const pages = await DocumentParser.fetchAndParsePdf(url, 'Syllabus', 'General');
+                    const pages = await DocumentParser.fetchAndParsePdf(url, title, course, {
+                        title,
+                        courseName: course,
+                        sourceUrl: url,
+                        downloadUrl: url,
+                        mimeType: 'application/pdf',
+                        isPdf: true
+                    });
                     return { ok: Array.isArray(pages) && pages.length > 0, pages: pages || [] };
                 } catch (e) {
                     return { ok: false, error: (e && e.message) ? e.message : String(e) };
                 }
             },
-            args: [pdfUrl]
+            args: [pdfUrl, titleHint, courseName]
         });
 
         if (result && result.ok) {
@@ -8433,6 +9009,68 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return true;
     }
 
+    // Pages (popup) cannot call chrome.offscreen; they relay the shared-doc
+    // ensure through here. The embed client in the SW calls
+    // ensureSharedOffscreenDocument directly.
+    if (message.action === 'csEmbeddingsEnsureHost') {
+        markEmbeddingsHostWanted();
+        (async () => {
+            try {
+                const ok = await ensureSharedOffscreenDocument(String(message.reason || 'embeddings'));
+                sendResponse({ success: Boolean(ok) });
+            } catch (error) {
+                sendResponse({ success: false, error: parseErrorMessage(error) });
+            }
+        })();
+        return true;
+    }
+
+    // Fired when the Cmd+K palette OPENS, before the user has typed anything.
+    // A cold model load costs seconds; starting it here buys the whole time the
+    // user spends typing, which is the difference between the first query of a
+    // session getting page hits and silently missing them. Fire-and-forget: the
+    // caller does not wait, and a failure only costs that one query its hints.
+    if (message.action === 'csEmbeddingsPrewarm') {
+        markEmbeddingsHostWanted();
+        (async () => {
+            try {
+                if (self.CanvascopeEmbeddingsConfig?.EMBEDDINGS_ENABLED !== true) return;
+                const ensured = await ensureSharedOffscreenDocument(String(message.reason || 'palette-open'));
+                if (!ensured) {
+                    console.warn('[Canvascope Embeddings] Prewarm could not ensure the shared document.');
+                    return;
+                }
+                // Do not await: warmup holds the host for the length of a model
+                // load, and this handler must not keep the service worker busy.
+                // It does report, though — "was the model ever ready?" is the
+                // first question whenever the palette comes back empty.
+                const startedAt = Date.now();
+                void self.CanvascopeEmbedClient?.warmup?.().then((ok) => {
+                    const secs = Math.round((Date.now() - startedAt) / 1000);
+                    if (ok) console.log(`[Canvascope Embeddings] Prewarm ready in ${secs}s.`);
+                    else console.warn(`[Canvascope Embeddings] Prewarm FAILED after ${secs}s — palette queries will have no model.`);
+                });
+            } catch (_) { /* best effort */ }
+        })();
+        sendResponse({ success: true });
+        return true;
+    }
+
+    // Embeddings host idle-disposed its pipeline; close the shared doc iff
+    // DropBridge doesn't need it either. Stateless on purpose — this message
+    // may be what booted a fresh service worker.
+    if (message.action === 'csEmbeddingsIdleUnloaded') {
+        (async () => {
+            try {
+                const closed = await maybeCloseSharedOffscreenDocument('embeddings-idle-unloaded');
+                sendResponse({ success: true, closed: Boolean(closed) });
+            } catch (error) {
+                sendResponse({ success: false, error: parseErrorMessage(error) });
+            }
+        })();
+        return true;
+    }
+
     if (message.action === 'resolvePdfContext') {
         (async () => {
             try {
@@ -8515,6 +9153,25 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                 sendResponse({
                     success: false,
                     error: parseErrorMessage(error)
+                });
+            }
+        })();
+        return true;
+    }
+
+    if (message.action === 'polyaImportCourse') {
+        (async () => {
+            try {
+                const result = await polyaImportCourseFromMessage({
+                    baseUrl: message.baseUrl || null,
+                    canvasCourseId: message.canvasCourseId || null
+                });
+                sendResponse(result);
+            } catch (error) {
+                sendResponse({
+                    success: false,
+                    code: 'unexpected_error',
+                    message: parseErrorMessage(error)
                 });
             }
         })();

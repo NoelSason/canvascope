@@ -444,6 +444,17 @@
               <button type="button" class="appearance-seg-btn" data-ui-theme="light" aria-pressed="false">Light</button>
             </div>
           </div>
+
+          <label class="setting-row" for="enable-mascot">
+            <div class="setting-copy">
+              <span class="setting-title">Mascot</span>
+              <span class="setting-description">A little study buddy hangs out on the quick-search overlay.</span>
+            </div>
+            <span class="setting-toggle-shell">
+              <input id="enable-mascot" class="setting-toggle-input" type="checkbox" role="switch" aria-label="Mascot">
+              <span class="setting-toggle-slider" aria-hidden="true"></span>
+            </span>
+          </label>
         </div>
 
         <div class="settings-card">
@@ -788,6 +799,10 @@
   <script src="../components/radar/radar.js"></script>
   <!-- RAG ask stack (shared with the sidepanel): retrieval + inference + render.
        Loaded lazily; the standalone popup is unaffected until Cmd+K asks. -->
+  <script src="../core/embeddings-config.js"></script>
+  <script src="../core/query-normalizer.js"></script>
+  <script src="../core/embedding-index.js"></script>
+  <script src="../core/embed-client.js"></script>
   <script src="../core/semantic-matcher.js"></script>
   <script src="../core/local-embeddings.js"></script>
   <script src="../core/syllabus-memory.js"></script>

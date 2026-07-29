@@ -2,6 +2,26 @@
  * Canvascope Offline AI Controller (Local Gemini Nano)
  * Wraps Chrome's Prompt API (LanguageModel) with capability detection and error fallbacks.
  */
+
+/**
+ * Turn a non-OK proxy response into an Error carrying the server's typed
+ * `code`, when it sends one, so callers can branch on it.
+ * @param {Response} response
+ * @returns {Promise<Error>}
+ */
+async function parseProxyError(response) {
+  let errorMessage = `Server responded with status ${response.status}`;
+  let errorCode = null;
+  try {
+    const errorData = await response.json();
+    errorMessage = errorData.error || errorMessage;
+    errorCode = errorData.code || null;
+  } catch (_) {}
+  const err = new Error(errorMessage);
+  if (errorCode) err.code = errorCode;
+  return err;
+}
+
 class LocalAIController {
   constructor() {
     this.session = null;
@@ -216,12 +236,7 @@ class LocalAIController {
     });
 
     if (!response.ok) {
-      let errorMessage = `Server responded with status ${response.status}`;
-      try {
-        const errorData = await response.json();
-        errorMessage = errorData.error || errorMessage;
-      } catch (_) {}
-      throw new Error(errorMessage);
+      throw await parseProxyError(response);
     }
 
     if (promptText === '__listModels__' || promptText.endsWith('__listModels__')) {
@@ -324,12 +339,7 @@ class LocalAIController {
     });
 
     if (!response.ok) {
-      let errorMessage = `Server responded with status ${response.status}`;
-      try {
-        const errorData = await response.json();
-        errorMessage = errorData.error || errorMessage;
-      } catch (_) {}
-      throw new Error(errorMessage);
+      throw await parseProxyError(response);
     }
 
     if (!response.body) {

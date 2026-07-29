@@ -2206,6 +2206,7 @@ if (isSupportedLmsDomain() || detectCanvasPage() || detectBrightspacePage()) {
 // ============================================
 
 let overlayContainer = null;
+let overlayWrapper = null;
 let overlayIframe = null;
 let overlayVisible = false;
 let overlayAskActive = false; // popup is showing an inline answer — keep it open
@@ -2245,23 +2246,384 @@ function createOverlay() {
         -webkit-backdrop-filter: blur(8px);
     `;
 
+    // Create wrapper
+    overlayWrapper = document.createElement('div');
+    overlayWrapper.id = 'canvascope-overlay-wrapper';
+    overlayWrapper.style.cssText = `
+        position: relative;
+        width: min(640px, calc(100vw - 32px));
+        height: min(620px, 78vh);
+        transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.2s ease;
+        transform: scale(0.96);
+        opacity: 0;
+    `;
+
     // Create iframe
     overlayIframe = document.createElement('iframe');
     overlayIframe.src = popupUrl;
     overlayIframe.allow = "clipboard-write"; // Allow copying
     overlayIframe.style.cssText = `
-        width: min(640px, calc(100vw - 32px));
-        height: min(620px, 78vh);
+        width: 100%;
+        height: 100%;
         border: none;
         border-radius: 8px;
         box-shadow:
             0 24px 60px rgba(0, 0, 0, 0.55),
             0 0 0 1px rgba(255, 255, 255, 0.10);
         background: transparent;
-        transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.2s ease;
-        transform: scale(0.96);
-        opacity: 0;
     `;
+
+    const mascotStyle = document.createElement('style');
+    mascotStyle.textContent = `
+        @keyframes canvascope-mascot-jump {
+            0%, 85%, 100% { transform: scaleY(1) scaleX(1) translateY(0); }
+            
+            /* First big hop */
+            87% { transform: scaleY(0.8) scaleX(1.1) translateY(0); } /* Wind up */
+            89% { transform: scaleY(1.1) scaleX(0.9) translateY(-35px); } /* Apex */
+            91% { transform: scaleY(0.85) scaleX(1.1) translateY(0); } /* Impact */
+            
+            /* Second little hop */
+            93% { transform: scaleY(1.05) scaleX(0.95) translateY(-15px); } /* Apex 2 */
+            95% { transform: scaleY(0.95) scaleX(1.05) translateY(0); } /* Impact 2 */
+        }
+        
+        @keyframes canvascope-mascot-look-around {
+            0%, 5% { transform: translate(0px, 0px) translateZ(0); }
+            10%, 45% { transform: translate(-20px, 0px) translateZ(0); }
+            50%, 80% { transform: translate(-20px, 20px) translateZ(0); }
+            85%, 100% { transform: translate(0px, 0px) translateZ(0); }
+        }
+        
+        .canvascope-mascot-container .left-eye,
+        .canvascope-mascot-container .right-eye {
+            transform: translateZ(0);
+            will-change: transform;
+        }
+        
+        .canvascope-mascot-container .glint {
+            animation: canvascope-mascot-look-around 14s steps(1, end) infinite;
+            will-change: transform;
+        }
+        
+        .canvascope-mascot-container.typing .glint {
+            animation: none !important;
+            transform: translate(0, 0) translateZ(0) !important;
+        }
+        
+        .canvascope-mascot-container.airborne {
+            animation: none !important;
+            will-change: left, top;
+        }
+    `;
+    
+    // Create mascot container
+    const mascotReducedMotion = Boolean(
+        window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    );
+    const mascotContainer = document.createElement('div');
+    mascotContainer.className = 'canvascope-mascot-container';
+    mascotContainer.style.cssText = `
+        position: absolute;
+        bottom: calc(100% - 10px);
+        right: 32px;
+        width: 80px;
+        height: 88px;
+        cursor: ${mascotReducedMotion ? 'default' : 'grab'};
+        user-select: none;
+        z-index: 100;
+        transform-origin: bottom center;
+        ${mascotReducedMotion ? '' : 'animation: canvascope-mascot-jump 12s cubic-bezier(0.28, 0.84, 0.42, 1) infinite;'}
+    `;
+
+    // Appearance setting: hidden when settings.mascotEnabled === false (absent = on).
+    try {
+        chrome.storage.local.get(['settings']).then((res) => {
+            if (res?.settings?.mascotEnabled === false) {
+                mascotContainer.style.display = 'none';
+            }
+        }).catch(() => {});
+        chrome.storage.onChanged.addListener((changes, areaName) => {
+            if (areaName !== 'local' || !changes.settings) return;
+            const next = changes.settings.newValue || {};
+            mascotContainer.style.display = next.mascotEnabled === false ? 'none' : '';
+        });
+    } catch (e) {
+        // Extension context gone — leave the mascot visible by default.
+    }
+
+    try {
+        fetch(chrome.runtime.getURL('assets/icons/mascot.svg'))
+            .then(res => res.text())
+            .then(svgText => {
+                mascotContainer.innerHTML = svgText;
+                const svgEl = mascotContainer.querySelector('svg');
+                if (svgEl) {
+                    svgEl.style.width = '100%';
+                    svgEl.style.height = '100%';
+                }
+            });
+    } catch (e) {
+        console.warn('Canvascope: Failed to load mascot SVG', e);
+    }
+    
+    window.addEventListener('message', (event) => {
+        if (event.data && event.data.type === 'CANVASCOPE_MASCOT_TYPING') {
+            if (event.data.isTyping && !mascotReducedMotion) {
+                mascotContainer.classList.add('typing');
+            } else {
+                mascotContainer.classList.remove('typing');
+            }
+        }
+    });
+    
+    // Physics and Drag logic
+    let isDraggingMascot = false;
+    let mascotOffsetX = 0;
+    let mascotOffsetY = 0;
+    
+    let px = 0;
+    let py = 0;
+    let vx = 0;
+    let vy = 0;
+    let lastMouseX = 0;
+    let lastMouseY = 0;
+    let lastTime = 0;
+    let physicsRafId = null;
+
+    mascotContainer.resetPhysics = () => {
+        cancelAnimationFrame(physicsRafId);
+        isDraggingMascot = false;
+
+        if (mascotReducedMotion) {
+            // Static perch: no drop-in, no physics.
+            mascotContainer.classList.remove('airborne');
+            mascotContainer.style.left = 'auto';
+            mascotContainer.style.top = 'auto';
+            mascotContainer.style.bottom = 'calc(100% - 10px)';
+            mascotContainer.style.right = '32px';
+            mascotContainer.style.transform = '';
+            return;
+        }
+
+        mascotContainer.classList.add('airborne');
+        
+        // Spawn him above the popup
+        const wrapperRect = overlayWrapper.getBoundingClientRect();
+        px = overlayWrapper.offsetWidth - 32 - 72; // right: 32px
+        py = -wrapperRect.top; // Drop from the ceiling
+        vx = 0;
+        vy = 5;
+        
+        mascotContainer.style.bottom = 'auto';
+        mascotContainer.style.right = 'auto';
+        mascotContainer.style.left = px + 'px';
+        mascotContainer.style.top = py + 'px';
+        mascotContainer.style.transform = '';
+        
+        lastTime = performance.now();
+        startPhysicsLoop();
+    };
+
+    mascotContainer.addEventListener('mousedown', (e) => {
+        if (mascotReducedMotion) return;
+        isDraggingMascot = true;
+        mascotContainer.style.cursor = 'grabbing';
+        mascotContainer.classList.add('airborne');
+        cancelAnimationFrame(physicsRafId);
+        
+        // Calculate current offset relative to its wrapper
+        const rect = mascotContainer.getBoundingClientRect();
+        const wrapperRect = overlayWrapper.getBoundingClientRect();
+        
+        // Convert bottom/right to absolute left/top
+        px = rect.left - wrapperRect.left;
+        py = rect.top - wrapperRect.top;
+        
+        mascotContainer.style.bottom = 'auto';
+        mascotContainer.style.right = 'auto';
+        mascotContainer.style.left = px + 'px';
+        mascotContainer.style.top = py + 'px';
+        
+        mascotOffsetX = e.clientX - rect.left;
+        mascotOffsetY = e.clientY - rect.top;
+        
+        lastMouseX = e.clientX;
+        lastMouseY = e.clientY;
+        lastTime = performance.now();
+        vx = 0;
+        vy = 0;
+        
+        e.stopPropagation(); // prevent closing overlay
+    });
+
+    window.addEventListener('mousemove', (e) => {
+        if (!isDraggingMascot) return;
+        
+        const wrapperRect = overlayWrapper.getBoundingClientRect();
+        px = e.clientX - wrapperRect.left - mascotOffsetX;
+        py = e.clientY - wrapperRect.top - mascotOffsetY;
+        
+        mascotContainer.style.left = px + 'px';
+        mascotContainer.style.top = py + 'px';
+        
+        const now = performance.now();
+        const dt = Math.max(now - lastTime, 1);
+        vx = ((e.clientX - lastMouseX) / dt) * 16;
+        vy = ((e.clientY - lastMouseY) / dt) * 16;
+        
+        lastMouseX = e.clientX;
+        lastMouseY = e.clientY;
+        lastTime = now;
+    });
+
+    window.addEventListener('mouseup', () => {
+        if (isDraggingMascot) {
+            isDraggingMascot = false;
+            mascotContainer.style.cursor = 'grab';
+            startPhysicsLoop();
+        }
+    });
+
+    function startPhysicsLoop() {
+        cancelAnimationFrame(physicsRafId);
+        let lastFrameTime = performance.now();
+        
+        function loop(time) {
+            if (isDraggingMascot) return;
+            
+            const dt = Math.min((time - lastFrameTime) / 16, 3);
+            lastFrameTime = time;
+            
+            // Apply Gravity and Air Friction
+            vy += 0.8 * dt; 
+            vx *= Math.pow(0.99, dt);
+            vy *= Math.pow(0.99, dt);
+            
+            px += vx * dt;
+            py += vy * dt;
+            
+            const mascotW = 80;
+            const mascotH = 88;
+            const wrapperRect = overlayWrapper.getBoundingClientRect();
+            
+            // Ground Collision
+            const floorY = window.innerHeight - wrapperRect.top - mascotH;
+            
+            // Wall Collisions
+            const leftWallX = -wrapperRect.left;
+            const rightWallX = window.innerWidth - wrapperRect.left - mascotW;
+            
+            // Ledge Collision (Popup top edge)
+            const ledgeY = -78; 
+            const ledgeLeft = 0;
+            const ledgeRight = wrapperRect.width;
+            
+            let onGround = false;
+            
+            // Floor bounce
+            if (py >= floorY) {
+                py = floorY;
+                vy = -vy * 0.4; 
+                vx *= 0.999999; // Practically zero friction for sliding
+                if (Math.abs(vy) < 2) {
+                    vy = 0;
+                    onGround = true;
+                }
+            }
+            
+            // Window Wall bounce
+            if (px <= leftWallX) {
+                px = leftWallX;
+                vx = -vx * 0.6;
+            } else if (px >= rightWallX) {
+                px = rightWallX;
+                vx = -vx * 0.6;
+            }
+            
+            // Ceiling bounce
+            const ceilingY = -wrapperRect.top;
+            if (py <= ceilingY) {
+                py = ceilingY;
+                vy = Math.abs(vy) * 0.4; // Bounce down
+            }
+            
+            // Popup AABB Collision
+            const popupTop = 10;
+            const popupBottom = wrapperRect.height;
+            const popupLeft = 0;
+            const popupRight = wrapperRect.width;
+            
+            const prevPx = px - vx * dt;
+            const prevPy = py - vy * dt;
+            
+            const overlapsPopup = (px + mascotW > popupLeft) && (px < popupRight) && (py + mascotH > popupTop) && (py < popupBottom);
+            
+            if (overlapsPopup) {
+                const cameFromLeft = (prevPx + mascotW <= popupLeft);
+                const cameFromRight = (prevPx >= popupRight);
+                const cameFromTop = (prevPy + mascotH <= popupTop);
+                const cameFromBottom = (prevPy >= popupBottom);
+                
+                if (cameFromTop) {
+                    py = popupTop - mascotH;
+                    vy = -vy * 0.3;
+                    vx *= 0.999999; // Friction on ledge
+                    if (Math.abs(vy) < 1.5) {
+                        vy = 0;
+                        onGround = true;
+                    }
+                } else if (cameFromLeft) {
+                    px = popupLeft - mascotW;
+                    vx = -vx * 0.5;
+                } else if (cameFromRight) {
+                    px = popupRight;
+                    vx = -vx * 0.5;
+                } else if (cameFromBottom) {
+                    py = popupBottom;
+                    vy = -vy * 0.5;
+                } else {
+                    // Resolve smallest overlap (fallback)
+                    const overlapTop = (py + mascotH) - popupTop;
+                    const overlapLeft = (px + mascotW) - popupLeft;
+                    const overlapRight = popupRight - px;
+                    
+                    if (overlapTop < overlapLeft && overlapTop < overlapRight) {
+                        py = popupTop - mascotH;
+                        vy = -vy * 0.3;
+                        vx *= 0.999999;
+                        if (Math.abs(vy) < 1.5) {
+                            vy = 0;
+                            onGround = true;
+                        }
+                    } else if (overlapLeft < overlapRight) {
+                        px = popupLeft - mascotW;
+                        vx = -vx * 0.5;
+                    } else {
+                        px = popupRight;
+                        vx = -vx * 0.5;
+                    }
+                }
+            }
+            
+            mascotContainer.style.left = px + 'px';
+            mascotContainer.style.top = py + 'px';
+            
+            // Stop loop when resting
+            if (onGround && Math.abs(vx) < 0.5) {
+                vx = 0;
+                mascotContainer.classList.remove('airborne');
+                return;
+            }
+            
+            physicsRafId = requestAnimationFrame(loop);
+        }
+        physicsRafId = requestAnimationFrame(loop);
+    }
+
+    overlayWrapper.appendChild(mascotStyle);
+    overlayWrapper.appendChild(mascotContainer);
+    overlayWrapper.appendChild(overlayIframe);
 
     // Close on click outside — unless an inline answer is showing, in which
     // case the conversation stays open (Escape inside the popup goes back).
@@ -2271,7 +2633,7 @@ function createOverlay() {
         }
     });
 
-    overlayContainer.appendChild(overlayIframe);
+    overlayContainer.appendChild(overlayWrapper);
     document.body.appendChild(overlayContainer);
 }
 
@@ -2297,10 +2659,30 @@ function showOverlay() {
     overlayContainer.style.display = 'flex';
     document.body.style.overflow = 'hidden'; // Prevent background scrolling
 
+    // Start the on-device model loading NOW, while the user is still typing.
+    // The overlay iframe is destroyed on every close, so its own warmup timer
+    // restarts from scratch each time and never wins the race against the first
+    // query. Fire-and-forget — nothing here blocks opening the palette.
+    try {
+        chrome.runtime.sendMessage({ action: 'csEmbeddingsPrewarm', reason: 'palette-open' }, () => {
+            void chrome.runtime.lastError;
+        });
+    } catch (_) { /* extension context gone; palette still opens */ }
+    
+    // Reset Mascot position
+    if (overlayWrapper) {
+        const mascotContainer = overlayWrapper.querySelector('.canvascope-mascot-container');
+        if (mascotContainer && mascotContainer.resetPhysics) {
+            mascotContainer.resetPhysics();
+        }
+    }
+
     // Focus iframe
     requestAnimationFrame(() => {
-        overlayIframe.style.transform = 'scale(1)';
-        overlayIframe.style.opacity = '1';
+        if (overlayWrapper) {
+            overlayWrapper.style.transform = 'scale(1)';
+            overlayWrapper.style.opacity = '1';
+        }
         overlayIframe.focus();
         // Send message to popup to focus input (with delay for re-open cases)
         setTimeout(() => {
@@ -2338,8 +2720,10 @@ function hideOverlay() {
 
         // Reset state for next open and re-attach
         if (overlayIframe && parent) {
-            overlayIframe.style.transform = 'scale(0.95)';
-            overlayIframe.style.opacity = '0';
+            if (overlayWrapper) {
+                overlayWrapper.style.transform = 'scale(0.95)';
+                overlayWrapper.style.opacity = '0';
+            }
             parent.appendChild(overlayIframe);
         }
     }, 200);

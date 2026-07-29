@@ -4,18 +4,24 @@
 
 Canvascope is a local-first Chrome extension for Canvas and Brightspace. It indexes course content for fast search, supports course-scoped queries and planner workflows, and can optionally push selected PDFs to Lectra (iPad) through Supabase.
 
-![Version](https://img.shields.io/badge/version-10.1.0-orange)
+![Version](https://img.shields.io/badge/version-11.0.0-orange)
 ![Chrome](https://img.shields.io/badge/Chrome-116%2B-green)
 ![License](https://img.shields.io/badge/license-MIT-purple)
 
 > [!IMPORTANT]
-> **v10.1.0 is now available.**
+> **v11.0.0 is now available.**
 >
-> This release brings a highly organized source layout, a local AI-powered RAG chat assistant (offline Gemini Nano + Supabase fallback), course-scoped PDF/OCR material indexing, DropBridge v3 with realtime receipts, and Character Profile suggestions.
+> This release adds whole-course cited Course Brain answers, a practice Exam Builder (`/exam`), and a morning study briefing — free, like everything else in Canvascope. Also ships the Cmd/K overlay mascot and the Lectra Receiver stand-down handshake.
 
 ---
 
 ## Features
+
+### Course Brain and study tools
+- **Whole-course answers with citations**: Course Brain reads the compiled corpus of everything indexed in a course and cites its sources
+- **Exam Builder**: generate a practice exam + answer key from your course materials via the sidepanel action or `/exam`
+- **Morning study briefing** from the study agent
+- On-device Ask runs locally and never leaves your computer
 
 ### Search and Planner
 - Instant search with Fuse.js + lexical fusion ranking
@@ -23,7 +29,7 @@ Canvascope is a local-first Chrome extension for Canvas and Brightspace. It inde
 - Course-code-aware search queries, including aliases like `MCB 102` for long LMS course names
 - Date-aware Cmd/Ctrl + K ranking for `today`, `yesterday`, and `this week` material searches
 - Due date planner with dismissable tasks
-- Keyboard overlay (Cmd/Ctrl + K) on Canvas pages
+- Keyboard overlay (Cmd/Ctrl + K) on Canvas pages, featuring the Canvascope mascot
 - LMS skin support extends into Kaltura Media Gallery embeds and standalone players, including early-frame paint to avoid white flashes during LTI loads
 - Optional Google sign-in for account-linked sync features, using standard Supabase session persistence
 
@@ -56,6 +62,7 @@ Canvascope is a local-first Chrome extension for Canvas and Brightspace. It inde
 
 ### Lectra PDF Handoff & DropBridge v3
 - `Send to Lectra` floating action button appears on Canvas syllabus and assignment PDF pages
+- If the standalone Lectra Receiver extension is active on the page, Canvascope hides its Lectra-only controls and lets the Receiver own the PDF and Gradescope attach flows
 - Validates PDF signatures and enforces a 25 MB file size limit
 - Uploads documents to Supabase Storage bucket `lectra_documents` and creates sync rows
 - Realtime DropBridge v3 receiver via an offscreen document, featuring immediate delivery, receipt logging, and alarm-based polling fallbacks
@@ -90,6 +97,8 @@ Canvascope is a local-first Chrome extension for Canvas and Brightspace. It inde
 2. Click **Send to Lectra** (floating button) or **Send PDF to Lectra** in popup.
 3. Confirm the send action.
 4. The extension uploads the file and writes a `pdf_document` row for Lectra.
+
+If Lectra Receiver is installed and active, use its floating **Send to Lectra** button instead; Canvascope stands down to avoid duplicate Lectra controls.
 
 > Direction split: Canvascope -> Lectra uses `lectra_documents` + `synced_items`. Lectra -> Canvascope uses DropBridge v3 queue delivery, realtime receipts, and automatic browser downloads.
 
@@ -159,8 +168,10 @@ This contract aligns with the Lectra workspace specs in `../..` (`lectra [IN PRO
 - Planner + overlay UX
 - Optional Google auth
 - Lectra PDF push bridge & DropBridge v3 (v10.0.0)
+- Stand-down behavior when the standalone Lectra Receiver owns Lectra PDF and Gradescope attach UI
 - Local AI chat assistant with active-tab hybrid RAG pipeline (v8.0.0)
 - Offline PDF text parsing & image OCR search (v9.0.0)
+- Whole-course cited Course Brain answers, Exam Builder, and the daily study briefing (v11.0.0)
 - RAG retrieval relevance floor (semantic layer reorders only, no off-topic citations), sparse Canvas file-list material summaries, silent profile personalization, and Ask sidepanel UI cleanup (inline header, locked horizontal scroll)
 
 ### Next

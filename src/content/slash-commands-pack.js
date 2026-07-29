@@ -93,6 +93,7 @@
       cmdAsk(),
       cmdPlan(),
       cmdQuiz(),
+      cmdExam(),
       cmdBriefing()
     ];
   }
@@ -192,6 +193,26 @@
           subtitle: 'Questions with answers, sourced from your course materials.',
           icon: 'bolt', badge: 'AI',
           onSelect: () => openSidepanel({ view: 'brain', action: 'quiz' }, ctx)
+        }];
+      }
+    };
+  }
+
+  function cmdExam() {
+    return {
+      order: 25, id: 'cs-exam', primaryAlias: 'exam',
+      aliases: ['practice-exam', 'midterm', 'final'],
+      title: 'Build practice exam',
+      description: 'A full practice exam with an answer key, built from everything in this course.',
+      keywords: ['exam', 'practice', 'midterm', 'final', 'test', 'answer key', 'study'],
+      icon: 'bolt', needsArgument: false,
+      buildResults(arg, ctx) {
+        return [{
+          kind: 'action',
+          title: 'Build a practice exam',
+          subtitle: 'Multiple-choice + short-answer with an answer key and sources.',
+          icon: 'bolt',
+          onSelect: () => openSidepanel({ view: 'brain', action: 'exam' }, ctx)
         }];
       }
     };

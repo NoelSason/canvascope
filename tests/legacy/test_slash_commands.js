@@ -122,6 +122,9 @@ const context = {
 };
 
 vm.createContext(context);
+// The extracted popup.js functions are thin wrappers over the shared
+// CanvascopeQueryNormalizer global (loaded by popup.html before popup.js).
+vm.runInContext(fs.readFileSync(path.join(__dirname, 'src/core/query-normalizer.js'), 'utf8'), context);
 vm.runInContext(
   functionNames.map((name) => extractFunctionSource(popupSource, name)).join('\n\n'),
   context

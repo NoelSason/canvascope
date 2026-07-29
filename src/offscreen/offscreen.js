@@ -3,6 +3,8 @@
     const DROPBRIDGE_GET_CONTEXT_ACTION = 'dropbridgeGetReceiverContext';
     const DROPBRIDGE_WAKE_ACTION = 'dropbridgeReceiverWake';
     const DROPBRIDGE_STATUS_ACTION = 'dropbridgeReceiverStatus';
+    const DROPBRIDGE_CONNECT_ACTION = 'dropbridgeReceiverConnect';
+    const DROPBRIDGE_DISCONNECT_ACTION = 'dropbridgeReceiverDisconnect';
     const DROPBRIDGE_WAKE_EVENT = 'upload_queued';
     const RECONNECT_DELAY_MS = 2000;
     const RECONNECT_MAX_DELAY_MS = 60000;
@@ -14,6 +16,12 @@
     let connectPromise = null;
     let reconnectTimer = null;
     let reconnectDelayMs = RECONNECT_DELAY_MS;
+    // The offscreen document is shared with the embeddings host. Background
+    // parks the DropBridge receiver (latch off) instead of closing the doc
+    // when embeddings are still loaded; TRUE default means a doc created by
+    // either owner self-connects and then parks itself via the no-context
+    // path when Lectra is off — crash-recreated docs self-heal.
+    let receiverEnabled = true;
 
     function log(message, details = undefined) {
         if (details === undefined) {
@@ -121,6 +129,7 @@
     }
 
     function scheduleReconnect(reason) {
+        if (!receiverEnabled) return;
         if (reconnectTimer) return;
         // Exponential backoff (2s → 60s cap) so an extended outage doesn't
         // turn into a constant retry loop; reset to the base delay once a
@@ -179,6 +188,7 @@
     }
 
     async function connectReceiver(reason = 'startup') {
+        if (!receiverEnabled) return false;
         let context = null;
         try {
             context = await getReceiverContext();
@@ -212,6 +222,8 @@
             reason,
             topic: context.topic
         });
+
+        if (!receiverEnabled) return false;
 
         const wakeEvent = context.wakeEvent || DROPBRIDGE_WAKE_EVENT;
         const channel = supabaseClient.channel(context.topic, {
@@ -303,12 +315,56 @@
         return connectPromise;
     }
 
+    // Background ↔ receiver control channel. The embeddings host registers
+    // its own listener filtered on message.target === 'cs-embeddings';
+    // everything else falls through both listeners untouched.
+    chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+        if (!message || message.target === 'cs-embeddings') return false;
+
+        if (message.action === DROPBRIDGE_CONNECT_ACTION) {
+            receiverEnabled = true;
+            clearReconnectTimer();
+            reconnectDelayMs = RECONNECT_DELAY_MS;
+            ensureReceiverConnected(message.reason || 'connect-message')
+                .then((connected) => sendResponse({ success: true, connected: Boolean(connected) }))
+                .catch((error) => sendResponse({ success: false, error: parseErrorMessage(error) }));
+            return true;
+        }
+
+        if (message.action === DROPBRIDGE_DISCONNECT_ACTION) {
+            (async () => {
+                const wasIdle = !receiverEnabled && !currentChannel && !connectPromise;
+                receiverEnabled = false;
+                if (connectPromise) {
+                    try { await connectPromise; } catch (_) { /* reported upstream */ }
+                }
+                // A connect message that arrived during the await re-armed the
+                // latch; it wins — tearing down now would leave an armed latch
+                // with no channel and no reconnect timer (a dead receiver).
+                if (receiverEnabled) {
+                    sendResponse({ success: true, superseded: true });
+                    return;
+                }
+                clearReconnectTimer();
+                if (!wasIdle) {
+                    await disconnectReceiver('receiver-disabled', true);
+                }
+                sendResponse({ success: true });
+            })();
+            return true;
+        }
+
+        return false;
+    });
+
     window.addEventListener('pagehide', () => {
         void disconnectReceiver('pagehide');
     });
 
-    void ensureReceiverConnected('startup').catch((error) => {
-        log('Initial connection failed', parseErrorMessage(error));
-        scheduleReconnect('startup-failed');
-    });
+    if (receiverEnabled) {
+        void ensureReceiverConnected('startup').catch((error) => {
+            log('Initial connection failed', parseErrorMessage(error));
+            scheduleReconnect('startup-failed');
+        });
+    }
 })();

@@ -3,6 +3,11 @@
  * Fetches and extracts text page-by-page from local or LMS PDFs using pdf.js,
  * caching results and ranking page relevance to enforce Nano context limits.
  */
+// This file runs tab-injected (content-script world), where the shared
+// config global is never present — CFG resolves to null and every read
+// below falls back to its legacy literal, so behavior here stays unchanged.
+const DOC_PARSER_CFG = (typeof self !== 'undefined' ? self : globalThis).CanvascopeEmbeddingsConfig || null;
+
 class DocumentParser {
   /**
    * Parses text content of a PDF file array buffer.
@@ -270,7 +275,7 @@ class DocumentParser {
         });
 
         semanticRankList = scoredSemantic
-          .filter(x => x.similarity > 0.15)
+          .filter(x => x.similarity > (DOC_PARSER_CFG?.THRESHOLDS?.hash?.page ?? 0.15))
           .sort((a, b) => b.similarity - a.similarity);
       }
     }
